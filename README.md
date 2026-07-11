@@ -1,7 +1,8 @@
 # CW Decoder for UIAPduino２
 
 UIAPduino Pro Micro で動作する CW Decoder / FFT Analyzer です。  
-VS Code + PlatformIO + `ch32v003fun` ベースでビルドできます。
+VS Code + PlatformIO + `ch32v003fun` ベースでビルドできます。  
+現在のバージョンは `v1.8` です。
 
 このリポジトリでは、以下の 2 つのモードを切り替えて使えます。
 
@@ -25,6 +26,13 @@ CH32V003 / ST7735 のサポートは終了しました（`v1.7` までは [UIAP_
 
 - SW1: 英文 / 和文切り替え
 - SW2: 666Hz / 833Hz / 1000Hz 切り替え
+
+`v1.8` からトーン判定を追加しています。Goertzel フィルタを3ビン化し
+（中心 = 目標トーン、サイド = ±341.33Hz）、中心レベルがサイドレベル
+（EMA 平滑化後の min(low, high)）の 3 倍を超えた場合のみ信号とみなします。
+ホワイトノイズは全ビンがほぼ同レベルになるため棄却され、片側の混信は
+反対側のサイドビンで判定が守られます。処理コストは 48 サンプルあたり
+約 1.1ms（処理周期 5.86ms の約 19%）です。
 
 ### FFT アナライザ
 
@@ -65,6 +73,9 @@ environment は `genericCH32V006F8U6` のみです。
 
 - CH32V006 / ST7789 `v1.7` macOS: [tools/006/ST7789/mac/firmwareUpdate1.7](tools/006/ST7789/mac/firmwareUpdate1.7)
 - CH32V006 / ST7789 `v1.7` Windows: [tools/006/ST7789/win/firmwareUpdate1.7](tools/006/ST7789/win/firmwareUpdate1.7)
+
+`v1.8` の更新パッケージは未作成です。最新版はこのリポジトリをビルドして
+書き込んでください（ビルド後の `firmware.bin` は `.pio/build/genericCH32V006F8U6/` に生成されます）。
 
 ## 変更履歴
 
