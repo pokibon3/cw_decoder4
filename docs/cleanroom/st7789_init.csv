@@ -1,7 +1,0 @@
-step,command,data_bytes,delay_ms,notes
-1,SWRESET (0x01),,10,Optional software reset
-2,SLPOUT (0x11),,120,Sleep out
-3,COLMOD (0x3A),55,10,RGB565
-4,MADCTL (0x36),60,10,MX|MV|RGB
-5,INVON (0x21),,10,Display inversion on
-6,DISPON (0x29),,10,Display on

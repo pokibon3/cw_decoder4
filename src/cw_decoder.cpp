@@ -95,11 +95,7 @@ static void push_morse_sample(uint16_t sample)
 
 static inline int32_t normalize_decoder_magnitude(int32_t magnitude)
 {
-#if defined(BOARD_CH32V006)
 	return magnitude >> 2;
-#else
-	return magnitude;
-#endif
 }
 
 extern "C" void TIM1_UP_IRQHandler(void) __attribute__((interrupt));

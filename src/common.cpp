@@ -5,7 +5,6 @@
 #include "common.h"
 #include "ch32fun.h"
 
-#if defined(BOARD_CH32V006)
 #ifndef TIM_OC1M_2
 #define TIM_OC1M_2 ((uint16_t)0x0040)
 #endif
@@ -30,20 +29,14 @@
 #ifndef TIM_CEN
 #define TIM_CEN ((uint16_t)0x0001)
 #endif
-#endif
 
 // Pin mapping (UIAP board)
 static const uint8_t SW1_PIN = 1; // PA1
 static const uint8_t SW2_PIN = 4; // PC4
 static const uint8_t SW3_PIN = 2; // PD2
 static const uint8_t ADC_PIN = 2; // PA2 (ADC_IN0)
-#if defined(BOARD_CH32V006)
 static const uint8_t LED_PIN = 3; // PC3
 static const uint8_t ADC_CH_A2 = 0; // PA2 = ADC_IN0 on CH32V006
-#else
-static const uint8_t LED_PIN = 0; // PC0
-static const uint8_t ADC_CH_A2 = 0; // PA2 = ADC_IN0 on CH32V003
-#endif
 static const uint8_t UART_PIN = 5; // PD5
 static const uint8_t TEST_PIN = 6; // PD6
 
@@ -76,11 +69,9 @@ static inline uint8_t gpio_read(GPIO_TypeDef *port, uint8_t pin)
 
 static void adc_init_ch0(void)
 {
-#if defined(BOARD_CH32V006)
 	// Match the working CH32V203 setup: configure ADC clock before enabling/resetting ADC.
 	RCC->CFGR0 &= ~((uint32_t)0x1FU << 11);
 	RCC->CFGR0 |= ((uint32_t)0x18U << 11);
-#endif
 
 	RCC->APB2PCENR |= RCC_APB2Periph_ADC1;
 	RCC->APB2PRSTR |= RCC_APB2Periph_ADC1;
@@ -96,12 +87,8 @@ static void adc_init_ch0(void)
 		(ADC_SMP0_1 << (3 * 2)) | (ADC_SMP0_1 << (3 * 3)) |
 		(ADC_SMP0_1 << (3 * 4)) | (ADC_SMP0_1 << (3 * 5));
 
-#if defined(BOARD_CH32V006)
 	ADC1->CTLR2 |= ADC_EXTSEL;
 	ADC1->CTLR2 |= ADC_ADON;
-#else
-	ADC1->CTLR2 |= ADC_ADON | ADC_EXTSEL;
-#endif
 	ADC1->CTLR2 |= CTLR2_RSTCAL_Set;
 	while (ADC1->CTLR2 & CTLR2_RSTCAL_Set) {
 	}
@@ -113,9 +100,7 @@ static void adc_init_ch0(void)
 static inline uint16_t adc_read_ch0_raw()
 {
 	ADC1->RSQR3 = ADC_CH_A2;
-#if defined(BOARD_CH32V006)
 	ADC1->CTLR2 |= ADC_ADON;
-#endif
 	ADC1->CTLR2 |= ADC_SWSTART;
 	while (!(ADC1->STATR & ADC_EOC)) {
 	}

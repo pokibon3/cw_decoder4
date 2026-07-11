@@ -67,18 +67,18 @@
 //
 //  Hardware Connections
 //
-//	UIAP	CH32V003/006  	TFT(SPI)	SW		MIC    	 ETC.
-//	10	    PD0 / PC0       DC
+//	UIAP	CH32V006  	    TFT(SPI)	SW		MIC    	 ETC.
+//	10	    PC0             DC
 //	 8      PC6            MOSI
 //   9      PC7            RES
 //   7      PC5            SCK
-//   5      PC3 / PA4      CS
+//   5      PA4            CS
 //	A1	    PA1                         SW1
 //	A2      PC4                         SW2
 //  A3      PD2							SW3
 //	A0		PA2									OUT(ADC_IN0)
 //  A6		PD6                                 TEST
-//  LED     PC0 / PC3
+//  LED     PC3
 //	3.3V                  3.3V           		VCC(Via 78L33 3.3V)
 //  GND                    GND          		GND
 //
@@ -96,10 +96,8 @@
 uint16_t sampling_period_us;
 alignas(2) uint8_t  shared_buf[BUFSIZE];
 
-#if defined(BOARD_CH32V006)
 alignas(4) float fft_real[SAMPLES];
 alignas(4) float fft_imag[SAMPLES];
-#endif
 
 //==================================================================
 //	main
@@ -110,23 +108,13 @@ int main()
 	GPIO_setup();				// GPIO/ADC setup
     tft_init();					// LCD init
 
-#if !defined(BOARD_CH32V006)
-	int8_t *vReal;
-	int8_t *vImag;
-	vReal = (int8_t *)&shared_buf[0];
-	vImag = (int8_t *)&shared_buf[128];
-#endif
 	while (1) {
 		// cw decoder
 		cwd_setup();			// freq detector Setup
 		cwDecoder();			// run cw decoder
 		// frequency detector
 		fd_setup();				// freq detector Setup
-#if defined(BOARD_CH32V006)
 		freqDetector(fft_real, fft_imag);			// run freq counter
-#else
-		freqDetector(vReal, vImag);			// run freq counter
-#endif
 	}
 	return 0;
 }

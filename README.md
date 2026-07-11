@@ -10,20 +10,12 @@ VS Code + PlatformIO + `ch32v003fun` ベースでビルドできます。
 
 MODE SW を押すことでモード切り替えができます。
 
-## 対応 MCU
+## 対応 MCU / LCD
 
-- CH32V003(UIAPduino Pro Micro CH32V003 V1.4)
 - CH32V006(UIAPduino Pro Micro CH32V006 V1.1)
+- LCD: 1.14inch ST7789 (240x135)
 
-`v1.7` 時点で、CH32V006 向けに以下を反映しています。
-
-- LCD / GPIO 配線差分対応
-- FLASH wait state 設定修正
-- ADC 入力 `PA2 = ADC_IN0` 修正
-- LED 制御を `PC3` に修正
-- `ST7735` 向け `12x16` ANK フォント追加
-- `ST7789` 向け `15x21` ANK フォント追加
-- 006 では拡大描画ではなくネイティブ字形を使用
+CH32V003 / ST7735 のサポートは終了しました（`v1.7` までは [UIAP_CWDecoder2](https://github.com/pokibon3/UIAP_CWDecoder2) を参照）。
 
 ## 機能
 
@@ -41,21 +33,21 @@ MODE SW を押すことでモード切り替えができます。
 
 ## ハード接続
 
-### CH32V003 / CH32V006
+### CH32V006
 
-| UIAP | CH32V003 / CH32V006 | 用途 |
+| UIAP | CH32V006 | 用途 |
 |---|---|---|
-| 10 | PD0 / PC0 | LCD DC |
+| 10 | PC0 | LCD DC |
 | 8 | PC6 | LCD MOSI |
 | 9 | PC7 | LCD RES |
 | 7 | PC5 | LCD SCK |
-| 5 | PC3 / PA4 | LCD CS |
+| 5 | PA4 | LCD CS |
 | A1 | PA1 | SW1 |
 | A2 | PC4 | SW2 |
 | A3 | PD2 | SW3 |
 | A0 | PA2 | MIC / ADC_IN0 |
 | A6 | PD6 | TEST |
-| LED | PC0 / PC3 | LED |
+| LED | PC3 | LED |
 
 ## ビルド
 
@@ -65,23 +57,14 @@ VS Code でこのフォルダを開き、PlatformIO IDE の機能を使ってビ
 2. PlatformIO IDE が有効になっていることを確認する
 3. 画面下部の PlatformIO ツールバーから `Build` を実行する
 
-既定の environment は現在 `genericCH32V006F8U6` です。
+environment は `genericCH32V006F8U6` のみです。
 
 ## ファームウェア更新ツール
 
-更新用パッケージは MCU と LCD 種別ごとに `tools` 配下へ整理しています。
+更新用パッケージは `tools/006/ST7789` 配下にあります。
 
-- CH32V003 / ST7735: [tools/003/ST7735](/Users/ooe/src/cw_decoder3_for_uiap/tools/003/ST7735)
-- CH32V003 / ST7789: [tools/003/ST7789](/Users/ooe/src/cw_decoder3_for_uiap/tools/003/ST7789)
-- CH32V006 / ST7735: [tools/006/ST7735](/Users/ooe/src/cw_decoder3_for_uiap/tools/006/ST7735)
-- CH32V006 / ST7789: [tools/006/ST7789](/Users/ooe/src/cw_decoder3_for_uiap/tools/006/ST7789)
-
-今回の `v1.7` は CH32V006 のフォント改善版です。
-
-- CH32V006 / ST7735 `v1.7` macOS: [tools/006/ST7735/mac/firmwareUpdate1.7](/Users/ooe/src/cw_decoder3_for_uiap/tools/006/ST7735/mac/firmwareUpdate1.7)
-- CH32V006 / ST7735 `v1.7` Windows: [tools/006/ST7735/win/firmwareUpdate1.7](/Users/ooe/src/cw_decoder3_for_uiap/tools/006/ST7735/win/firmwareUpdate1.7)
-- CH32V006 / ST7789 `v1.7` macOS: [tools/006/ST7789/mac/firmwareUpdate1.7](/Users/ooe/src/cw_decoder3_for_uiap/tools/006/ST7789/mac/firmwareUpdate1.7)
-- CH32V006 / ST7789 `v1.7` Windows: [tools/006/ST7789/win/firmwareUpdate1.7](/Users/ooe/src/cw_decoder3_for_uiap/tools/006/ST7789/win/firmwareUpdate1.7)
+- CH32V006 / ST7789 `v1.7` macOS: [tools/006/ST7789/mac/firmwareUpdate1.7](tools/006/ST7789/mac/firmwareUpdate1.7)
+- CH32V006 / ST7789 `v1.7` Windows: [tools/006/ST7789/win/firmwareUpdate1.7](tools/006/ST7789/win/firmwareUpdate1.7)
 
 ## 変更履歴
 

@@ -10,52 +10,16 @@
 #include "frequencyDetector.h"
 #include "ch32fun.h"
 
-#if defined(BOARD_CH32V006)
 #include "float_fft.h"
 #include <math.h>
-#else
-#include "fix_fft.h"
-#endif
 
 #define FD_SAMPLING_FREQUENCY 6000	// Hz	+10%
 #define FFT_FPS_MEASURE 0
 #define FFT_PEAK_HOLD_FRAMES 20
-#if defined(BOARD_CH32V006)
 #define FFT_SIGNAL_DETECT_THRESHOLD 7
-#else
-#define FFT_SIGNAL_DETECT_THRESHOLD 4
-#endif
-#if defined(BOARD_CH32V006) && defined(TFT_ST7789)
 #define FFT_VALUE_FONT_SCALE FONT_SCALE_24X24
 #define FFT_VALUE_CHAR_ADV   (TFT_FONT_ADV * FONT_SCALE_24X24)
 #define FFT_VALUE_AREA_HEIGHT 26
-#else
-#define FFT_VALUE_FONT_SCALE FONT_SCALE_16X16
-#define FFT_VALUE_CHAR_ADV   (TFT_FONT_ADV * FONT_SCALE_16X16)
-#define FFT_VALUE_AREA_HEIGHT 18
-#endif
-
-#if !defined(BOARD_CH32V006)
-static uint32_t isqrt32(uint32_t x)
-{
-	uint32_t op = x;
-	uint32_t res = 0;
-	uint32_t one = 1u << 30;
-
-	while (one > op) {
-		one >>= 2;
-	}
-	while (one != 0) {
-		if (op >= res + one) {
-			op -= res + one;
-			res += one << 1;
-		}
-		res >>= 1;
-		one >>= 2;
-	}
-	return res;
-}
-#endif
 
 #define FFT_FRAME_HEIGHT    (TFT_HEIGHT - 8)
 #define FFT_AREA_Y_TOP      ((TFT_HEIGHT * 19) / 80)
@@ -89,11 +53,7 @@ int fd_setup()
     return 0;
 }
 
-#if defined(BOARD_CH32V006)
 int freqDetector(float *vReal, float *vImag)
-#else
-int freqDetector(int8_t *vReal, int8_t *vImag)
-#endif
 {
 	uint16_t peakFrequency = 0;
 	uint16_t oldFreequency = 0;
@@ -105,20 +65,10 @@ int freqDetector(int8_t *vReal, int8_t *vImag)
 	tft_draw_rect(0, 0, TFT_WIDTH, FFT_FRAME_HEIGHT, BLUE);
 
 	uint8_t fft_bins = (uint8_t)(SAMPLES / 2);
-#if !defined(TFT_ST7735)
 	if (fft_bins > 64) fft_bins = 64;
-#endif
 	uint16_t bin_step = (TFT_WIDTH - 1) / fft_bins;
 	if (bin_step < 3) bin_step = 3;
 	uint16_t bar_width = 1;
-#if defined(TFT_ST7735)
-	bar_width = 4;
-	bin_step = (bar_width > 1) ? (bar_width - 1) : 1;
-	{
-		const uint8_t max_bins = (uint8_t)((TFT_WIDTH - 2) / bin_step);
-		if (max_bins < fft_bins) fft_bins = max_bins;
-	}
-#else
 	{
 		const uint16_t usable_width = (TFT_WIDTH > 2) ? (uint16_t)(TFT_WIDTH - 2) : 0;
 		const uint16_t target_bins = 59;
@@ -132,7 +82,6 @@ int freqDetector(int8_t *vReal, int8_t *vImag)
 			if (max_bins < fft_bins) fft_bins = max_bins;
 		}
 	}
-#endif
 	uint16_t plot_width = bin_step * fft_bins;
 	if (plot_width > (TFT_WIDTH - 2)) {
 		plot_width = TFT_WIDTH - 2;
@@ -187,7 +136,6 @@ int freqDetector(int8_t *vReal, int8_t *vImag)
         }
 
 TEST_HIGH
-#if defined(BOARD_CH32V006)
 		float fave = 0.0f;
 		for (int i = 0; i < SAMPLES; i++) {
 			uint32_t t = micros();
@@ -211,32 +159,6 @@ TEST_LOW
 				display_mag_q8[i] = (uint32_t)mag[i] << 8;
 			}
 		}
-#else
-		uint16_t ave = adc_capture_u8(vImag, SAMPLES, sampling_period_us);
-TEST_LOW
-		for (int i = 0; i < SAMPLES; i++) {
-			uint8_t sample_u8 = (uint8_t)vImag[i];
-			int16_t centered = (int16_t)sample_u8 - (int16_t)ave;
-			if (centered > 127) centered = 127;
-			if (centered < -128) centered = -128;
-			vReal[i] = (int8_t)centered;
-			vImag[i] = 0;
-		}
-  		fix_fft((char *)vReal, (char *)vImag, 7, 0);
-		for (int i = 0; i < SAMPLES / 2; i++) {
-			int16_t vr = vReal[i];
-			int16_t vi = vImag[i];
-			uint16_t m = (uint16_t)(abs(vr) + abs(vi));
-			mag[i] = m;
-			display_mag_q8[i] = (uint32_t)m << 8;
-		}
-		for (int i = 1; i < (SAMPLES / 2) - 1; i++) {
-			// Light bin interpolation for CH32V003: keep peak detection on raw mag[],
-			// but smooth the displayed bar height to reduce coarse visible steps.
-			display_mag_q8[i] =
-				(((uint32_t)mag[i] * 3U) + (uint32_t)mag[i - 1] + (uint32_t)mag[i + 1]) << 6;
-		}
-#endif
 
 		uint8_t maxIndex = 0;
 		uint16_t maxValue = 0;
@@ -254,12 +176,6 @@ TEST_LOW
 			uint16_t m = mag[i];
 			uint32_t gain_num = FFT_Y_GAIN_NUM;
 			uint32_t gain_den = FFT_Y_GAIN_DEN * 16U;
-#if !defined(BOARD_CH32V006)
-			gain_num *= 4U;
-			// CH32V003 magnitudes are small, so reduce the bar conversion gain to
-			// get more visible intermediate height steps without changing maxValue.
-			gain_den = FFT_Y_GAIN_DEN * 8U;
-#endif
 			uint32_t target_q8 = (display_mag_q8[i] * (uint32_t)SCALE * gain_num + (gain_den / 2U)) / gain_den;
 			if (target_q8 >= bar_h_q8[i]) {
 				bar_h_q8[i] = (uint16_t)(bar_h_q8[i] + (((target_q8 - bar_h_q8[i]) * 7U + 7U) / 8U));
@@ -368,7 +284,6 @@ TEST_LOW
 					strcpy(buf, "    Hz");
 				}
 				uint16_t value_cursor_x = (uint16_t)((6 - strlen(buf)) * FFT_VALUE_CHAR_ADV + value_text_base);
-#if defined(BOARD_CH32V006)
 				{
 					uint16_t text_w = (uint16_t)(strlen(buf) * FFT_VALUE_CHAR_ADV);
 					if (value_area_right > text_w) {
@@ -380,7 +295,6 @@ TEST_LOW
 						}
 					}
 				}
-#endif
 				tft_set_cursor(value_cursor_x, 3);
 				tft_set_color(YELLOW);
 				tft_fill_rect(value_area_x, 1, value_area_right - value_area_x, FFT_VALUE_AREA_HEIGHT, BLACK);

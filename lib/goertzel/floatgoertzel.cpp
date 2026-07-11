@@ -1,5 +1,3 @@
-#if defined(BOARD_CH32V006)
-
 #include <math.h>
 #include <stdint.h>
 
@@ -46,5 +44,3 @@ int32_t goertzel(int16_t *data, int16_t n)
     }
     return (int32_t)(sqrtf(mag2) + 0.5f);
 }
-
-#endif

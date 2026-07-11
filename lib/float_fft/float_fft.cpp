@@ -1,5 +1,3 @@
-#if defined(BOARD_CH32V006)
-
 #include "float_fft.h"
 
 #include <math.h>
@@ -53,4 +51,3 @@ void float_fft(float *fr, float *fi, int log2n)
     }
 }
 
-#endif
