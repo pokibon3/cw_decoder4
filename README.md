@@ -71,11 +71,10 @@ environment は `genericCH32V006F8U6` のみです。
 
 更新用パッケージは `tools/006/ST7789` 配下にあります。
 
+- CH32V006 / ST7789 `v1.8` macOS: [tools/006/ST7789/mac/firmwareUpdate1.8](tools/006/ST7789/mac/firmwareUpdate1.8)
+- CH32V006 / ST7789 `v1.8` Windows: [tools/006/ST7789/win/firmwareUpdate1.8](tools/006/ST7789/win/firmwareUpdate1.8)
 - CH32V006 / ST7789 `v1.7` macOS: [tools/006/ST7789/mac/firmwareUpdate1.7](tools/006/ST7789/mac/firmwareUpdate1.7)
 - CH32V006 / ST7789 `v1.7` Windows: [tools/006/ST7789/win/firmwareUpdate1.7](tools/006/ST7789/win/firmwareUpdate1.7)
-
-`v1.8` の更新パッケージは未作成です。最新版はこのリポジトリをビルドして
-書き込んでください（ビルド後の `firmware.bin` は `.pio/build/genericCH32V006F8U6/` に生成されます）。
 
 ## 変更履歴
 
