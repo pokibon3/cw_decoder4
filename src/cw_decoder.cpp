@@ -18,6 +18,10 @@
 // 何倍あれば正弦波とみなすか。ホワイトノイズは全ビンほぼ同レベル、
 // 正弦波は10倍以上になる。min採用により片側の混信ではトーンを棄却しない。
 #define TONE_SIDE_RATIO 3
+// 実運用の中心速度帯 20〜35wpm の単位長範囲 (ms、マージン込み)。
+// 短点+長点ペアで求めた単位長がこの範囲なら速度推定を即時スナップする。
+#define WPM_CORE_UNIT_MIN 30
+#define WPM_CORE_UNIT_MAX 66
 static uint16_t magnitudelimit = 140;  		// 以前は 140
 static uint16_t magnitudelimit_low = 140;
 static uint16_t realstate = GPIO_LOW;
@@ -36,6 +40,7 @@ static uint16_t nbtime = 6;  /// ノイズブランカの時間(ms)
 static char code[20];
 static uint16_t stop = GPIO_LOW;
 static uint16_t wpm;
+static uint32_t last_mark_ms = 0;
 
 static char		sw = MODE_US;
 static int16_t 	speed = 0;
@@ -280,6 +285,14 @@ int cwDecoder(void)
 		magnitude = goertzel(morseData, GOERTZEL_SAMPLES);
 		magnitude = normalize_decoder_magnitude(magnitude);
 		int32_t side_mag = normalize_decoder_magnitude(goertzelSideMag());
+		// 立ち上がり(現在LOW)時のみ瞬時サイドも見る:
+		// 広帯域インパルスはEMAが追従する前の1ブロック目をすり抜けるため。
+		if (filteredstate == GPIO_LOW) {
+			int32_t side_inst = normalize_decoder_magnitude(goertzelSideMagInst());
+			if (side_inst > side_mag) {
+				side_mag = side_inst;
+			}
+		}
 //TEST_LOW
 		cw_display_draw_magnitude(magnitude);
 #ifdef SERIAL_OUT
@@ -344,14 +357,61 @@ int cwDecoder(void)
 			if (filteredstate == GPIO_LOW) {
 				startttimelow = millis();
 				highduration = (millis() - starttimehigh);
-				if (highduration < (2*hightimesavg) || hightimesavg == 0) {
-					hightimesavg = (highduration+hightimesavg+hightimesavg) / 3;     // dot avg (3-sample moving avg)
-				}
-				if (highduration > (5*hightimesavg) ) {
-					hightimesavg = highduration+hightimesavg;     // follow sudden speed drop
-				}
-				if (hightimesavg < 24) {
-					hightimesavg = 24;
+				// 単位長(短点)の推定:
+				// - 20ms未満のマークはノイズとみなし推定に使わない
+				// - 直前マークとの比率が約1:3(短点+長点ペア)なら単位長を一意に
+				//   決められる。それが20〜35wpm帯なら即時スナップ (ノイズで
+				//   低速側に倒れても、実信号のペア1組で瞬時に復帰する)
+				// - それ以外は緩やかに追従: 2単位未満は短点(そのまま)、以上は
+				//   長点(1/3)として反映。長点側の推定値は現在値の2倍でクリップ
+				//   し、持続ノイズバーストで低速側へ一気に倒れないようにする
+				if (highduration >= 20) {
+					uint32_t snap = 0;
+					if (last_mark_ms >= 20) {
+						uint32_t hi = (highduration > last_mark_ms) ? highduration : last_mark_ms;
+						uint32_t lo = (highduration > last_mark_ms) ? last_mark_ms : highduration;
+						if ((hi * 10) >= (lo * 24) && (hi * 10) <= (lo * 36)) {
+							uint32_t cu = (lo + hi / 3) / 2;
+							if (cu >= WPM_CORE_UNIT_MIN && cu <= WPM_CORE_UNIT_MAX) {
+								snap = cu;
+							}
+						}
+					}
+					if (snap != 0) {
+						uint32_t diff = (snap > hightimesavg) ? (snap - hightimesavg)
+						                                      : (hightimesavg - snap);
+						if (diff * 4 > hightimesavg) {
+							hightimesavg = snap;   // 大きくズレている → 即時復帰
+						} else if (snap >= hightimesavg) {
+							hightimesavg += (snap - hightimesavg) / 3;
+						} else {
+							hightimesavg -= (hightimesavg - snap) / 3;
+						}
+					} else {
+						uint32_t est = highduration;
+						if (highduration >= (2 * hightimesavg) && hightimesavg != 0) {
+							est = highduration / 3;
+							if (est > hightimesavg * 2) {
+								est = hightimesavg * 2;
+							}
+						}
+						if (est >= hightimesavg) {
+							hightimesavg += (est - hightimesavg) / 3;
+						} else {
+							hightimesavg -= (hightimesavg - est) / 3;
+						}
+					}
+					if (hightimesavg < 24) {
+						hightimesavg = 24;
+					}
+					if (hightimesavg > 300) {
+						hightimesavg = 300;
+					}
+					wpm = (uint16_t)((1200 + hightimesavg / 2) / hightimesavg);
+					if (wpm > 50) {
+						wpm = 50;
+					}
+					last_mark_ms = highduration;
 				}
 			}
 		}
@@ -373,10 +433,6 @@ int cwDecoder(void)
 					if (strlen(code) >= 8) { decode_and_display(); }
 					strcat(code,"-");
 //					printf("-");
-				wpm = (wpm + (1200/((highduration)/3)))/2;  //// 可能な限り精度の高い推定
-					if (wpm > 50) {
-						wpm = 50;
-					}
 				}
 			}
 		}

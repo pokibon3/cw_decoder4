@@ -8,12 +8,17 @@
 //	all three bins roughly equally - the center/side ratio separates
 //	tone from noise.
 //
-//	The reported side level is min(EMA(low), EMA(high)):
-//	- min() keeps a one-sided interferer (QRM) from masking the tone,
-//	  since the opposite side bin stays clean.
-//	- The per-side EMA (alpha = 1/4, ~4 blocks = 23 ms) removes the
-//	  block-to-block variance of white noise, which would otherwise
-//	  make min() of two noisy bins dip low and pass as "tone".
+//	Two side levels are reported:
+//	- goertzelSideMag()     = min(EMA(low), EMA(high)). min() keeps a
+//	  one-sided interferer (QRM) from masking the tone; the per-side
+//	  EMA (alpha = 1/4, ~4 blocks = 23 ms) removes the block-to-block
+//	  variance of white noise, which would otherwise make min() of two
+//	  noisy bins dip low and pass as "tone".
+//	- goertzelSideMagInst() = min(low, high) of the current block only.
+//	  A broadband impulse raises the side bins instantly, but the EMA
+//	  lags ~4 blocks, so the first burst block would slip through the
+//	  smoothed gate. The decoder checks the instantaneous level too
+//	  when it is about to turn ON from silence.
 //
 #include <math.h>
 #include <stdint.h>
@@ -31,6 +36,7 @@ static float coeff_l = 1.938046f;
 static float coeff_h = 1.431426f;
 
 static int32_t side_mag = 0;
+static int32_t side_mag_inst = 0;
 static int32_t side_ema_l = 0;
 static int32_t side_ema_h = 0;
 static uint8_t side_ema_started = 0;
@@ -49,6 +55,7 @@ void initGoertzel(int16_t speed)
 {
     setSpeed(speed);
     side_mag = 0;
+    side_mag_inst = 0;
     side_ema_l = 0;
     side_ema_h = 0;
     side_ema_started = 0;
@@ -80,6 +87,8 @@ int32_t goertzel(int16_t *data, int16_t n)
     const int32_t mag_l = goertzel_mag(q1l, q2l, coeff_l);
     const int32_t mag_h = goertzel_mag(q1h, q2h, coeff_h);
 
+    side_mag_inst = (mag_l < mag_h) ? mag_l : mag_h;
+
     if (!side_ema_started) {
         side_ema_started = 1;
         side_ema_l = mag_l;
@@ -97,4 +106,10 @@ int32_t goertzel(int16_t *data, int16_t n)
 int32_t goertzelSideMag(void)
 {
     return side_mag;
+}
+
+// Instantaneous (unsmoothed) min side-bin magnitude of the last block.
+int32_t goertzelSideMagInst(void)
+{
+    return side_mag_inst;
 }
