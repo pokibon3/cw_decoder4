@@ -14,6 +14,10 @@
 #define GOERTZEL_SAMPLES 48
 #define GOERTZEL_SAMPLING_FREQUENCY 8192
 #define NOISE_BLANKER_ENABLED 1
+// トーン判定: 中心ビンがサイドレベル(±341.33Hzビンの平滑化後min)の
+// 何倍あれば正弦波とみなすか。ホワイトノイズは全ビンほぼ同レベル、
+// 正弦波は10倍以上になる。min採用により片側の混信ではトーンを棄却しない。
+#define TONE_SIDE_RATIO 3
 static uint16_t magnitudelimit = 140;  		// 以前は 140
 static uint16_t magnitudelimit_low = 140;
 static uint16_t realstate = GPIO_LOW;
@@ -272,9 +276,10 @@ int cwDecoder(void)
 			morseData[i] -= ave;
 		}
 
-		// Goertzel 計算
+		// Goertzel 計算 (中心 + サイド2ビン)
 		magnitude = goertzel(morseData, GOERTZEL_SAMPLES);
 		magnitude = normalize_decoder_magnitude(magnitude);
+		int32_t side_mag = normalize_decoder_magnitude(goertzelSideMag());
 //TEST_LOW
 		cw_display_draw_magnitude(magnitude);
 #ifdef SERIAL_OUT
@@ -291,9 +296,11 @@ int cwDecoder(void)
 		}
 
 		////////////////////////////////////
-		// 振幅でしきい値判定
+		// 振幅しきい値 + 中心/サイド比でトーン判定
+		// (振幅が十分でも、サイドビンとの比が小さければノイズとして棄却)
 		////////////////////////////////////
-		if (((uint32_t)magnitude * 5U) > ((uint32_t)magnitudelimit * 3U)) {  // 余裕を持たせる (0.6)
+		if ((((uint32_t)magnitude * 5U) > ((uint32_t)magnitudelimit * 3U)) &&  // 余裕を持たせる (0.6)
+		    (magnitude > side_mag * TONE_SIDE_RATIO)) {
      		realstate = GPIO_HIGH;
 		} else {
     		realstate = GPIO_LOW;
