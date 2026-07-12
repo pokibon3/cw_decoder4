@@ -18,6 +18,12 @@
 // 何倍あれば正弦波とみなすか。ホワイトノイズは全ビンほぼ同レベル、
 // 正弦波は10倍以上になる。min採用により片側の混信ではトーンを棄却しない。
 #define TONE_SIDE_RATIO 3
+// トーン判定のヒステリシス(シュミットトリガ):
+// ON  = 振幅 0.6×limit 超 かつ 中心 > 3×サイド
+// OFF = 振幅 0.4×limit 未満 または 中心 < 2.5×サイド
+// 中間帯は前状態を保持し、しきい値付近のバタつきでマークが千切れるのを防ぐ。
+// (OFF をこれ以上緩めるとホワイトノイズの保持が伸びて誤記号が出る)
+#define TONE_SIDE_RATIO_OFF_X10 25
 // 実運用の中心速度帯 20〜35wpm の単位長範囲 (ms、マージン込み)。
 // 短点+長点ペアで求めた単位長がこの範囲なら速度推定を即時スナップする。
 #define WPM_CORE_UNIT_MIN 30
@@ -41,6 +47,7 @@ static char code[20];
 static uint16_t stop = GPIO_LOW;
 static uint16_t wpm;
 static uint32_t last_mark_ms = 0;
+static uint32_t last_gap_ms = 0;
 
 static char		sw = MODE_US;
 static int16_t 	speed = 0;
@@ -163,6 +170,70 @@ static uint16_t compute_nbtime(uint32_t unit_ms)
 	// Cap debounce to allow up to 50 WPM (dot ~= 24ms, debounce <= ~1/3).
 	if (t > 8) t = 8;
 	return (uint16_t)t;
+}
+
+//==================================================================
+//	単位長(短点)の推定ヘルパー
+//==================================================================
+// 比率~1:3のペア(短点+長点、または短点+文字間ギャップ等)から単位長候補を
+// 求める。20〜35wpm帯のみ有効。同じ長さのペアは「短点2つ」とも「長点2つ」
+// とも解釈できて曖昧なため使わない(低速CWを壊さないための安全条件)。
+static uint32_t snap_candidate(uint32_t a, uint32_t b)
+{
+	uint32_t hi = (a > b) ? a : b;
+	uint32_t lo = (a > b) ? b : a;
+	if ((hi * 10) >= (lo * 24) && (hi * 10) <= (lo * 36)) {
+		uint32_t cu = (lo + hi / 3) / 2;
+		if (cu >= WPM_CORE_UNIT_MIN && cu <= WPM_CORE_UNIT_MAX) {
+			return cu;
+		}
+	}
+	return 0;
+}
+
+static void unit_clamp(void)
+{
+	if (hightimesavg < 24) {
+		hightimesavg = 24;
+	}
+	if (hightimesavg > 300) {
+		hightimesavg = 300;
+	}
+}
+
+// スナップ: 現在値から大きくズレていれば即時復帰、近ければ平滑化
+static void unit_apply_snap(uint32_t snap)
+{
+	uint32_t diff = (snap > hightimesavg) ? (snap - hightimesavg)
+	                                      : (hightimesavg - snap);
+	if (diff * 4 > hightimesavg) {
+		hightimesavg = snap;
+	} else if (snap >= hightimesavg) {
+		hightimesavg += (snap - hightimesavg) / 3;
+	} else {
+		hightimesavg -= (hightimesavg - snap) / 3;
+	}
+	unit_clamp();
+}
+
+// 緩やか追従: 2単位未満は1単位(そのまま)、以上は3単位(1/3)として反映。
+// 低速側の推定値は現在値の2倍でクリップし、持続ノイズバーストで
+// 一気に低速側へ倒れないよう変化率を制限する。
+static void unit_smooth_update(uint32_t dur)
+{
+	uint32_t est = dur;
+	if (dur >= (2 * hightimesavg) && hightimesavg != 0) {
+		est = dur / 3;
+		if (est > hightimesavg * 2) {
+			est = hightimesavg * 2;
+		}
+	}
+	if (est >= hightimesavg) {
+		hightimesavg += (est - hightimesavg) / 3;
+	} else {
+		hightimesavg -= (hightimesavg - est) / 3;
+	}
+	unit_clamp();
 }
 //==================================================================
 
@@ -309,14 +380,21 @@ int cwDecoder(void)
 		}
 
 		////////////////////////////////////
-		// 振幅しきい値 + 中心/サイド比でトーン判定
-		// (振幅が十分でも、サイドビンとの比が小さければノイズとして棄却)
+		// 振幅しきい値 + 中心/サイド比でトーン判定 (ヒステリシス付き)
+		// (振幅が十分でも、サイドビンとの比が小さければノイズとして棄却。
+		//  ON/OFF のしきい値を分け、中間帯は前状態保持でバタつきを抑える)
 		////////////////////////////////////
-		if ((((uint32_t)magnitude * 5U) > ((uint32_t)magnitudelimit * 3U)) &&  // 余裕を持たせる (0.6)
-		    (magnitude > side_mag * TONE_SIDE_RATIO)) {
-     		realstate = GPIO_HIGH;
-		} else {
-    		realstate = GPIO_LOW;
+		{
+			uint8_t tone_on  = (((uint32_t)magnitude * 5U) > ((uint32_t)magnitudelimit * 3U)) &&  // 0.6x
+			                   (magnitude > side_mag * TONE_SIDE_RATIO);
+			uint8_t tone_off = (((uint32_t)magnitude * 5U) < ((uint32_t)magnitudelimit * 2U)) || // 0.4x
+			                   (magnitude * 10 < side_mag * TONE_SIDE_RATIO_OFF_X10);
+			if (tone_on) {
+				realstate = GPIO_HIGH;
+			} else if (tone_off) {
+				realstate = GPIO_LOW;
+			}
+			// 中間帯: realstate は前ブロックの値を保持
 		}
 
 		/////////////////////////////////////////////////////
@@ -353,59 +431,40 @@ int cwDecoder(void)
 			if (filteredstate == GPIO_HIGH) {
 				starttimehigh = millis();
 				lowduration = (millis() - startttimelow);
+				// ギャップ(1単位=文字内 / 3単位=文字間)も速度推定の情報源に
+				// する。マークと同数以上あるため収束が速くなる。語間(5単位
+				// 以上)は打鍵者の間合いに左右されるため使わない。
+				if (lowduration >= 20) {
+					if (lowduration < 5 * hightimesavg) {
+						uint32_t snap = (last_mark_ms >= 20)
+							? snap_candidate(lowduration, last_mark_ms) : 0;
+						if (snap != 0) {
+							unit_apply_snap(snap);
+						} else {
+							unit_smooth_update(lowduration);
+						}
+					}
+					last_gap_ms = lowduration;
+				}
 			}
 			if (filteredstate == GPIO_LOW) {
 				startttimelow = millis();
 				highduration = (millis() - starttimehigh);
-				// 単位長(短点)の推定:
-				// - 20ms未満のマークはノイズとみなし推定に使わない
-				// - 直前マークとの比率が約1:3(短点+長点ペア)なら単位長を一意に
-				//   決められる。それが20〜35wpm帯なら即時スナップ (ノイズで
-				//   低速側に倒れても、実信号のペア1組で瞬時に復帰する)
-				// - それ以外は緩やかに追従: 2単位未満は短点(そのまま)、以上は
-				//   長点(1/3)として反映。長点側の推定値は現在値の2倍でクリップ
-				//   し、持続ノイズバーストで低速側へ一気に倒れないようにする
+				// 単位長(短点)の推定: 20ms未満のマークはノイズとみなし使わない。
+				// 直前マーク/直前ギャップとの比率が約1:3なら単位長を一意に
+				// 決めて即時スナップ(20〜35wpm帯)、それ以外は緩やかに追従。
 				if (highduration >= 20) {
 					uint32_t snap = 0;
 					if (last_mark_ms >= 20) {
-						uint32_t hi = (highduration > last_mark_ms) ? highduration : last_mark_ms;
-						uint32_t lo = (highduration > last_mark_ms) ? last_mark_ms : highduration;
-						if ((hi * 10) >= (lo * 24) && (hi * 10) <= (lo * 36)) {
-							uint32_t cu = (lo + hi / 3) / 2;
-							if (cu >= WPM_CORE_UNIT_MIN && cu <= WPM_CORE_UNIT_MAX) {
-								snap = cu;
-							}
-						}
+						snap = snap_candidate(highduration, last_mark_ms);
+					}
+					if (snap == 0 && last_gap_ms >= 20) {
+						snap = snap_candidate(highduration, last_gap_ms);
 					}
 					if (snap != 0) {
-						uint32_t diff = (snap > hightimesavg) ? (snap - hightimesavg)
-						                                      : (hightimesavg - snap);
-						if (diff * 4 > hightimesavg) {
-							hightimesavg = snap;   // 大きくズレている → 即時復帰
-						} else if (snap >= hightimesavg) {
-							hightimesavg += (snap - hightimesavg) / 3;
-						} else {
-							hightimesavg -= (hightimesavg - snap) / 3;
-						}
+						unit_apply_snap(snap);
 					} else {
-						uint32_t est = highduration;
-						if (highduration >= (2 * hightimesavg) && hightimesavg != 0) {
-							est = highduration / 3;
-							if (est > hightimesavg * 2) {
-								est = hightimesavg * 2;
-							}
-						}
-						if (est >= hightimesavg) {
-							hightimesavg += (est - hightimesavg) / 3;
-						} else {
-							hightimesavg -= (hightimesavg - est) / 3;
-						}
-					}
-					if (hightimesavg < 24) {
-						hightimesavg = 24;
-					}
-					if (hightimesavg > 300) {
-						hightimesavg = 300;
+						unit_smooth_update(highduration);
 					}
 					wpm = (uint16_t)((1200 + hightimesavg / 2) / hightimesavg);
 					if (wpm > 50) {
