@@ -534,7 +534,7 @@ static void draw_scope_panel(void)
 	scope_spr.setFont(&fonts::Font0);
 	scope_spr.setTextColor(C_LABEL);
 	scope_spr.setCursor(4, 3);
-	scope_spr.print("SCOPE 3.6s");
+	scope_spr.print("SCOPE 1.8s");
 	scope_spr.setTextColor(C_GATE);
 	scope_spr.setCursor(76, 3);
 	scope_spr.print("KEY");
@@ -697,9 +697,19 @@ static void poll_touch(void)
 	touching = now;
 }
 
+// タッチポーリング周期 (ms)
+#define TOUCH_POLL_MS 50
+
 void display_update(void)
 {
-	poll_touch();
+	{
+		static uint32_t last_poll = 0;
+		uint32_t now = millis();
+		if ((now - last_poll) >= TOUCH_POLL_MS) {
+			last_poll = now;
+			poll_touch();
+		}
+	}
 
 	uint8_t ch;
 	int budget = 8;
@@ -707,6 +717,22 @@ void display_update(void)
 		text_putchar(ch);
 	}
 	draw_status();
-	draw_fft_panel();
-	draw_scope_panel();
+	// パネル描画は各10fpsに制限し、FFT/スコープを交互に転送する:
+	// 40MHz SPIバーストがADC入力(GPIO35)へ電気的に結合しノイズ床を
+	// 上げるため、バーストのデューティと1回の長さ(約5ms=1ブロック以下)
+	// を抑える (スコープは1列24msなので視覚上の差はない)
+#define PANEL_DRAW_MS 50
+	{
+		static uint32_t last_draw = 0;
+		static uint8_t which = 0;
+		uint32_t now = millis();
+		if ((now - last_draw) >= PANEL_DRAW_MS) {
+			last_draw = now;
+			if ((which ^= 1) != 0) {
+				draw_fft_panel();
+			} else {
+				draw_scope_panel();
+			}
+		}
+	}
 }

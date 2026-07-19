@@ -15,7 +15,7 @@
 #include "float_fft.h"
 
 #define SCOPE_RING_SIZE 256
-#define SCOPE_DECIM 4           // スコープ1列 = 4 hop (24ms、約3.6s/画面)
+#define SCOPE_DECIM 2           // スコープ1列 = 2 hop (12ms、約1.8s/画面)
 #define SPEC_INTERVAL_HOPS 6    // 36ms 毎 (約28fps)
 #define DSP_PEAK_MIN 2400       // ピーク周波数表示のしきい値
 #define DSP_DIAG 0              // 毎秒 blk/s・mag統計をシリアル出力
@@ -337,7 +337,7 @@ static void dsp_task(void *arg)
 	uint8_t spec_div = 0;
 	uint8_t scope_phase = 0;
 	int16_t col_mn = 32767, col_mx = -32768;
-	uint16_t col_mag = 0;
+	uint16_t col_mags[SCOPE_DECIM] = { 0 };
 	uint8_t col_gate = 0;
 #if DSP_DIAG
 	uint32_t diag_last_ms = millis();
@@ -361,24 +361,38 @@ static void dsp_task(void *arg)
 		int32_t mag = process_gate();
 		uint16_t mag16 = (mag > 65535) ? 65535 : (uint16_t)((mag < 0) ? 0 : mag);
 
-		// スコープ列: SCOPE_DECIM hop 分をまとめて1列 (掃引速度 1/2)
+		// スコープ列: SCOPE_DECIM hop 分をまとめて1列
 		if (mn < col_mn) col_mn = mn;
 		if (mx > col_mx) col_mx = mx;
-		if (mag16 > col_mag) col_mag = mag16;
-		col_gate |= decoder_gate();
+		col_mags[scope_phase] = mag16;
+		col_gate = (uint8_t)(col_gate + decoder_gate());
 		if (++scope_phase >= SCOPE_DECIM) {
+			// エンベロープは「2番目に大きい値」を採用: LCD転送バースト等の
+			// 1ブロック限りの混入スパイクを表示から除去する
+			// (実信号のマークは全ブロックが高いので影響しない)
+			uint16_t m1 = 0, m2 = 0;
+			for (uint8_t i = 0; i < SCOPE_DECIM; i++) {
+				if (col_mags[i] > m1) {
+					m2 = m1;
+					m1 = col_mags[i];
+				} else if (col_mags[i] > m2) {
+					m2 = col_mags[i];
+				}
+			}
 			taskENTER_CRITICAL(&dsp_mux);
 			scope_col_t *col = &scope_ring[scope_pos];
 			col->mn = col_mn;
 			col->mx = col_mx;
-			col->mag = col_mag;
-			col->gate = col_gate;
+			col->mag = m2;
+			// KEY は多数決 (4ブロック中2以上ONで列ON): OR だと短い要素間
+			// ギャップ(<24ms超過分)が飲み込まれ符号パターンに見えなくなる
+			col->gate = (col_gate >= SCOPE_DECIM / 2) ? 1 : 0;
 			scope_pos = (uint16_t)((scope_pos + 1) % SCOPE_RING_SIZE);
 			taskEXIT_CRITICAL(&dsp_mux);
 			scope_phase = 0;
 			col_mn = 32767;
 			col_mx = -32768;
-			col_mag = 0;
+			for (uint8_t i = 0; i < SCOPE_DECIM; i++) col_mags[i] = 0;
 			col_gate = 0;
 		}
 
@@ -389,12 +403,18 @@ static void dsp_task(void *arg)
 
 #if DSP_DIAG
 		{
+			static int16_t diag_raw_mn = 32767;
+			static int16_t diag_raw_mx = -32768;
+			static uint8_t diag_spec_div = 0;
+			if (mn < diag_raw_mn) diag_raw_mn = mn;
+			if (mx > diag_raw_mx) diag_raw_mx = mx;
 			uint32_t now = millis();
 			if ((now - diag_last_ms) >= 1000) {
 				diag_last_ms = now;
 				uint32_t n = (diag_blocks > 0) ? diag_blocks : 1;
-				Serial.printf("[dsp] blk/s=%u mag avg=%d max=%d side avg=%d smax avg=%d max=%d limit=%d\n",
+				Serial.printf("[dsp] blk/s=%u raw=%d..%d mag avg=%d max=%d side avg=%d smax avg=%d max=%d limit=%d\n",
 				              (unsigned)diag_blocks,
+				              (int)diag_raw_mn, (int)diag_raw_mx,
 				              (int)(diag_mag_sum / n), (int)diag_mag_max,
 				              (int)(diag_side_sum / n),
 				              (int)(diag_smax_sum / n), (int)diag_smax_max,
@@ -405,6 +425,20 @@ static void dsp_task(void *arg)
 				diag_smax_sum = 0;
 				diag_mag_max = 0;
 				diag_smax_max = 0;
+				diag_raw_mn = 32767;
+				diag_raw_mx = -32768;
+				// 5秒毎にスペクトラム概形 (bin0〜63 を4bin毎に平均、/64縮小)
+				if (++diag_spec_div >= 5) {
+					diag_spec_div = 0;
+					uint16_t sp[DSP_SPEC_BINS + 1];
+					dsp_get_spectrum(sp);
+					Serial.print("[dsp] spec/64:");
+					for (int i = 0; i < 64; i += 4) {
+						uint32_t s = ((uint32_t)sp[i] + sp[i + 1] + sp[i + 2] + sp[i + 3]) / 4;
+						Serial.printf(" %u", (unsigned)(s >> 6));
+					}
+					Serial.println();
+				}
 			}
 		}
 #endif
