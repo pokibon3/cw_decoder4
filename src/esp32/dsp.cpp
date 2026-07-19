@@ -25,6 +25,8 @@ static uint32_t diag_blocks = 0;
 static int32_t diag_mag_max = 0;
 static int64_t diag_mag_sum = 0;
 static int64_t diag_side_sum = 0;
+static int64_t diag_smax_sum = 0;
+static int32_t diag_smax_max = 0;
 #endif
 
 static const uint16_t tone_tbl[DSP_TONE_COUNT] = { 600, 700, 800, 900, 1000 };
@@ -151,6 +153,7 @@ static int32_t process_gate(const int16_t *s, int n)
 	int32_t mag_h = goertzel_mag(q1h, q2h, g_coeff_h);
 
 	int32_t side_inst = (mag_l < mag_h) ? mag_l : mag_h;
+	int32_t side_inst_max = (mag_l > mag_h) ? mag_l : mag_h;
 	if (!side_ema_started) {
 		side_ema_started = 1;
 		side_ema_l = mag_l;
@@ -159,20 +162,33 @@ static int32_t process_gate(const int16_t *s, int n)
 		side_ema_l += (mag_l - side_ema_l) / 4;
 		side_ema_h += (mag_h - side_ema_h) / 4;
 	}
-	int32_t side = (side_ema_l < side_ema_h) ? side_ema_l : side_ema_h;
+	// 比率判定用サイド: min(L,H) ではなく幾何平均 sqrt(L*H) を使う。
+	// 低域から通過帯域へ裾を引く傾斜ノイズでは、min が静かな上側だけを
+	// 見て帯域内ノイズの実力を過小評価し偽符号が出る。幾何平均は両サイド
+	// の中間周波数の実効ノイズ床に相当し、トーン受信時(両サイド静粛)は
+	// min とほぼ同値なので感度は落ちない。
+	int32_t side = (int32_t)(sqrtf((float)side_ema_l * (float)side_ema_h) + 0.5f);
+	// トーンON拒否用のサイドmax: EMAと現在ブロック瞬時値の大きい方。
+	// EMAだけだと広帯域バーストの立ち上がりで中心の瞬時スパイクが
+	// 平滑化済みサイドを追い越し、偽マークが漏れる。
+	int32_t side_max = (side_ema_l > side_ema_h) ? side_ema_l : side_ema_h;
+	if (side_inst_max > side_max) side_max = side_inst_max;
 
 	// 旧 normalize_decoder_magnitude() と同じ >>2
 	int32_t mag_norm = mag_c >> 2;
 	int32_t side_norm = side >> 2;
 	int32_t side_inst_norm = side_inst >> 2;
+	int32_t side_max_norm = side_max >> 2;
 
-	decoder_process_block(mag_norm, side_norm, side_inst_norm);
+	decoder_process_block(mag_norm, side_norm, side_inst_norm, side_max_norm);
 
 #if DSP_DIAG
 	diag_blocks++;
 	diag_mag_sum += mag_norm;
 	diag_side_sum += side_norm;
+	diag_smax_sum += side_max_norm;
 	if (mag_norm > diag_mag_max) diag_mag_max = mag_norm;
+	if (side_max_norm > diag_smax_max) diag_smax_max = side_max_norm;
 #endif
 
 	return mag_norm;
@@ -207,8 +223,8 @@ static void process_spectrum(void)
 		float m = sqrtf(fr[i] * fr[i] + fi[i] * fi[i]);
 		mags[i] = m;
 		local[i] = (m > 65535.0f) ? 65535 : (uint16_t)m;
-		// ピーク探索は表示帯域 (約300〜1500Hz) のみ
-		if (i >= 10 && i <= 48 && m > max_m) {
+		// ピーク探索は表示帯域 (約300〜1200Hz) のみ
+		if (i >= 10 && i <= 38 && m > max_m) {
 			max_m = m;
 			max_i = i;
 		}
@@ -299,14 +315,18 @@ static void dsp_task(void *arg)
 			if ((now - diag_last_ms) >= 1000) {
 				diag_last_ms = now;
 				uint32_t n = (diag_blocks > 0) ? diag_blocks : 1;
-				Serial.printf("[dsp] blk/s=%u mag avg=%d max=%d side avg=%d limit=%d\n",
+				Serial.printf("[dsp] blk/s=%u mag avg=%d max=%d side avg=%d smax avg=%d max=%d limit=%d\n",
 				              (unsigned)diag_blocks,
 				              (int)(diag_mag_sum / n), (int)diag_mag_max,
-				              (int)(diag_side_sum / n), (int)decoder_maglimit());
+				              (int)(diag_side_sum / n),
+				              (int)(diag_smax_sum / n), (int)diag_smax_max,
+				              (int)decoder_maglimit());
 				diag_blocks = 0;
 				diag_mag_sum = 0;
 				diag_side_sum = 0;
+				diag_smax_sum = 0;
 				diag_mag_max = 0;
+				diag_smax_max = 0;
 			}
 		}
 #endif

@@ -258,7 +258,8 @@ void decoder_toggle_mode(void)
 //==================================================================
 //	ブロック処理本体 (CH32版 cwDecoder ループ1周分)
 //==================================================================
-void decoder_process_block(int32_t magnitude, int32_t side_mag, int32_t side_mag_inst)
+void decoder_process_block(int32_t magnitude, int32_t side_mag, int32_t side_mag_inst,
+                           int32_t side_mag_max)
 {
 	dec_ms += DEC_BLOCK_MS;
 
@@ -277,9 +278,15 @@ void decoder_process_block(int32_t magnitude, int32_t side_mag, int32_t side_mag
 	}
 
 	// 振幅しきい値 + 中心/サイド比でトーン判定 (ヒステリシス付き)
+	// tone_on には「中心が両サイドの max を超える」条件も課す:
+	// サイド判定は min(L,H) のため (片側混信保護)、通過帯域より下の
+	// 帯域外ノイズが下側サイドだけを上げつつ中心へ漏れると、静かな
+	// 上側サイドとの比較をすり抜けて偽符号が出る。本物のトーンは
+	// ±100Hz 程度ズレていても中心が両サイドより必ず大きい。
 	{
 		uint8_t tone_on  = (((uint32_t)magnitude * 5U) > ((uint32_t)magnitudelimit * 3U)) &&
-		                   (magnitude > side_mag * TONE_SIDE_RATIO);
+		                   (magnitude > side_mag * TONE_SIDE_RATIO) &&
+		                   (magnitude > side_mag_max);
 		uint8_t tone_off = (((uint32_t)magnitude * 5U) < ((uint32_t)magnitudelimit * 2U)) ||
 		                   (magnitude * 10 < side_mag * TONE_SIDE_RATIO_OFF_X10);
 		if (tone_on) {

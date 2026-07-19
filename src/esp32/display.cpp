@@ -47,6 +47,7 @@
 #define C_EQ_PEAK   lgfx::color565(210, 215, 225)
 #define C_MARKER    lgfx::color565(50, 75, 130)
 #define C_BAND      lgfx::color565(10, 24, 42)
+#define C_TONE_BAND lgfx::color565(70, 52, 16)
 #define C_RAW       lgfx::color565(0, 130, 175)
 #define C_ENV       lgfx::color565(250, 199, 117)
 #define C_GATE      lgfx::color565(90, 220, 120)
@@ -327,13 +328,13 @@ static void draw_status(void)
 
 //==================================================================
 //	FFTスペクトラムパネル (左下)
-//	表示帯域 約300〜1500Hz、1点 = 1bin (31.25Hz)、
+//	表示帯域 約300〜1200Hz、1点 = 1bin (31.25Hz)、
 //	ライン+塗りのスペクトラム表示 (縦はピクセル解像度)
 //==================================================================
-#define EQ_BAR_COUNT 38          // 1点 = 1bin (31.25Hz)
+#define EQ_BAR_COUNT 29          // 1点 = 1bin (31.25Hz)、bin10〜38
 #define EQ_BIN_START 10          // 312.5Hz
-#define EQ_BAR_PITCH 4           // 4px/bin
-#define EQ_X0 4
+#define EQ_BAR_PITCH 5           // 5px/bin
+#define EQ_X0 6
 #define EQ_BASE_Y 62
 #define EQ_PLOT_H 50
 #define EQ_F_MIN 312.5f          // bin10 の中心周波数
@@ -376,6 +377,16 @@ static void draw_fft_panel(void)
 		fft_spr.fillRect(x_lo, plot_top - 2, x_hi - x_lo + 1, plot_h + 4, C_BAND);
 		fft_spr.drawFastVLine(x_lo, plot_top - 2, plot_h + 4, C_MARKER);
 		fft_spr.drawFastVLine(x_hi, plot_top - 2, plot_h + 4, C_MARKER);
+	}
+
+	// 選択中トーンの検出帯域 (Goertzel 1ビン幅 = 中心±83Hz) を帯で表示
+	{
+		const float half_bw = (float)DSP_SAMPLE_RATE / (float)DSP_HOP * 0.5f;
+		int xc = eq_x_of_hz((float)dsp_tone_hz());
+		int hw = (int)(half_bw / EQ_HZ_PER_PX + 0.5f);
+		fft_spr.fillRect(xc - hw, plot_top - 2, hw * 2 + 1, plot_h + 4, C_TONE_BAND);
+		fft_spr.drawFastVLine(xc - hw, plot_top - 2, plot_h + 4, C_ENV);
+		fft_spr.drawFastVLine(xc + hw, plot_top - 2, plot_h + 4, C_ENV);
 	}
 
 	// スペクトラム本体: 塗り + エンベロープライン + ピークホールド
@@ -426,10 +437,9 @@ static void draw_fft_panel(void)
 		}
 	}
 
-	// 選択中トーンのマーカー (下端の三角 + 薄い縦線)
+	// 選択中トーンの中心マーカー (下端の三角)
 	{
 		int xm = eq_x_of_hz((float)dsp_tone_hz());
-		fft_spr.drawFastVLine(xm, plot_top - 2, plot_h + 4, C_ENV);
 		fft_spr.fillTriangle(xm - 3, EQ_BASE_Y + 9, xm + 3, EQ_BASE_Y + 9, xm, EQ_BASE_Y + 3, C_ENV);
 	}
 
@@ -437,7 +447,7 @@ static void draw_fft_panel(void)
 	fft_spr.setFont(&fonts::Font0);
 	fft_spr.setTextColor(C_LABEL);
 	fft_spr.setCursor(4, 3);
-	fft_spr.print("FFT 0.3-1.5k");
+	fft_spr.print("FFT 0.3-1.2k");
 	{
 		int x6 = eq_x_of_hz(600.0f);
 		int x10 = eq_x_of_hz(1000.0f);
