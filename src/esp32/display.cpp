@@ -264,6 +264,7 @@ static void draw_status(void)
 	static uint16_t s_wpm = 0xFFFF;
 	static uint8_t s_mode = 0xFF;
 	static uint8_t s_tone = 0xFF;
+	static uint16_t s_thz = 0xFFFF;
 	static uint8_t s_gate = 0xFF;
 	static uint16_t s_peak = 0xFFFF;
 	static uint32_t s_peak_ms = 0;
@@ -271,6 +272,7 @@ static void draw_status(void)
 	uint16_t wpm = decoder_wpm();
 	uint8_t mode = decoder_mode();
 	uint8_t tone = dsp_tone_index();
+	uint16_t thz = dsp_tone_hz();
 	uint8_t gate = decoder_gate();
 	uint16_t peak = dsp_peak_hz();
 
@@ -280,12 +282,13 @@ static void draw_status(void)
 		peak = s_peak;
 	}
 
-	if (wpm == s_wpm && mode == s_mode && tone == s_tone &&
+	if (wpm == s_wpm && mode == s_mode && tone == s_tone && thz == s_thz &&
 	    gate == s_gate && peak == s_peak) {
 		return;
 	}
 	if (peak != s_peak) s_peak_ms = now;
-	s_wpm = wpm; s_mode = mode; s_tone = tone; s_gate = gate; s_peak = peak;
+	s_wpm = wpm; s_mode = mode; s_tone = tone; s_thz = thz;
+	s_gate = gate; s_peak = peak;
 
 	char buf[24];
 	status_spr.fillSprite(C_STATUS_BG);
@@ -303,11 +306,16 @@ static void draw_status(void)
 	snprintf(buf, sizeof(buf), "%2dWPM", wpm);
 	status_spr.print(buf);
 
-	// 選択トーン周波数 (タッチボタン)
+	// 選択トーン周波数 (タッチボタン)。AUTO時は追従周波数を表示
 	status_spr.drawRoundRect(98, 0, 104, 18, 4, C_SEP);
-	status_spr.setTextColor(C_STATUS_TX);
+	if (dsp_tone_is_auto()) {
+		status_spr.setTextColor(C_GATE);
+		snprintf(buf, sizeof(buf), "AUTO %4dHz", thz);
+	} else {
+		status_spr.setTextColor(C_STATUS_TX);
+		snprintf(buf, sizeof(buf), "TONE %4dHz", thz);
+	}
 	status_spr.setCursor(106, 1);
-	snprintf(buf, sizeof(buf), "TONE %4dHz", dsp_tone_hz());
 	status_spr.print(buf);
 
 	// 実測ピーク周波数
@@ -379,9 +387,10 @@ static void draw_fft_panel(void)
 		fft_spr.drawFastVLine(x_hi, plot_top - 2, plot_h + 4, C_MARKER);
 	}
 
-	// 選択中トーンの検出帯域 (Goertzel 1ビン幅 = 中心±83Hz) を帯で表示
+	// 選択中トーンの検出帯域 (Goertzel 1ビン幅 = 中心±41.7Hz) を帯で表示
+	// AUTO時は追従先へスライドする
 	{
-		const float half_bw = (float)DSP_SAMPLE_RATE / (float)DSP_HOP * 0.5f;
+		const float half_bw = (float)DSP_SAMPLE_RATE / (float)DSP_GATE_WIN * 0.5f;
 		int xc = eq_x_of_hz((float)dsp_tone_hz());
 		int hw = (int)(half_bw / EQ_HZ_PER_PX + 0.5f);
 		fft_spr.fillRect(xc - hw, plot_top - 2, hw * 2 + 1, plot_h + 4, C_TONE_BAND);
@@ -663,7 +672,7 @@ static void poll_touch(void)
 					decoder_toggle_mode();
 					last_act_ms = t;
 				} else if (x >= 92 && x < 210) {
-					dsp_set_tone((uint8_t)((dsp_tone_index() + 1) % DSP_TONE_COUNT));
+					dsp_set_tone((uint8_t)((dsp_tone_index() + 1) % (DSP_TONE_COUNT + 1)));
 					last_act_ms = t;
 				}
 			} else if (y >= PANEL_TOP && x < PANEL_W) {

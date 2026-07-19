@@ -18,11 +18,14 @@ typedef struct {
 } scope_col_t;
 
 #define DSP_TONE_COUNT 5            // 600/700/800/900/1000Hz
+#define DSP_TONE_AUTO DSP_TONE_COUNT // AUTO: 600〜1000Hzの最強ピークへ自動同調
+#define DSP_GATE_WIN 96             // トーン判定Goertzel窓 (12ms、帯域83.3Hz)
 
 void dsp_start(void);
-void dsp_set_tone(uint8_t idx);
+void dsp_set_tone(uint8_t idx);     // 0..4=手動 / DSP_TONE_AUTO=自動
 uint8_t dsp_tone_index(void);
-uint16_t dsp_tone_hz(void);
+uint8_t dsp_tone_is_auto(void);
+uint16_t dsp_tone_hz(void);         // 現在のゲート中心周波数 (AUTO時は追従値)
 uint16_t dsp_tone_hz_at(uint8_t idx);
 // 直近 n カラム分を out[0]=最古 .. out[n-1]=最新 でコピー
 int dsp_get_scope(scope_col_t *out, int n);

@@ -12,8 +12,9 @@
 //	        下1/3 左FFT / 右オシロ (生波形+エンベロープ+キー判定を同期表示)
 //	- 操作: タッチパネル (XPT2046)
 //	    ステータス行の US/JP バッジ    = 欧文/和文モード切替
-//	    ステータス行の TONE 表示       = トーン周波数切替 (600〜1000Hz)
-//	    FFT パネル内タップ             = タップ位置に最も近いトーンを選択
+//	    ステータス行の TONE 表示       = AUTO→600→700→800→900→1000 の順送り
+//	      (AUTO = 600〜1000Hz の最強信号へ自動同調。デフォルト)
+//	    FFT パネル内タップ             = タップ位置に最も近いトーンを手動選択
 //	  BOOTボタン(GPIO0) でも操作可: 短押し=トーン切替 / 長押し=モード切替
 //
 //	原作: Hjalmar Skovholm Hansen OZ1JHM (GPL)
@@ -96,7 +97,7 @@ static void poll_button(void)
 	} else if (!now && pressed) {
 		pressed = 0;
 		if (!long_done && (millis() - press_ms) >= 30) {
-			dsp_set_tone((uint8_t)((dsp_tone_index() + 1) % DSP_TONE_COUNT));
+			dsp_set_tone((uint8_t)((dsp_tone_index() + 1) % (DSP_TONE_COUNT + 1)));
 		}
 	}
 }

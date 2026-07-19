@@ -30,7 +30,12 @@ static int32_t diag_smax_max = 0;
 #endif
 
 static const uint16_t tone_tbl[DSP_TONE_COUNT] = { 600, 700, 800, 900, 1000 };
-static volatile uint8_t tone_sel = 0;   // 600Hz
+static volatile uint8_t tone_sel = DSP_TONE_AUTO;   // デフォルトはAUTO
+static volatile uint16_t gate_hz = 700;             // ゲート中心 (AUTO待機時は帯域中央)
+
+// AUTO同調の候補追跡
+static uint16_t cand_hz = 0;
+static uint8_t cand_cnt = 0;
 
 static int16_t sample_ring[512];
 static uint16_t sample_pos = 0;
@@ -53,9 +58,14 @@ static void gate_update_coeff(void);
 
 void dsp_set_tone(uint8_t idx)
 {
-	if (idx >= DSP_TONE_COUNT) idx = 0;
+	if (idx > DSP_TONE_AUTO) idx = 0;
 	tone_sel = idx;
+	if (idx != DSP_TONE_AUTO) {
+		gate_hz = tone_tbl[idx];
+	}
+	// AUTO選択時は現在の中心を維持したまま追従を再開する
 	side_ema_started = 0;
+	cand_cnt = 0;
 	gate_update_coeff();
 }
 
@@ -64,9 +74,14 @@ uint8_t dsp_tone_index(void)
 	return tone_sel;
 }
 
+uint8_t dsp_tone_is_auto(void)
+{
+	return (tone_sel == DSP_TONE_AUTO) ? 1 : 0;
+}
+
 uint16_t dsp_tone_hz(void)
 {
-	return tone_tbl[tone_sel];
+	return gate_hz;
 }
 
 uint16_t dsp_tone_hz_at(uint8_t idx)
@@ -100,8 +115,12 @@ uint16_t dsp_peak_hz(void)
 
 //==================================================================
 //	トーン判定: 3ビン float Goertzel (CH32版 v1.8/1.9 と同一方式)
-//	中心 = 選択トーン、サイド = ±2 DFTビン (±333.33Hz @ 8000Hz/48)。
-//	サイドは矩形窓 Dirichlet核のヌル上にあり、純音はサイドへ漏れない。
+//	窓長は 96 サンプル (12ms)、ホップ 48 (判定周期 6ms は不変)。
+//	帯域幅 83.3Hz と CH32版(167Hz)の半分で、帯域内ノイズ電力が
+//	半減 = SNR +3dB。重畳バンドノイズ下の弱信号対策。
+//	代償: トーン同調が中心±40Hz程度までシビアになる。
+//	サイド = ±333.33Hz は96サンプル窓では±4 DFTビンにあたり、
+//	引き続き矩形窓 Dirichlet核のヌル上 (純音はサイドへ漏れない)。
 //	(FFTゲートはヌル配置が崩れトーンの周波数ズレに弱く、実機で
 //	 デコード率が劣化したため廃止。FFT はスペアナ表示専用)
 //	戻り値: デコーダ正規化後の中心マグニチュード
@@ -112,8 +131,8 @@ static float g_coeff_h = 0.0f;
 
 static void gate_update_coeff(void)
 {
-	float fc = (float)tone_tbl[tone_sel];
-	float fstep = (float)DSP_SAMPLE_RATE / (float)DSP_HOP;   // 166.67Hz/bin
+	float fc = (float)gate_hz;
+	float fstep = (float)DSP_SAMPLE_RATE / (float)DSP_HOP;   // 166.67Hz
 	g_coeff_c = 2.0f * cosf(2.0f * (float)M_PI * fc / (float)DSP_SAMPLE_RATE);
 	g_coeff_l = 2.0f * cosf(2.0f * (float)M_PI * (fc - 2.0f * fstep) / (float)DSP_SAMPLE_RATE);
 	g_coeff_h = 2.0f * cosf(2.0f * (float)M_PI * (fc + 2.0f * fstep) / (float)DSP_SAMPLE_RATE);
@@ -128,20 +147,23 @@ static inline int32_t goertzel_mag(float q1, float q2, float coeff)
 	return (int32_t)(sqrtf(mag2) + 0.5f);
 }
 
-static int32_t process_gate(const int16_t *s, int n)
+static int32_t process_gate(void)
 {
-	// ブロック平均を除去 (CH32版と同じ)
+	// 直近 DSP_GATE_WIN サンプルを窓として使う (ホップ48で50%重複)
+	float win[DSP_GATE_WIN];
 	float mean = 0.0f;
-	for (int i = 0; i < n; i++) {
-		mean += (float)s[i];
+	uint16_t base = (uint16_t)((sample_pos + 512 - DSP_GATE_WIN) % 512);
+	for (int i = 0; i < DSP_GATE_WIN; i++) {
+		win[i] = (float)sample_ring[(base + i) % 512];
+		mean += win[i];
 	}
-	mean /= (float)n;
+	mean /= (float)DSP_GATE_WIN;
 
 	float q1c = 0.0f, q2c = 0.0f;
 	float q1l = 0.0f, q2l = 0.0f;
 	float q1h = 0.0f, q2h = 0.0f;
-	for (int i = 0; i < n; i++) {
-		const float x = (float)s[i] - mean;
+	for (int i = 0; i < DSP_GATE_WIN; i++) {
+		const float x = win[i] - mean;
 		float q0;
 		q0 = g_coeff_c * q1c - q2c + x; q2c = q1c; q1c = q0;
 		q0 = g_coeff_l * q1l - q2l + x; q2l = q1l; q1l = q0;
@@ -230,6 +252,64 @@ static void process_spectrum(void)
 		}
 	}
 
+	// AUTOモード: 600〜1000Hz (±1ビンの探索マージン付き) の最強ピークへ
+	// ゲート中心を自動同調する。
+	// - ピークが帯域内ノイズ床(ピーク±1ビン除外の平均)の3倍以上のとき
+	//   だけ「信号」とみなす (ノイズの偶発ピークを追わない)
+	// - 3フレーム(約100ms)連続で±20Hz以内に立ったときだけ引き込む
+	// - ゲートON中(受信中)は±25Hzの微修正のみ許可 (局の乗り換え禁止)
+	// - 信号が消えたら最後の周波数をホールド
+	if (tone_sel == DSP_TONE_AUTO) {
+		const int lo = 18;   // 562.5Hz
+		const int hi = 33;   // 1031.25Hz
+		int bi = lo;
+		float bm = 0.0f;
+		for (int i = lo; i <= hi; i++) {
+			if (mags[i] > bm) { bm = mags[i]; bi = i; }
+		}
+		float nf = 0.0f;
+		int nn = 0;
+		for (int i = lo; i <= hi; i++) {
+			if (i >= bi - 1 && i <= bi + 1) continue;
+			nf += mags[i];
+			nn++;
+		}
+		nf = (nn > 0) ? (nf / (float)nn) : 0.0f;
+		if (bm >= (float)DSP_PEAK_MIN && bm > nf * 3.0f && bi > lo && bi < hi) {
+			float pa = mags[bi - 1], pb = mags[bi], pc = mags[bi + 1];
+			float den = pa - 2.0f * pb + pc;
+			float pd = (den != 0.0f) ? 0.5f * (pa - pc) / den : 0.0f;
+			if (pd < -0.5f) pd = -0.5f;
+			if (pd > 0.5f) pd = 0.5f;
+			uint16_t fpk = (uint16_t)(((float)bi + pd) *
+			               ((float)DSP_SAMPLE_RATE / (float)DSP_SPEC_N) + 0.5f);
+			int cd = (int)fpk - (int)cand_hz;
+			if (cand_cnt > 0 && cd >= -20 && cd <= 20) {
+				cand_hz = (uint16_t)(((int)cand_hz + (int)fpk) / 2);
+				if (cand_cnt < 100) cand_cnt++;
+			} else {
+				cand_hz = fpk;
+				cand_cnt = 1;
+			}
+			if (cand_cnt >= 3) {
+				uint16_t nh = cand_hz;
+				if (nh < tone_tbl[0]) nh = tone_tbl[0];
+				if (nh > tone_tbl[DSP_TONE_COUNT - 1]) nh = tone_tbl[DSP_TONE_COUNT - 1];
+				int diff = (int)nh - (int)gate_hz;
+				if (diff < 0) diff = -diff;
+				if (diff > 5 && (diff <= 25 || !decoder_gate())) {
+					if (diff > 100) {
+						side_ema_started = 0;
+					}
+					gate_hz = nh;
+					gate_update_coeff();
+				}
+			}
+		} else {
+			cand_cnt = 0;
+		}
+	}
+
 	uint16_t pk = 0;
 	if (max_m >= (float)DSP_PEAK_MIN && max_i > 4 && max_i < DSP_SPEC_BINS) {
 		// 放物線補間でビン間周波数を推定
@@ -267,20 +347,18 @@ static void dsp_task(void *arg)
 		size_t got = audio_read(raw, DSP_HOP);
 		if (got == 0) continue;
 
-		static int16_t hop_s[DSP_HOP];
 		int16_t mn = 32767, mx = -32768;
 		for (size_t i = 0; i < got; i++) {
 			int32_t r = (int32_t)raw[i] << 8;             // Q8
 			dc_est += (r - dc_est) >> 10;                 // ゆっくり直流追従
 			int16_t s = (int16_t)(((r - dc_est) >> 8) / 2); // ±1024 (CH32版相当の検出感度)
-			hop_s[i] = s;
 			sample_ring[sample_pos] = s;
 			sample_pos = (uint16_t)((sample_pos + 1) % 512);
 			if (s < mn) mn = s;
 			if (s > mx) mx = s;
 		}
 
-		int32_t mag = process_gate(hop_s, (int)got);
+		int32_t mag = process_gate();
 		uint16_t mag16 = (mag > 65535) ? 65535 : (uint16_t)((mag < 0) ? 0 : mag);
 
 		// スコープ列: SCOPE_DECIM hop 分をまとめて1列 (掃引速度 1/2)
