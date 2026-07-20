@@ -1,8 +1,8 @@
 //
 //	画面構成 (320x240 横):
-//	  y   0..17  ステータス行 (モード / WPM / トーン / ピーク周波数 / 信号)
-//	  y  20..163 デコード文字エリア 15列 x 6行 (24x24 全角フォント、ピッチ21px)
-//	  y 166..239 左: FFTスペクトラム / 右: オシロスコープ
+//	  y   0..26  ステータス行 (US/JPボタン / SPEED / トーン切替 < chip >)
+//	  y  28..171 デコード文字エリア 16列 x 6行 (24x24 全角フォント、ピッチ20px)
+//	  y 173..239 左: FFTスペクトラム(PK表示) / 右: オシロスコープ(波形ON/OFFボタン)
 //	オシロは生波形(min/maxバンド)・トーンエンベロープ・キー判定を
 //	同一時間軸(1列=6ms)で色分け重畳する。
 //
@@ -14,8 +14,8 @@
 #include "decode.h"
 #include "dsp.h"
 
-#define STATUS_H 18
-#define TEXT_TOP 20
+#define STATUS_H 27
+#define TEXT_TOP 28
 #define TEXT_X0 0
 #define TEXT_COLS 16
 #define TEXT_ROWS 6
@@ -24,8 +24,8 @@
 #define CELL_W 20
 #define CELL_H 24
 #define GLYPH_W 24
-#define PANEL_TOP 166
-#define PANEL_H 74
+#define PANEL_TOP 173
+#define PANEL_H 67
 #define PANEL_W 160
 #define SCOPE_COLS 150
 
@@ -52,6 +52,17 @@
 #define C_ENV       lgfx::color565(250, 199, 117)
 #define C_GATE      lgfx::color565(90, 220, 120)
 #define C_GATE_OFF  lgfx::color565(35, 55, 45)
+// ボタン統一スタイル (ON/OFF)
+#define C_BTN_BG     lgfx::color565(18, 45, 80)
+#define C_BTN_BD     lgfx::color565(90, 150, 210)
+#define C_BTN_TX     lgfx::color565(200, 230, 255)
+#define C_BTN_OFF_BG lgfx::color565(8, 18, 30)
+#define C_BTN_OFF_BD lgfx::color565(45, 65, 90)
+#define C_BTN_OFF_TX lgfx::color565(90, 110, 130)
+// JPモードボタン (US=青 / JP=アンバーで区別)
+#define C_BTNJP_BG   lgfx::color565(110, 70, 15)
+#define C_BTNJP_BD   lgfx::color565(250, 199, 117)
+#define C_BTNJP_TX   lgfx::color565(255, 232, 190)
 
 static LGFX lcd;
 static LGFX_Sprite fft_spr(&lcd);
@@ -259,77 +270,84 @@ static void text_putchar(uint8_t ch)
 //==================================================================
 //	ステータス行
 //==================================================================
+// スコープ波形の表示ON/OFF (タッチで切替、デフォルト全ON)
+static uint8_t show_key = 1;
+static uint8_t show_env = 1;
+static uint8_t show_raw = 1;
+
+// 色指定つきボタン描画
+static void draw_button_col(LGFX_Sprite *spr, int x, int y, int w, int h,
+                            const char *label, uint16_t bg, uint16_t bd, uint16_t tx)
+{
+	spr->fillRoundRect(x, y, w, h, 4, bg);
+	spr->drawRoundRect(x, y, w, h, 4, bd);
+	if (label[0] != '\0') {
+		spr->setFont(&fonts::AsciiFont8x16);
+		spr->setTextColor(tx);
+		spr->setCursor(x + (w - (int)strlen(label) * 8) / 2, y + (h - 16) / 2);
+		spr->print(label);
+	}
+}
+
+// 統一スタイルのボタン描画 (on=0 で消灯表示)
+static void draw_panel_button(LGFX_Sprite *spr, int x, int y, int w, int h,
+                              const char *label, uint8_t on)
+{
+	draw_button_col(spr, x, y, w, h, label,
+	                on ? C_BTN_BG : C_BTN_OFF_BG,
+	                on ? C_BTN_BD : C_BTN_OFF_BD,
+	                on ? C_BTN_TX : C_BTN_OFF_TX);
+}
+
 static void draw_status(void)
 {
 	static uint16_t s_wpm = 0xFFFF;
 	static uint8_t s_mode = 0xFF;
 	static uint8_t s_tone = 0xFF;
 	static uint16_t s_thz = 0xFFFF;
-	static uint8_t s_gate = 0xFF;
-	static uint16_t s_peak = 0xFFFF;
-	static uint32_t s_peak_ms = 0;
 
 	uint16_t wpm = decoder_wpm();
 	uint8_t mode = decoder_mode();
 	uint8_t tone = dsp_tone_index();
 	uint16_t thz = dsp_tone_hz();
-	uint8_t gate = decoder_gate();
-	uint16_t peak = dsp_peak_hz();
 
-	// ピーク周波数の更新は250ms毎に間引く
-	uint32_t now = millis();
-	if ((now - s_peak_ms) < 250 && peak != 0 && s_peak != 0xFFFF) {
-		peak = s_peak;
-	}
-
-	if (wpm == s_wpm && mode == s_mode && tone == s_tone && thz == s_thz &&
-	    gate == s_gate && peak == s_peak) {
+	if (wpm == s_wpm && mode == s_mode && tone == s_tone && thz == s_thz) {
 		return;
 	}
-	if (peak != s_peak) s_peak_ms = now;
 	s_wpm = wpm; s_mode = mode; s_tone = tone; s_thz = thz;
-	s_gate = gate; s_peak = peak;
 
 	char buf[24];
 	status_spr.fillSprite(C_STATUS_BG);
 	status_spr.setFont(&fonts::AsciiFont8x16);
 
-	// モードバッジ (タッチボタン)
-	status_spr.fillRoundRect(2, 1, 30, 16, 3, C_BADGE_BG);
-	status_spr.setTextColor(C_BADGE_TX);
-	status_spr.setCursor(9, 1);
-	status_spr.print((mode == MODE_US) ? "US" : "JP");
+	// US/JP モード切替ボタン (横長、モードで色分け)
+	if (mode == MODE_US) {
+		draw_panel_button(&status_spr, 2, 2, 64, 23, "US", 1);
+	} else {
+		draw_button_col(&status_spr, 2, 2, 64, 23, "JP",
+		                C_BTNJP_BG, C_BTNJP_BD, C_BTNJP_TX);
+	}
 
-	// WPM
+	// 速度表示
 	status_spr.setTextColor(C_WPM);
-	status_spr.setCursor(40, 1);
-	snprintf(buf, sizeof(buf), "%2dWPM", wpm);
+	status_spr.setCursor(74, 6);
+	snprintf(buf, sizeof(buf), "SPEED:%2dWPM", wpm);
 	status_spr.print(buf);
 
-	// 選択トーン周波数 (タッチボタン)。AUTO時は追従周波数を表示
-	status_spr.drawRoundRect(98, 0, 104, 18, 4, C_SEP);
+	// トーン切替: < [AUTO/600/700/800/900/1000] >
+	draw_panel_button(&status_spr, 166, 2, 28, 23, "<", 1);
+	draw_panel_button(&status_spr, 196, 2, 92, 23, "", 1);
 	if (dsp_tone_is_auto()) {
 		status_spr.setTextColor(C_GATE);
-		snprintf(buf, sizeof(buf), "AUTO %4dHz", thz);
+		snprintf(buf, sizeof(buf), "AUTO");
 	} else {
-		status_spr.setTextColor(C_STATUS_TX);
-		snprintf(buf, sizeof(buf), "TONE %4dHz", thz);
+		status_spr.setTextColor(C_BTN_TX);
+		snprintf(buf, sizeof(buf), "%u", (unsigned)thz);
 	}
-	status_spr.setCursor(106, 1);
+	status_spr.setFont(&fonts::AsciiFont8x16);
+	status_spr.setCursor(196 + (92 - (int)strlen(buf) * 8) / 2, 6);
 	status_spr.print(buf);
-
-	// 実測ピーク周波数
-	status_spr.setTextColor(C_GATE);
-	status_spr.setCursor(210, 1);
-	if (peak != 0) {
-		snprintf(buf, sizeof(buf), "PK %4dHz", peak);
-	} else {
-		snprintf(buf, sizeof(buf), "PK ----");
-	}
-	status_spr.print(buf);
-
-	// 信号インジケータ
-	status_spr.fillCircle(310, 9, 5, gate ? C_GATE : C_GATE_OFF);
+	draw_panel_button(&status_spr, 290, 2, 28, 23, ">", 1);
 
 	status_spr.pushSprite(0, 0);
 }
@@ -343,8 +361,8 @@ static void draw_status(void)
 #define EQ_BIN_START 10          // 312.5Hz
 #define EQ_BAR_PITCH 5           // 5px/bin
 #define EQ_X0 6
-#define EQ_BASE_Y 62
-#define EQ_PLOT_H 50
+#define EQ_BASE_Y 54
+#define EQ_PLOT_H 42
 #define EQ_F_MIN 312.5f          // bin10 の中心周波数
 #define EQ_HZ_PER_PX (31.25f / (float)EQ_BAR_PITCH)
 
@@ -452,11 +470,33 @@ static void draw_fft_panel(void)
 		fft_spr.fillTriangle(xm - 3, EQ_BASE_Y + 9, xm + 3, EQ_BASE_Y + 9, xm, EQ_BASE_Y + 3, C_ENV);
 	}
 
+	// 実測ピーク周波数 (旧ステータス行から移設、1秒ホールド)
+	{
+		static uint16_t pk_hold = 0;
+		static uint32_t pk_ms = 0;
+		uint16_t pk = dsp_peak_hz();
+		uint32_t pk_now = millis();
+		if (pk != 0) {
+			pk_hold = pk;
+			pk_ms = pk_now;
+		}
+		char pkbuf[20];
+		if (pk_hold != 0 && (pk_now - pk_ms) < 1000) {
+			snprintf(pkbuf, sizeof(pkbuf), "Peak:%uHz", pk_hold);
+		} else {
+			snprintf(pkbuf, sizeof(pkbuf), "Peak:----");
+		}
+		fft_spr.setFont(&fonts::Font0);
+		fft_spr.setTextColor(C_LABEL);
+		fft_spr.setCursor(4, 3);
+		fft_spr.print("FFT");
+		fft_spr.setTextColor(C_GATE);
+		fft_spr.setCursor(PANEL_W - 4 - (int)strlen(pkbuf) * 6, 3);
+		fft_spr.print(pkbuf);
+	}
 	// 周波数目盛
 	fft_spr.setFont(&fonts::Font0);
 	fft_spr.setTextColor(C_LABEL);
-	fft_spr.setCursor(4, 3);
-	fft_spr.print("FFT 0.3-1.2k");
 	{
 		int x6 = eq_x_of_hz(600.0f);
 		int x10 = eq_x_of_hz(1000.0f);
@@ -483,10 +523,13 @@ static void draw_scope_panel(void)
 	dsp_get_scope(cols, SCOPE_COLS);
 
 	const int x0 = 4;
-	const int mid_y = 42;
-	const int half_h = 28;
-	const int env_base = 70;
-	const int env_h = 56;
+	const int plot_top = 12;              // KEY判定バーの行
+	const int wave_top = plot_top + 8;    // 波形上限: KEYバーの下に約5px空ける
+	const int plot_bot = 44;
+	const int mid_y = (wave_top + plot_bot) / 2;
+	const int half_h = (plot_bot - wave_top) / 2;
+	const int env_base = plot_bot;
+	const int env_h = plot_bot - wave_top;
 
 	// AGC (生波形/エンベロープ別)
 	float rmax = 0.0f, emax = 0.0f;
@@ -502,54 +545,51 @@ static void draw_scope_panel(void)
 
 	scope_spr.fillSprite(C_PANEL_BG);
 	scope_spr.drawRect(0, 0, PANEL_W, PANEL_H, C_FRAME);
-	scope_spr.drawFastHLine(x0, mid_y, SCOPE_COLS, lgfx::color565(20, 40, 55));
+	if (show_raw) {
+		scope_spr.drawFastHLine(x0, mid_y, SCOPE_COLS, lgfx::color565(20, 40, 55));
+	}
 
 	int prev_ey = -1;
 	for (int i = 0; i < SCOPE_COLS; i++) {
 		int x = x0 + i;
 
 		// 生波形 min/max バンド
-		int y1 = mid_y - (int)((float)cols[i].mx / raw_max * (float)half_h);
-		int y2 = mid_y - (int)((float)cols[i].mn / raw_max * (float)half_h);
-		if (y1 < mid_y - half_h) y1 = mid_y - half_h;
-		if (y2 > mid_y + half_h) y2 = mid_y + half_h;
-		if (y2 < y1) { int t = y1; y1 = y2; y2 = t; }
-		scope_spr.drawFastVLine(x, y1, y2 - y1 + 1, C_RAW);
+		if (show_raw) {
+			int y1 = mid_y - (int)((float)cols[i].mx / raw_max * (float)half_h);
+			int y2 = mid_y - (int)((float)cols[i].mn / raw_max * (float)half_h);
+			if (y1 < wave_top) y1 = wave_top;
+			if (y2 > plot_bot) y2 = plot_bot;
+			if (y2 < y1) { int t2 = y1; y1 = y2; y2 = t2; }
+			scope_spr.drawFastVLine(x, y1, y2 - y1 + 1, C_RAW);
+		}
 
 		// エンベロープ (下端基準の折れ線)
-		int eh = (int)((float)cols[i].mag / env_max * (float)env_h);
-		if (eh > env_h) eh = env_h;
-		int ey = env_base - eh;
-		if (prev_ey >= 0) {
-			scope_spr.drawLine(x - 1, prev_ey, x, ey, C_ENV);
+		if (show_env) {
+			int eh = (int)((float)cols[i].mag / env_max * (float)env_h);
+			if (eh > env_h) eh = env_h;
+			int ey = env_base - eh;
+			if (prev_ey >= 0) {
+				scope_spr.drawLine(x - 1, prev_ey, x, ey, C_ENV);
+			}
+			prev_ey = ey;
 		}
-		prev_ey = ey;
 
 		// キー判定バー
-		if (cols[i].gate) {
-			scope_spr.drawFastVLine(x, 12, 3, C_GATE);
+		if (show_key && cols[i].gate) {
+			scope_spr.drawFastVLine(x, plot_top + 1, 3, C_GATE);
 		}
 	}
 
+	// ラベル
 	scope_spr.setFont(&fonts::Font0);
 	scope_spr.setTextColor(C_LABEL);
 	scope_spr.setCursor(4, 3);
-	{
-		// 掃引はWPM追従で可変: 現在の画面スパンを表示
-		char lbl[16];
-		uint16_t span_ds = (uint16_t)(((uint32_t)SCOPE_COLS * dsp_scope_col_ms_x10()) / 1000U);
-		snprintf(lbl, sizeof(lbl), "SCOPE %u.%us", span_ds / 10, span_ds % 10);
-		scope_spr.print(lbl);
-	}
-	scope_spr.setTextColor(C_GATE);
-	scope_spr.setCursor(76, 3);
-	scope_spr.print("KEY");
-	scope_spr.setTextColor(C_ENV);
-	scope_spr.setCursor(102, 3);
-	scope_spr.print("ENV");
-	scope_spr.setTextColor(C_RAW);
-	scope_spr.setCursor(128, 3);
-	scope_spr.print("RAW");
+	scope_spr.print("SCOPE");
+
+	// 波形ON/OFFボタン (下段)
+	draw_panel_button(&scope_spr, 4, 46, 46, 18, "KEY", show_key);
+	draw_panel_button(&scope_spr, 57, 46, 46, 18, "ENV", show_env);
+	draw_panel_button(&scope_spr, 110, 46, 46, 18, "RAW", show_raw);
 
 	scope_spr.pushSprite(PANEL_W, PANEL_TOP);
 }
@@ -629,7 +669,7 @@ void display_splash(void)
 	delay(1500);
 	lcd.fillScreen(TFT_BLACK);
 	lcd.drawFastHLine(0, STATUS_H, 320, C_SEP);
-	lcd.drawFastHLine(0, PANEL_TOP - 2, 320, C_SEP);
+	lcd.drawFastHLine(0, PANEL_TOP - 1, 320, C_SEP);
 	draw_cursor(0, 0, 1);
 }
 
@@ -677,8 +717,26 @@ static void poll_touch(void)
 				if (x < 70) {
 					decoder_toggle_mode();
 					last_act_ms = t;
-				} else if (x >= 92 && x < 210) {
+				} else if (x >= 160 && x < 196) {
+					// < : トーンを前へ
+					dsp_set_tone((uint8_t)((dsp_tone_index() + DSP_TONE_COUNT) % (DSP_TONE_COUNT + 1)));
+					last_act_ms = t;
+				} else if (x >= 196) {
+					// 中央チップ / > : トーンを次へ
 					dsp_set_tone((uint8_t)((dsp_tone_index() + 1) % (DSP_TONE_COUNT + 1)));
+					last_act_ms = t;
+				}
+			} else if (y >= PANEL_TOP + 40 && x >= PANEL_W) {
+				// スコープの波形ON/OFFボタン (下段)
+				int lx = (int)x - PANEL_W;
+				if (lx >= 4 && lx < 51) {
+					show_key ^= 1;
+					last_act_ms = t;
+				} else if (lx >= 57 && lx < 104) {
+					show_env ^= 1;
+					last_act_ms = t;
+				} else if (lx >= 110 && lx < 157) {
+					show_raw ^= 1;
 					last_act_ms = t;
 				}
 			} else if (y >= PANEL_TOP && x < PANEL_W) {
@@ -723,22 +781,6 @@ void display_update(void)
 		text_putchar(ch);
 	}
 	draw_status();
-	// パネル描画は各10fpsに制限し、FFT/スコープを交互に転送する:
-	// 40MHz SPIバーストがADC入力(GPIO35)へ電気的に結合しノイズ床を
-	// 上げるため、バーストのデューティと1回の長さ(約5ms=1ブロック以下)
-	// を抑える (スコープは1列24msなので視覚上の差はない)
-#define PANEL_DRAW_MS 50
-	{
-		static uint32_t last_draw = 0;
-		static uint8_t which = 0;
-		uint32_t now = millis();
-		if ((now - last_draw) >= PANEL_DRAW_MS) {
-			last_draw = now;
-			if ((which ^= 1) != 0) {
-				draw_fft_panel();
-			} else {
-				draw_scope_panel();
-			}
-		}
-	}
+	draw_fft_panel();
+	draw_scope_panel();
 }
