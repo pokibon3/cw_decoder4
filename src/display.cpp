@@ -387,10 +387,10 @@ static void draw_fft_panel(void)
 		fft_spr.drawFastVLine(x_hi, plot_top - 2, plot_h + 4, C_MARKER);
 	}
 
-	// 選択中トーンの検出帯域 (Goertzel 1ビン幅 = 中心±41.7Hz) を帯で表示
-	// AUTO時は追従先へスライドする
+	// 選択中トーンの検出帯域 (Goertzel 1ビン幅、WPM追従で±42/±83Hz) を
+	// 帯で表示。AUTO時は追従先へスライドする
 	{
-		const float half_bw = (float)DSP_SAMPLE_RATE / (float)DSP_GATE_WIN * 0.5f;
+		const float half_bw = (float)dsp_gate_bw_hz() * 0.5f;
 		int xc = eq_x_of_hz((float)dsp_tone_hz());
 		int hw = (int)(half_bw / EQ_HZ_PER_PX + 0.5f);
 		fft_spr.fillRect(xc - hw, plot_top - 2, hw * 2 + 1, plot_h + 4, C_TONE_BAND);
@@ -534,7 +534,13 @@ static void draw_scope_panel(void)
 	scope_spr.setFont(&fonts::Font0);
 	scope_spr.setTextColor(C_LABEL);
 	scope_spr.setCursor(4, 3);
-	scope_spr.print("SCOPE 1.8s");
+	{
+		// 掃引はWPM追従で可変: 現在の画面スパンを表示
+		char lbl[16];
+		uint16_t span_ds = (uint16_t)(((uint32_t)SCOPE_COLS * dsp_scope_col_ms_x10()) / 1000U);
+		snprintf(lbl, sizeof(lbl), "SCOPE %u.%us", span_ds / 10, span_ds % 10);
+		scope_spr.print(lbl);
+	}
 	scope_spr.setTextColor(C_GATE);
 	scope_spr.setCursor(76, 3);
 	scope_spr.print("KEY");

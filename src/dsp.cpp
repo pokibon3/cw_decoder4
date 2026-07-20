@@ -15,7 +15,10 @@
 #include "float_fft.h"
 
 #define SCOPE_RING_SIZE 256
-#define SCOPE_DECIM 2           // スコープ1列 = 2 hop (12ms、約1.8s/画面)
+// スコープ掃引はWPM追従: 1列のhop数 = 60/WPM (Q8の分数蓄積でリニアに)。
+// 20WPM=3.0hop(18ms/列)、40WPM=1.5hop(9ms/列)。範囲外はクランプ。
+#define SCOPE_HOPS_Q8_MIN 384   // 1.5 hop (40WPM)
+#define SCOPE_HOPS_Q8_MAX 768   // 3.0 hop (20WPM以下)
 #define SPEC_INTERVAL_HOPS 6    // 36ms 毎 (約28fps)
 #define DSP_PEAK_MIN 2400       // ピーク周波数表示のしきい値
 #define DSP_DIAG 0              // 毎秒 blk/s・mag統計をシリアル出力
@@ -43,6 +46,7 @@ static int32_t dc_est = 2048 * 256;   // 生ADC値の直流分 (Q8)
 
 static scope_col_t scope_ring[SCOPE_RING_SIZE];
 static uint16_t scope_pos = 0;
+static volatile uint16_t scope_period_q8 = 768;   // 現在の1列hop数 (Q8)
 
 static uint16_t spec_mag[DSP_SPEC_BINS + 1];
 static uint16_t peak_hz = 0;
@@ -51,6 +55,12 @@ static float hann[DSP_SPEC_N];
 static int32_t side_ema_l = 0;
 static int32_t side_ema_h = 0;
 static uint8_t side_ema_started = 0;
+
+// トーン判定窓長 (サンプル数)。WPM追従で切替:
+// 12ms窓(96)はエッジが±6msなまり、45WPM(ギャップ27ms)では要素間
+// ギャップが20ms未満に潰れて短点が融合する。高速時は v1.9 実証済みの
+// 6ms窓(48)へ戻す。ヒステリシス: ≥32WPMで48 / ≤28WPMで96。
+static volatile uint8_t gate_win = DSP_GATE_WIN;
 
 static portMUX_TYPE dsp_mux = portMUX_INITIALIZER_UNLOCKED;
 
@@ -113,6 +123,17 @@ uint16_t dsp_peak_hz(void)
 	return peak_hz;
 }
 
+uint16_t dsp_scope_col_ms_x10(void)
+{
+	// 1 hop = 6ms → 0.1ms単位で 60
+	return (uint16_t)(((uint32_t)scope_period_q8 * 60U) >> 8);
+}
+
+uint16_t dsp_gate_bw_hz(void)
+{
+	return (uint16_t)(DSP_SAMPLE_RATE / gate_win);
+}
+
 //==================================================================
 //	トーン判定: 3ビン float Goertzel (CH32版 v1.8/1.9 と同一方式)
 //	窓長は 96 サンプル (12ms)、ホップ 48 (判定周期 6ms は不変)。
@@ -149,20 +170,21 @@ static inline int32_t goertzel_mag(float q1, float q2, float coeff)
 
 static int32_t process_gate(void)
 {
-	// 直近 DSP_GATE_WIN サンプルを窓として使う (ホップ48で50%重複)
+	// 直近 gate_win サンプルを窓として使う (96時はホップ48で50%重複)
+	const int n = gate_win;
 	float win[DSP_GATE_WIN];
 	float mean = 0.0f;
-	uint16_t base = (uint16_t)((sample_pos + 512 - DSP_GATE_WIN) % 512);
-	for (int i = 0; i < DSP_GATE_WIN; i++) {
+	uint16_t base = (uint16_t)((sample_pos + 512 - n) % 512);
+	for (int i = 0; i < n; i++) {
 		win[i] = (float)sample_ring[(base + i) % 512];
 		mean += win[i];
 	}
-	mean /= (float)DSP_GATE_WIN;
+	mean /= (float)n;
 
 	float q1c = 0.0f, q2c = 0.0f;
 	float q1l = 0.0f, q2l = 0.0f;
 	float q1h = 0.0f, q2h = 0.0f;
-	for (int i = 0; i < DSP_GATE_WIN; i++) {
+	for (int i = 0; i < n; i++) {
 		const float x = win[i] - mean;
 		float q0;
 		q0 = g_coeff_c * q1c - q2c + x; q2c = q1c; q1c = q0;
@@ -252,16 +274,23 @@ static void process_spectrum(void)
 		}
 	}
 
-	// AUTOモード: 600〜1000Hz (±1ビンの探索マージン付き) の最強ピークへ
-	// ゲート中心を自動同調する。
+	// AUTOモード: 550〜1000Hz (±1ビン強の探索マージン付き) の最強ピークへ
+	// ゲート中心を自動同調する (手動TONEは600〜1000のまま)。
+	// 注意: 500Hz台へロックすると下側サイドが167Hz付近に落ちるため、
+	// 低域ノイズ環境ではスケルチが締まり感度が下がる場合がある。
 	// - ピークが帯域内ノイズ床(ピーク±1ビン除外の平均)の3倍以上のとき
 	//   だけ「信号」とみなす (ノイズの偶発ピークを追わない)
 	// - 3フレーム(約100ms)連続で±20Hz以内に立ったときだけ引き込む
 	// - ゲートON中(受信中)は±25Hzの微修正のみ許可 (局の乗り換え禁止)
 	// - 信号が消えたら最後の周波数をホールド
+#define DSP_AUTO_HZ_MIN 550
+#define DSP_AUTO_HZ_MAX 1000
+// AUTO引き込みの絶対床: 主判定は相対条件(ノイズ床3倍+3フレーム一致)で、
+// これは無音時の誤ロックを防ぐ最低限の値 (PK表示のしきい値とは別)
+#define DSP_AUTO_MIN_MAG 800
 	if (tone_sel == DSP_TONE_AUTO) {
-		const int lo = 18;   // 562.5Hz
-		const int hi = 33;   // 1031.25Hz
+		const int lo = 16;   // 500Hz (550Hz - 1.5bin)
+		const int hi = 33;   // 1031.25Hz (1000Hz + 1bin)
 		int bi = lo;
 		float bm = 0.0f;
 		for (int i = lo; i <= hi; i++) {
@@ -275,7 +304,20 @@ static void process_spectrum(void)
 			nn++;
 		}
 		nf = (nn > 0) ? (nf / (float)nn) : 0.0f;
-		if (bm >= (float)DSP_PEAK_MIN && bm > nf * 3.0f && bi > lo && bi < hi) {
+#if DSP_DIAG
+		{
+			static uint32_t at_last_ms = 0;
+			uint32_t at_now = millis();
+			if ((at_now - at_last_ms) >= 1000) {
+				at_last_ms = at_now;
+				Serial.printf("[auto] bi=%d(%dHz) bm=%d nf=%d cand=%u cnt=%u gate_hz=%u dg=%d\n",
+				              bi, (int)(bi * 31.25f), (int)bm, (int)nf,
+				              (unsigned)cand_hz, (unsigned)cand_cnt,
+				              (unsigned)gate_hz, (int)decoder_gate());
+			}
+		}
+#endif
+		if (bm >= (float)DSP_AUTO_MIN_MAG && bm > nf * 3.0f && bi > lo && bi < hi) {
 			float pa = mags[bi - 1], pb = mags[bi], pc = mags[bi + 1];
 			float den = pa - 2.0f * pb + pc;
 			float pd = (den != 0.0f) ? 0.5f * (pa - pc) / den : 0.0f;
@@ -293,8 +335,8 @@ static void process_spectrum(void)
 			}
 			if (cand_cnt >= 3) {
 				uint16_t nh = cand_hz;
-				if (nh < tone_tbl[0]) nh = tone_tbl[0];
-				if (nh > tone_tbl[DSP_TONE_COUNT - 1]) nh = tone_tbl[DSP_TONE_COUNT - 1];
+				if (nh < DSP_AUTO_HZ_MIN) nh = DSP_AUTO_HZ_MIN;
+				if (nh > DSP_AUTO_HZ_MAX) nh = DSP_AUTO_HZ_MAX;
 				int diff = (int)nh - (int)gate_hz;
 				if (diff < 0) diff = -diff;
 				if (diff > 5 && (diff <= 25 || !decoder_gate())) {
@@ -335,10 +377,11 @@ static void dsp_task(void *arg)
 {
 	static uint16_t raw[DSP_HOP];
 	uint8_t spec_div = 0;
-	uint8_t scope_phase = 0;
+	uint16_t col_acc_q8 = 0;
 	int16_t col_mn = 32767, col_mx = -32768;
-	uint16_t col_mags[SCOPE_DECIM] = { 0 };
-	uint8_t col_gate = 0;
+	uint16_t col_m1 = 0, col_m2 = 0;
+	uint8_t col_gate_cnt = 0;
+	uint8_t col_hops = 0;
 #if DSP_DIAG
 	uint32_t diag_last_ms = millis();
 #endif
@@ -361,39 +404,64 @@ static void dsp_task(void *arg)
 		int32_t mag = process_gate();
 		uint16_t mag16 = (mag > 65535) ? 65535 : (uint16_t)((mag < 0) ? 0 : mag);
 
-		// スコープ列: SCOPE_DECIM hop 分をまとめて1列
+		// ゲート窓長のWPM追従 (ヒステリシス付き)。切替時はサイドEMAを
+		// リセット (窓長で振幅スケールが変わるため)。適応しきい値は
+		// 数十msで自動追従する
+		{
+			uint16_t w = decoder_wpm();
+			uint8_t desired = gate_win;
+			if (w >= 32) {
+				desired = DSP_HOP;           // 48 (6ms窓、v1.9同等)
+			} else if (w != 0 && w <= 28) {
+				desired = DSP_GATE_WIN;      // 96 (12ms窓、+3dB)
+			}
+			if (desired != gate_win) {
+				gate_win = desired;
+				side_ema_started = 0;
+			}
+		}
+
+		// スコープ列: WPM追従の可変hop数をまとめて1列 (Q8で分数蓄積)
 		if (mn < col_mn) col_mn = mn;
 		if (mx > col_mx) col_mx = mx;
-		col_mags[scope_phase] = mag16;
-		col_gate = (uint8_t)(col_gate + decoder_gate());
-		if (++scope_phase >= SCOPE_DECIM) {
-			// エンベロープは「2番目に大きい値」を採用: LCD転送バースト等の
-			// 1ブロック限りの混入スパイクを表示から除去する
-			// (実信号のマークは全ブロックが高いので影響しない)
-			uint16_t m1 = 0, m2 = 0;
-			for (uint8_t i = 0; i < SCOPE_DECIM; i++) {
-				if (col_mags[i] > m1) {
-					m2 = m1;
-					m1 = col_mags[i];
-				} else if (col_mags[i] > m2) {
-					m2 = col_mags[i];
-				}
-			}
+		if (mag16 > col_m1) {
+			col_m2 = col_m1;
+			col_m1 = mag16;
+		} else if (mag16 > col_m2) {
+			col_m2 = mag16;
+		}
+		col_gate_cnt = (uint8_t)(col_gate_cnt + decoder_gate());
+		col_hops++;
+		col_acc_q8 += 256;
+		if (col_acc_q8 >= scope_period_q8) {
+			col_acc_q8 -= scope_period_q8;
 			taskENTER_CRITICAL(&dsp_mux);
 			scope_col_t *col = &scope_ring[scope_pos];
 			col->mn = col_mn;
 			col->mx = col_mx;
-			col->mag = m2;
-			// KEY は多数決 (4ブロック中2以上ONで列ON): OR だと短い要素間
-			// ギャップ(<24ms超過分)が飲み込まれ符号パターンに見えなくなる
-			col->gate = (col_gate >= SCOPE_DECIM / 2) ? 1 : 0;
+			// エンベロープは「2番目に大きい値」(2hop未満は最大値):
+			// LCD転送バースト等の1ブロック限りの混入スパイクを表示から除去
+			col->mag = (col_hops >= 2) ? col_m2 : col_m1;
+			// KEY は多数決 (半数以上ONで列ON): OR だと短い要素間ギャップが
+			// 飲み込まれ符号パターンに見えなくなる
+			col->gate = ((uint16_t)col_gate_cnt * 2 >= col_hops) ? 1 : 0;
 			scope_pos = (uint16_t)((scope_pos + 1) % SCOPE_RING_SIZE);
 			taskEXIT_CRITICAL(&dsp_mux);
-			scope_phase = 0;
 			col_mn = 32767;
 			col_mx = -32768;
-			for (uint8_t i = 0; i < SCOPE_DECIM; i++) col_mags[i] = 0;
-			col_gate = 0;
+			col_m1 = 0;
+			col_m2 = 0;
+			col_gate_cnt = 0;
+			col_hops = 0;
+			// 次列の周期をWPMから更新 (20WPM以下=2.0hop、40WPM=1.0hop)
+			{
+				uint16_t w = decoder_wpm();
+				if (w == 0) w = 20;
+				uint32_t q = (60UL << 8) / w;
+				if (q < SCOPE_HOPS_Q8_MIN) q = SCOPE_HOPS_Q8_MIN;
+				if (q > SCOPE_HOPS_Q8_MAX) q = SCOPE_HOPS_Q8_MAX;
+				scope_period_q8 = (uint16_t)q;
+			}
 		}
 
 		if (++spec_div >= SPEC_INTERVAL_HOPS) {
