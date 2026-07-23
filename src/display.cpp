@@ -599,7 +599,8 @@ static void draw_scope_panel(void)
 //==================================================================
 void display_init(void)
 {
-	lcd.init();
+	lcd.init_auto();              // ST7789 / ILI9341 (自動判定 or ビルドフラグ)
+	Serial.printf("[lcd] panel = %s\n", lcd.panel_name());
 	lcd.setRotation(1);           // 320x240 横
 	lcd.setColorDepth(16);
 	lcd.fillScreen(TFT_BLACK);
@@ -663,7 +664,11 @@ void display_splash(void)
 
 	lcd.setFont(&fonts::Font2);
 	lcd.setTextColor(C_LABEL);
-	lcd.drawString("ST7789 / LovyanGFX  -  Version 2.0", 160, 202);
+	{
+		char sub[48];
+		snprintf(sub, sizeof(sub), "%s / LovyanGFX  -  Version 2.0", lcd.panel_name());
+		lcd.drawString(sub, 160, 202);
+	}
 
 	lcd.setTextDatum(lgfx::textdatum_t::top_left);
 	delay(1500);
