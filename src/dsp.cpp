@@ -30,6 +30,8 @@ static int64_t diag_mag_sum = 0;
 static int64_t diag_side_sum = 0;
 static int64_t diag_smax_sum = 0;
 static int32_t diag_smax_max = 0;
+static int64_t diag_near_sum = 0;
+static int64_t diag_jit_sum = 0;
 #endif
 
 static const uint16_t tone_tbl[DSP_TONE_COUNT] = { 600, 700, 800, 900, 1000 };
@@ -147,16 +149,26 @@ uint16_t dsp_gate_bw_hz(void)
 //	戻り値: デコーダ正規化後の中心マグニチュード
 //==================================================================
 static float g_coeff_c = 0.0f;
-static float g_coeff_l = 0.0f;
-static float g_coeff_h = 0.0f;
+static float g_coeff_l = 0.0f;    // 遠サイド -333.33Hz (±2/±4 bin)
+static float g_coeff_h = 0.0f;    // 遠サイド +333.33Hz
+static float g_coeff_nl = 0.0f;   // 近サイド -166.67Hz (±1/±2 bin)
+static float g_coeff_nh = 0.0f;   // 近サイド +166.67Hz
+
+// 近サイド用EMA + 包絡線ジッタ
+static int32_t near_ema_l = 0;
+static int32_t near_ema_h = 0;
+static int32_t jitter_ema = 0;
+static int32_t mag_prev = 0;
 
 static void gate_update_coeff(void)
 {
 	float fc = (float)gate_hz;
 	float fstep = (float)DSP_SAMPLE_RATE / (float)DSP_HOP;   // 166.67Hz
-	g_coeff_c = 2.0f * cosf(2.0f * (float)M_PI * fc / (float)DSP_SAMPLE_RATE);
-	g_coeff_l = 2.0f * cosf(2.0f * (float)M_PI * (fc - 2.0f * fstep) / (float)DSP_SAMPLE_RATE);
-	g_coeff_h = 2.0f * cosf(2.0f * (float)M_PI * (fc + 2.0f * fstep) / (float)DSP_SAMPLE_RATE);
+	g_coeff_c  = 2.0f * cosf(2.0f * (float)M_PI * fc / (float)DSP_SAMPLE_RATE);
+	g_coeff_l  = 2.0f * cosf(2.0f * (float)M_PI * (fc - 2.0f * fstep) / (float)DSP_SAMPLE_RATE);
+	g_coeff_h  = 2.0f * cosf(2.0f * (float)M_PI * (fc + 2.0f * fstep) / (float)DSP_SAMPLE_RATE);
+	g_coeff_nl = 2.0f * cosf(2.0f * (float)M_PI * (fc - fstep) / (float)DSP_SAMPLE_RATE);
+	g_coeff_nh = 2.0f * cosf(2.0f * (float)M_PI * (fc + fstep) / (float)DSP_SAMPLE_RATE);
 }
 
 static inline int32_t goertzel_mag(float q1, float q2, float coeff)
@@ -184,17 +196,23 @@ static int32_t process_gate(void)
 	float q1c = 0.0f, q2c = 0.0f;
 	float q1l = 0.0f, q2l = 0.0f;
 	float q1h = 0.0f, q2h = 0.0f;
+	float q1nl = 0.0f, q2nl = 0.0f;
+	float q1nh = 0.0f, q2nh = 0.0f;
 	for (int i = 0; i < n; i++) {
 		const float x = win[i] - mean;
 		float q0;
-		q0 = g_coeff_c * q1c - q2c + x; q2c = q1c; q1c = q0;
-		q0 = g_coeff_l * q1l - q2l + x; q2l = q1l; q1l = q0;
-		q0 = g_coeff_h * q1h - q2h + x; q2h = q1h; q1h = q0;
+		q0 = g_coeff_c  * q1c  - q2c  + x; q2c  = q1c;  q1c  = q0;
+		q0 = g_coeff_l  * q1l  - q2l  + x; q2l  = q1l;  q1l  = q0;
+		q0 = g_coeff_h  * q1h  - q2h  + x; q2h  = q1h;  q1h  = q0;
+		q0 = g_coeff_nl * q1nl - q2nl + x; q2nl = q1nl; q1nl = q0;
+		q0 = g_coeff_nh * q1nh - q2nh + x; q2nh = q1nh; q1nh = q0;
 	}
 
 	int32_t mag_c = goertzel_mag(q1c, q2c, g_coeff_c);
 	int32_t mag_l = goertzel_mag(q1l, q2l, g_coeff_l);
 	int32_t mag_h = goertzel_mag(q1h, q2h, g_coeff_h);
+	int32_t mag_nl = goertzel_mag(q1nl, q2nl, g_coeff_nl);
+	int32_t mag_nh = goertzel_mag(q1nh, q2nh, g_coeff_nh);
 
 	int32_t side_inst = (mag_l < mag_h) ? mag_l : mag_h;
 	int32_t side_inst_max = (mag_l > mag_h) ? mag_l : mag_h;
@@ -202,9 +220,27 @@ static int32_t process_gate(void)
 		side_ema_started = 1;
 		side_ema_l = mag_l;
 		side_ema_h = mag_h;
+		near_ema_l = mag_nl;
+		near_ema_h = mag_nh;
+		jitter_ema = 0;
+		mag_prev = mag_c;
 	} else {
 		side_ema_l += (mag_l - side_ema_l) / 4;
 		side_ema_h += (mag_h - side_ema_h) / 4;
+		near_ema_l += (mag_nl - near_ema_l) / 4;
+		near_ema_h += (mag_nh - near_ema_h) / 4;
+	}
+	// 近サイド(±166.67Hz)。330Hz程度以上のフィルタノイズは通過帯域内の
+	// この位置が上がるが、純音(帯域<100Hz)はヌル上で低いまま。
+	// = 「トーンより広い帯域か」の判定。min採用で片側の隣接信号に耐性。
+	int32_t near_side = (near_ema_l < near_ema_h) ? near_ema_l : near_ema_h;
+	// 包絡線ジッタ: 中心マグニチュードのブロック間変化のEMA(α=1/8)。
+	// 純音は安定(小)、帯域制限ノイズはブロック毎に揺れる(大)。
+	{
+		int32_t d = mag_c - mag_prev;
+		if (d < 0) d = -d;
+		jitter_ema += (d - jitter_ema) >> 3;
+		mag_prev = mag_c;
 	}
 	// 比率判定用サイド: min(L,H) ではなく幾何平均 sqrt(L*H) を使う。
 	// 低域から通過帯域へ裾を引く傾斜ノイズでは、min が静かな上側だけを
@@ -223,14 +259,19 @@ static int32_t process_gate(void)
 	int32_t side_norm = side >> 2;
 	int32_t side_inst_norm = side_inst >> 2;
 	int32_t side_max_norm = side_max >> 2;
+	int32_t near_norm = near_side >> 2;
+	int32_t jitter_norm = jitter_ema >> 2;
 
-	decoder_process_block(mag_norm, side_norm, side_inst_norm, side_max_norm);
+	decoder_process_block(mag_norm, side_norm, side_inst_norm, side_max_norm,
+	                      near_norm, jitter_norm);
 
 #if DSP_DIAG
 	diag_blocks++;
 	diag_mag_sum += mag_norm;
 	diag_side_sum += side_norm;
 	diag_smax_sum += side_max_norm;
+	diag_near_sum += near_norm;
+	diag_jit_sum += jitter_norm;
 	if (mag_norm > diag_mag_max) diag_mag_max = mag_norm;
 	if (side_max_norm > diag_smax_max) diag_smax_max = side_max_norm;
 #endif
@@ -480,17 +521,21 @@ static void dsp_task(void *arg)
 			if ((now - diag_last_ms) >= 1000) {
 				diag_last_ms = now;
 				uint32_t n = (diag_blocks > 0) ? diag_blocks : 1;
-				Serial.printf("[dsp] blk/s=%u raw=%d..%d mag avg=%d max=%d side avg=%d smax avg=%d max=%d limit=%d\n",
+				Serial.printf("[dsp] blk/s=%u mag avg=%d max=%d side=%d near=%d jit=%d smax=%d limit=%d gate=%d hz=%u\n",
 				              (unsigned)diag_blocks,
-				              (int)diag_raw_mn, (int)diag_raw_mx,
 				              (int)(diag_mag_sum / n), (int)diag_mag_max,
 				              (int)(diag_side_sum / n),
-				              (int)(diag_smax_sum / n), (int)diag_smax_max,
-				              (int)decoder_maglimit());
+				              (int)(diag_near_sum / n),
+				              (int)(diag_jit_sum / n),
+				              (int)(diag_smax_sum / n),
+				              (int)decoder_maglimit(), (int)decoder_gate(),
+				              (unsigned)gate_hz);
 				diag_blocks = 0;
 				diag_mag_sum = 0;
 				diag_side_sum = 0;
 				diag_smax_sum = 0;
+				diag_near_sum = 0;
+				diag_jit_sum = 0;
 				diag_mag_max = 0;
 				diag_smax_max = 0;
 				diag_raw_mn = 32767;

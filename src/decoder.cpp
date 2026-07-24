@@ -14,6 +14,13 @@
 // トーン判定: 中心ビンがサイドレベルの何倍あれば正弦波とみなすか。
 #define TONE_SIDE_RATIO 3
 #define TONE_SIDE_RATIO_OFF_X10 25
+// 近サイド(±166.67Hz)比。純音は近サイド≒0で比が大、330Hz以上の
+// フィルタノイズは近サイド≒中心で比≒1になり棄却される。
+#define TONE_NEAR_RATIO 2
+#define TONE_NEAR_RATIO_OFF_X10 15
+// 包絡線ジッタ棄却: ジッタが中心の何割を超えたらノイズとみなすか (x10)。
+// 純音のマーク中はジッタ数%、帯域制限ノイズは30〜50%。3 = 30%。
+#define TONE_JITTER_OFF_X10 3
 // 実運用の中心速度帯 20〜35wpm の単位長範囲 (ms、マージン込み)。
 #define WPM_CORE_UNIT_MIN 30
 #define WPM_CORE_UNIT_MAX 66
@@ -259,7 +266,7 @@ void decoder_toggle_mode(void)
 //	ブロック処理本体 (CH32版 cwDecoder ループ1周分)
 //==================================================================
 void decoder_process_block(int32_t magnitude, int32_t side_mag, int32_t side_mag_inst,
-                           int32_t side_mag_max)
+                           int32_t side_mag_max, int32_t near_side, int32_t jitter)
 {
 	dec_ms += DEC_BLOCK_MS;
 
@@ -283,12 +290,20 @@ void decoder_process_block(int32_t magnitude, int32_t side_mag, int32_t side_mag
 	// 帯域外ノイズが下側サイドだけを上げつつ中心へ漏れると、静かな
 	// 上側サイドとの比較をすり抜けて偽符号が出る。本物のトーンは
 	// ±100Hz 程度ズレていても中心が両サイドより必ず大きい。
+	//
+	// さらに帯域制限ノイズ(狭帯域フィルタ後の白色ノイズ)対策:
+	//  近サイド(±166.67Hz): 中心 > 近サイド×比。フィルタ幅≧330Hz の
+	//  ノイズは近サイドが上がり比が小さくなって棄却、純音は通過。
+	// (包絡線ジッタ案はキーイングのエッジと区別できず実信号を削るため不採用)
+	(void)jitter;
 	{
 		uint8_t tone_on  = (((uint32_t)magnitude * 5U) > ((uint32_t)magnitudelimit * 3U)) &&
 		                   (magnitude > side_mag * TONE_SIDE_RATIO) &&
-		                   (magnitude > side_mag_max);
+		                   (magnitude > side_mag_max) &&
+		                   (magnitude > near_side * TONE_NEAR_RATIO);
 		uint8_t tone_off = (((uint32_t)magnitude * 5U) < ((uint32_t)magnitudelimit * 2U)) ||
-		                   (magnitude * 10 < side_mag * TONE_SIDE_RATIO_OFF_X10);
+		                   (magnitude * 10 < side_mag * TONE_SIDE_RATIO_OFF_X10) ||
+		                   (magnitude * 10 < near_side * TONE_NEAR_RATIO_OFF_X10);
 		if (tone_on) {
 			realstate = KEY_HIGH;
 		} else if (tone_off) {
