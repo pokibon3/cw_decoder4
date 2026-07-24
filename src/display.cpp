@@ -44,6 +44,9 @@
 #define C_LABEL     lgfx::color565(100, 125, 155)
 #define C_EQ_FILL   lgfx::color565(8, 65, 50)
 #define C_EQ_LINE   lgfx::color565(60, 230, 160)
+#define C_LVL_LO    lgfx::color565(45, 200, 120)   // 入力レベル: 適正
+#define C_LVL_MID   lgfx::color565(230, 180, 60)   // 入力レベル: やや高
+#define C_LVL_HI    lgfx::color565(235, 70, 60)    // 入力レベル: クリップ注意
 #define C_EQ_PEAK   lgfx::color565(210, 215, 225)
 #define C_MARKER    lgfx::color565(50, 75, 130)
 #define C_BAND      lgfx::color565(10, 24, 42)
@@ -493,6 +496,18 @@ static void draw_fft_panel(void)
 		fft_spr.setTextColor(C_GATE);
 		fft_spr.setCursor(PANEL_W - 4 - (int)strlen(pkbuf) * 6, 3);
 		fft_spr.print(pkbuf);
+
+		// 入力レベルメーター (フルスケール比。100%付近=クリップ注意)
+		{
+			const int bx = 28, by = 2, bw = 54, bh = 7;
+			uint8_t lv = dsp_input_level_pct();
+			int fw = (int)lv * bw / 100;
+			uint16_t col = (lv >= 90) ? C_LVL_HI : (lv >= 70) ? C_LVL_MID : C_LVL_LO;
+			fft_spr.drawRect(bx, by, bw, bh, C_FRAME);
+			if (fw > 0) fft_spr.fillRect(bx, by, fw, bh, col);
+			// 90%目盛(クリップ警戒線)
+			fft_spr.drawFastVLine(bx + bw * 90 / 100, by, bh, C_LVL_HI);
+		}
 	}
 	// 周波数目盛
 	fft_spr.setFont(&fonts::Font0);
@@ -633,7 +648,7 @@ void display_splash(void)
 	// タイトル (Orbitron: ネイティブ32px、拡大なし)
 	lcd.setFont(&fonts::Orbitron_Light_32);
 	lcd.setTextColor(C_STATUS_TX);
-	lcd.drawString("CW DECODER", 160, 76);
+	lcd.drawString("CW DECODER 4", 160, 76);
 
 	// モールス飾り: "CQ" (-.-. --.-)
 	{

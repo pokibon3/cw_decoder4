@@ -49,6 +49,7 @@ static int32_t dc_est = 2048 * 256;   // 生ADC値の直流分 (Q8)
 static scope_col_t scope_ring[SCOPE_RING_SIZE];
 static uint16_t scope_pos = 0;
 static volatile uint16_t scope_period_q8 = 768;   // 現在の1列hop数 (Q8)
+static volatile uint8_t input_pct = 0;            // 入力レベル (フルスケール比%)
 
 static uint16_t spec_mag[DSP_SPEC_BINS + 1];
 static uint16_t peak_hz = 0;
@@ -134,6 +135,11 @@ uint16_t dsp_scope_col_ms_x10(void)
 uint16_t dsp_gate_bw_hz(void)
 {
 	return (uint16_t)(DSP_SAMPLE_RATE / gate_win);
+}
+
+uint8_t dsp_input_level_pct(void)
+{
+	return input_pct;
 }
 
 //==================================================================
@@ -440,6 +446,18 @@ static void dsp_task(void *arg)
 			sample_pos = (uint16_t)((sample_pos + 1) % 512);
 			if (s < mn) mn = s;
 			if (s > mx) mx = s;
+		}
+
+		// 入力レベル(絶対): フルスケール ±1024 に対する%。
+		// ピーク保持+緩降下(時定数~0.2s)。100%付近はADCクリップの目安。
+		{
+			int32_t amp = (mx > -mn) ? mx : -mn;
+			static int32_t ipk = 0;
+			if (amp > ipk) ipk = amp;
+			else ipk -= (ipk >> 5) + 1;
+			if (ipk < 0) ipk = 0;
+			int32_t p = ipk * 100 / 1024;
+			input_pct = (uint8_t)((p > 100) ? 100 : p);
 		}
 
 		int32_t mag = process_gate();

@@ -57,6 +57,13 @@ static char sw_mode = MODE_US;
 static uint8_t lastChar = 0;
 static void (*emit_fn)(uint8_t ch) = nullptr;
 
+// 現在組み立て中の符号グループの直前ギャップ(先頭エレメント追加時に記録)。
+// 孤立した単発エレメント(ノイズ由来のE/T)を検出するのに使う。
+static uint32_t code_pre_gap = 0;
+// 孤立判定のしきい値(単位長の倍数)。前が これ以上の無音で単一エレメント
+// なら「散発ノイズ」とみなす(語間~7単位より大きめ)。
+#define ISOLATED_GAP_UNITS 6
+
 // デコーダ内部時刻 (ms)。millis() ではなくサンプル数由来のブロック
 // クロックを使う: I2S DMA のバッファリングでブロック処理がまとめて
 // 走ると、millis() ではマーク/スペース長がバッファ長単位に量子化され
@@ -195,6 +202,16 @@ static int decodeAscii(int16_t asciinumber)
 static void decode_and_display(void)
 {
 	if (strlen(code) == 0) return;
+	// 散発ノイズ対策: 長い無音の後の単発エレメント(孤立した . or -)は
+	// ノイズの兆候。そのたびに速度推定をゆっくり 20WPM(単位60ms)側へ
+	// 寄せる。単位が上がるとノイズマークが「短すぎ」判定になりEが減る。
+	// 本物の受信では孤立単発は出ないので通常の速度追従には影響しない。
+	if (strlen(code) == 1 && hightimesavg > 0 && hightimesavg < 60 &&
+	    code_pre_gap >= hightimesavg * ISOLATED_GAP_UNITS) {
+		hightimesavg += (60 - hightimesavg) / 8 + 1;
+		if (hightimesavg > 60) hightimesavg = 60;
+		wpm = (uint16_t)((1200 + hightimesavg / 2) / hightimesavg);
+	}
 	int16_t result = decode(code, &sw_mode);
 #if DEC_DIAG
 	Serial.printf("[dec] code=%-8s -> %d '%c'\n", code, result,
@@ -229,6 +246,7 @@ void decoder_init(void)
 	laststarttime = 0;
 	starttimehigh = 0;
 	startttimelow = 0;
+	code_pre_gap = 0;
 }
 
 void decoder_set_emit(void (*fn)(uint8_t ch))
@@ -361,7 +379,13 @@ void decoder_process_block(int32_t magnitude, int32_t side_mag, int32_t side_mag
 			Serial.printf("[dec] M %4lu u=%lu\n", (unsigned long)highduration,
 			              (unsigned long)hightimesavg);
 #endif
-			if (highduration >= 20) {
+			// 長い無音の後の孤立マークは速度推定に使わない: ノイズの単発が
+			// unit を自分の長さ(~36ms)へ引きずり下げるのを防ぐ。これが無いと
+			// 散発Eの「上げ」と綱引きになり 30WPM 止まりになる。連続キーイング
+			// 中(前ギャップが短い)の本物のマークは通常どおり更新。
+			uint8_t mark_isolated =
+				(hightimesavg > 0 && lowduration >= hightimesavg * ISOLATED_GAP_UNITS);
+			if (highduration >= 20 && !mark_isolated) {
 				uint32_t snap = 0;
 				if (last_mark_ms >= 20) {
 					snap = snap_candidate(highduration, last_mark_ms);
@@ -379,6 +403,9 @@ void decoder_process_block(int32_t magnitude, int32_t side_mag, int32_t side_mag
 					wpm = 50;
 				}
 				last_mark_ms = highduration;
+			} else if (mark_isolated) {
+				last_mark_ms = 0;
+				last_gap_ms = 0;
 			}
 		}
 	}
@@ -389,10 +416,12 @@ void decoder_process_block(int32_t magnitude, int32_t side_mag, int32_t side_mag
 		if (filteredstate == KEY_LOW) {
 			if (highduration < (hightimesavg * 2) && ((uint32_t)highduration * 5U) > ((uint32_t)hightimesavg * 3U)) {
 				if (strlen(code) >= 8) { decode_and_display(); }
+				if (code[0] == '\0') { code_pre_gap = lowduration; }
 				strcat(code, ".");
 			}
 			if (highduration > (hightimesavg * 2) && highduration < (hightimesavg * 6)) {
 				if (strlen(code) >= 8) { decode_and_display(); }
+				if (code[0] == '\0') { code_pre_gap = lowduration; }
 				strcat(code, "-");
 			}
 		}

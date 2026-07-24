@@ -33,6 +33,8 @@ int dsp_get_scope(scope_col_t *out, int n);
 uint16_t dsp_scope_col_ms_x10(void);
 // 現在のトーン判定帯域幅 (Hz)。窓長のWPM追従で83/167が切り替わる
 uint16_t dsp_gate_bw_hz(void);
+// 入力レベル (ADCフルスケール比 0〜100%)。100%付近はクリップの目安
+uint8_t dsp_input_level_pct(void);
 // DSP_SPEC_BINS+1 個 (bin 0..64) をコピー
 void dsp_get_spectrum(uint16_t *out);
 uint16_t dsp_peak_hz(void);         // 検出ピーク周波数 (無信号時 0)
