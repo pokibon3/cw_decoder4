@@ -441,14 +441,14 @@ static void dsp_task(void *arg)
 		for (size_t i = 0; i < got; i++) {
 			int32_t r = (int32_t)raw[i] << 8;             // Q8
 			dc_est += (r - dc_est) >> 10;                 // ゆっくり直流追従
-			int16_t s = (int16_t)(((r - dc_est) >> 8) / 2); // ±1024 (CH32版相当の検出感度)
+			int16_t s = (int16_t)((r - dc_est) >> 8);       // ±2048 (中心値がフルスケール中央の場合)
 			sample_ring[sample_pos] = s;
 			sample_pos = (uint16_t)((sample_pos + 1) % 512);
 			if (s < mn) mn = s;
 			if (s > mx) mx = s;
 		}
 
-		// 入力レベル(絶対): フルスケール ±1024 に対する%。
+		// 入力レベル(絶対): フルスケール ±2048 に対する%。
 		// ピーク保持+緩降下(時定数~0.2s)。100%付近はADCクリップの目安。
 		{
 			int32_t amp = (mx > -mn) ? mx : -mn;
@@ -456,7 +456,7 @@ static void dsp_task(void *arg)
 			if (amp > ipk) ipk = amp;
 			else ipk -= (ipk >> 5) + 1;
 			if (ipk < 0) ipk = 0;
-			int32_t p = ipk * 100 / 1024;
+			int32_t p = ipk * 100 / 2048;
 			input_pct = (uint8_t)((p > 100) ? 100 : p);
 		}
 

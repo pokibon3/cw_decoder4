@@ -6,8 +6,8 @@
 //	CH32V006 版 v1.9 からの移植:
 //	- Arduino + LovyanGFX (ST7789 240x320, 横向き 320x240)
 //	- トーン検出を Goertzel から FFT ベースに変更
-//	- 音声入力: GPIO35 (ADC1_CH7) を I2S DMA で 8kHz サンプリング
-//	  ※GPIO27(ADC2)は I2S 内蔵ADC非対応のため使用しない
+//	- 音声入力: GPIO35 (ADC1_CH7) をADC continuous DMAで32kHz取得、4点平均で8kHz化
+//	  ※continuous DMAはADC1のみ使用
 //	- 画面: 上2/3 デコード文字 (13列x6行, 24x24全角フォント/カタカナ対応)
 //	        下1/3 左FFT / 右オシロ (生波形+エンベロープ+キー判定を同期表示)
 //	- 操作: タッチパネル (XPT2046)

@@ -13,7 +13,7 @@ CH32V003 / CH32V006 (UIAPduino) 版は
 - ESP32 (esp32dev / 240MHz デュアルコア)
 - LCD: 2.8inch 240x320 (SPI 40MHz)。コントローラは **ST7789 / ILI9341** の両対応
 - タッチ: XPT2046 (抵抗膜、ソフトSPI)
-- オーディオ入力: GPIO35 (ADC1_CH7) を I2S DMA で 8kHz サンプリング
+- オーディオ入力: GPIO35 (ADC1_CH7) をADC continuous DMAで32kHz取得し、4点平均で8kHz化
 
 ### LCD コントローラの選択
 
@@ -81,8 +81,8 @@ BOOT ボタンでも操作できます (短押し: トーン切替 / 長押し 8
 | 33 | タッチ CS |
 | 36 | タッチ INT (未使用) |
 
-MIC 入力は GPIO35 (ADC1_CH7) を使用します。GPIO27 は ADC2 のため
-I2S 内蔵 ADC の DMA サンプリングに使えず、採用していません。
+MIC 入力は GPIO35 (ADC1_CH7) を使用します。ADC continuous DMAは
+ESP32でADC1のみ対応するため、GPIO27 (ADC2) は採用していません。
 入力には約 1.65V の DC バイアスを与えてください。
 
 ## ビルド
