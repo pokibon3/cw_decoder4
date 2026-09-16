@@ -1,7 +1,7 @@
 ///////////////////////////////////////////////////////////////////////////
 //
 //	CW Decoder for ESP32 (air_monitor board)
-//	バージョン: 2.0
+//	バージョン: version.h (FW_VERSION)
 //
 //	CH32V006 版 v1.9 からの移植:
 //	- Arduino + LovyanGFX (ST7789 240x320, 横向き 320x240)
@@ -15,7 +15,18 @@
 //	    ステータス行の TONE 表示       = AUTO→600→700→800→900→1000 の順送り
 //	      (AUTO = 550〜1000Hz の最強信号へ自動同調。デフォルト)
 //	    FFT パネル内タップ             = タップ位置に最も近いトーンを手動選択
+//	    文字エリア中央付近タップ       = 時計画面へ (時計中央タップで戻る)
 //	  BOOTボタン(GPIO0) でも操作可: 短押し=トーン切替 / 長押し=モード切替
+//
+//	画面遷移 (デコーダの動作に影響を与えないことを最優先):
+//	  デコーダ画面 (既定)
+//	    └ 時計画面 ...... DSP/デコーダは裏で動き続け、受信文字は溜まる。
+//	       │            WiFi による NTP 同期はこの画面でしか行わず、
+//	       │            同期中は DSP を一時停止して無線ノイズを遮断する
+//	       └ SETUP .... 時刻合わせ / ファームウェアアップデート (OTA) /
+//	                    WiFi設定 / WiFi初期化。OTA・WiFi設定は受信を止めて
+//	                    AP を立て、[キャンセル] または保存/更新完了で戻る
+//	  デコーダ画面では WiFi を一切起動しない。
 //
 //	原作: Hjalmar Skovholm Hansen OZ1JHM (GPL)
 //	このソフトウェアは GNU General Public License (GPL) に基づき配布されています。
@@ -23,10 +34,17 @@
 ///////////////////////////////////////////////////////////////////////////
 #include <Arduino.h>
 #include <Wire.h>
+#include <esp_ota_ops.h>
 #include "audio.h"
 #include "dsp.h"
 #include "decoder.h"
 #include "display.h"
+#include "version.h"
+#include "clock.h"
+#include "setup.h"
+#include "netsync.h"
+
+const char FW_BUILD[] = __DATE__ " " __TIME__;
 
 // タッチ診断: 起動時にI2Cスキャン(静電容量式コントローラの検出用)を行い、
 // タッチ検出時は画面に赤ドット + シリアルへ座標を出力する
@@ -58,26 +76,111 @@ static void probe_i2c_touch(void)
 #define LONG_PRESS_MS 800
 #define FRAME_MS 33
 
-void setup()
+//==================================================================
+//	画面遷移
+//==================================================================
+enum { SCR_DECODER = 0, SCR_CLOCK };
+static uint8_t screen = SCR_DECODER;
+static uint8_t clock_requested = 0;     // デコーダ画面の中央タップで立つ
+
+// 時計画面: 右下 [SETUP] ボタンと左下のバージョン表示
+#define C_CLK_BG      lgfx::color565(10, 11, 13)      // clock.cpp の C_BG と同色
+#define C_CLK_BTN_BG  lgfx::color565(26, 34, 46)
+#define C_CLK_BTN_BD  lgfx::color565(70, 92, 120)
+#define C_CLK_BTN_TX  lgfx::color565(190, 206, 226)
+#define C_CLK_FOOT    lgfx::color565(110, 114, 122)
+#define SET_BTN_Y 198
+#define SET_BTN_H 34
+static int set_btn_x = 222;
+static int set_btn_w = 92;
+
+// 時計中央のタップでデコーダ画面へ戻る判定矩形 (カード列の中ほど)
+#define CLK_CENTER_X0 80
+#define CLK_CENTER_X1 240
+#define CLK_CENTER_Y0 60
+#define CLK_CENTER_Y1 180
+
+static bool hit(int tx, int ty, int x, int y, int w, int h)
 {
-	Serial.begin(115200);
-	pinMode(PIN_BUTTON, INPUT_PULLUP);
-
-#if TOUCH_DIAG
-	delay(500);
-	probe_i2c_touch();
-#endif
-
-	display_init();
-	display_splash();
-
-	decoder_init();
-	decoder_set_emit(display_enqueue);
-
-	audio_init();
-	dsp_start();
+	return (tx >= x && tx < x + w && ty >= y && ty < y + h);
 }
 
+static void wait_release(void)
+{
+	int32_t tx, ty;
+	while (display_lcd()->getTouch(&tx, &ty)) {
+		delay(10);
+	}
+}
+
+//	clock_redraw() から呼ばれる (時計側が画面を消したあとにボタンを描き直す)
+static void draw_clock_ui(void)
+{
+	LGFX *lcd = display_lcd();
+	lcd->setFont(&fonts::FreeSans9pt7b);
+	set_btn_w = lcd->textWidth("SETUP") + 22;
+	set_btn_x = 320 - set_btn_w - 6;
+
+	const int x = set_btn_x, y = SET_BTN_Y, w = set_btn_w, h = SET_BTN_H;
+	lcd->fillRoundRect(x, y, w, h, 5, C_CLK_BTN_BG);
+	lcd->drawRoundRect(x, y, w, h, 5, C_CLK_BTN_BD);
+	lcd->setTextColor(C_CLK_BTN_TX, C_CLK_BTN_BG);
+	lcd->setTextDatum(lgfx::textdatum_t::middle_center);
+	lcd->drawString("SETUP", x + w / 2, y + h / 2);
+	lcd->setTextDatum(lgfx::textdatum_t::top_left);
+
+	lcd->setTextColor(C_CLK_FOOT, C_CLK_BG);
+	lcd->drawString("CW Decoder 4  v" FW_VERSION, 8, 196);
+	lcd->drawString(FW_BUILD, 8, 216);
+}
+
+static void on_center_tap(void)
+{
+	clock_requested = 1;
+}
+
+static void enter_clock(void)
+{
+	screen = SCR_CLOCK;
+	display_set_visible(0);         // 受信文字は溜め続ける
+	clock_redraw();
+	wait_release();
+}
+
+static void leave_clock(void)
+{
+	screen = SCR_DECODER;
+	display_redraw();               // 溜まった文字を含めて描き直す
+	wait_release();
+}
+
+//	時計画面の1周期: 時計更新 / 期限が来ていれば NTP 同期 / タッチ処理
+static void clock_screen_loop(void)
+{
+	int32_t tx, ty;
+
+	clock_update();
+	netsync_poll();                 // 同期中は DSP を止める (netsync.cpp)
+	display_update();               // 非表示中は文字の取り込みのみ
+
+	if (display_lcd()->getTouch(&tx, &ty)) {
+		if (hit(tx, ty, set_btn_x, SET_BTN_Y, set_btn_w, SET_BTN_H)) {
+			setup_run(display_lcd());
+			clock_redraw();
+		} else if (hit(tx, ty, CLK_CENTER_X0, CLK_CENTER_Y0,
+		               CLK_CENTER_X1 - CLK_CENTER_X0, CLK_CENTER_Y1 - CLK_CENTER_Y0)) {
+			leave_clock();
+			return;
+		} else {
+			wait_release();
+		}
+	}
+	delay(20);
+}
+
+//==================================================================
+//	BOOT ボタン (デコーダ画面のみ)
+//==================================================================
 static void poll_button(void)
 {
 	static uint8_t pressed = 0;
@@ -102,11 +205,56 @@ static void poll_button(void)
 	}
 }
 
+void setup()
+{
+	Serial.begin(115200);
+	pinMode(PIN_BUTTON, INPUT_PULLUP);
+
+#if TOUCH_DIAG
+	delay(500);
+	probe_i2c_touch();
+#endif
+
+	display_init();
+	{
+		const esp_partition_t *run = esp_ota_get_running_partition();
+		Serial.printf("[boot] v%s build %s  running=%s @0x%06X  heap=%u\n",
+		              FW_VERSION, FW_BUILD, run ? run->label : "?",
+		              run ? (unsigned)run->address : 0, (unsigned)ESP.getFreeHeap());
+	}
+	display_splash();
+	display_set_center_tap(on_center_tap);
+
+	// 時計 / NTP 設定の読み込み (WiFi はここでは起動しない)
+	netsync_init();
+	clock_set_redraw_hook(draw_clock_ui);
+	clock_init(display_lcd());
+	// 時計スプライト (約89KB) は起動直後の断片化していないヒープで確保し、
+	// 以後は解放しない (WiFi 使用後は大きな連続領域が取れないことがある)
+	clock_alloc();
+
+	decoder_init();
+	decoder_set_emit(display_enqueue);
+
+	audio_init();
+	dsp_start();
+}
+
 void loop()
 {
+	if (screen == SCR_CLOCK) {
+		clock_screen_loop();
+		return;
+	}
+
 	uint32_t t0 = millis();
 	poll_button();
 	display_update();
+	if (clock_requested) {
+		clock_requested = 0;
+		enter_clock();
+		return;
+	}
 	uint32_t dt = millis() - t0;
 	if (dt < FRAME_MS) {
 		delay(FRAME_MS - dt);

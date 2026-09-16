@@ -22,6 +22,11 @@ typedef struct {
 #define DSP_GATE_WIN 96             // トーン判定Goertzel窓 (12ms、帯域83.3Hz)
 
 void dsp_start(void);
+// 一時停止: DSPタスクを待機させ ADC DMA を止める (再開時に初期化し直す)。
+// WiFi を使う間 (NTP同期 / WiFi設定) は必ず止めること: DMA を動かしたまま
+// WiFi を起動すると割り込みウォッチドッグでリセットされる。
+// 無線ノイズがデコーダ状態に入らない効果も兼ねる
+void dsp_set_paused(uint8_t paused);
 void dsp_set_tone(uint8_t idx);     // 0..4=手動 / DSP_TONE_AUTO=自動
 uint8_t dsp_tone_index(void);
 uint8_t dsp_tone_is_auto(void);

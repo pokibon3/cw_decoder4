@@ -41,6 +41,14 @@ void audio_init(void)
 	ESP_ERROR_CHECK(adc_continuous_start(adc_handle));
 }
 
+void audio_stop(void)
+{
+	if (!adc_handle) return;
+	adc_continuous_stop(adc_handle);
+	adc_continuous_deinit(adc_handle);
+	adc_handle = nullptr;
+}
+
 size_t audio_read(uint16_t *dst, size_t n)
 {
 	static uint8_t frame[AUDIO_FRAME_BYTES];

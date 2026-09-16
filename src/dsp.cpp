@@ -68,6 +68,9 @@ static uint8_t side_ema_started = 0;
 static volatile uint8_t gate_win = DSP_GATE_WIN;
 
 static portMUX_TYPE dsp_mux = portMUX_INITIALIZER_UNLOCKED;
+static volatile uint8_t dsp_paused = 0;
+static volatile uint8_t dsp_idle = 0;       // 1=一時停止中でタスクが audio_read を呼んでいない
+static volatile uint8_t dsp_alive = 0;
 
 static void gate_update_coeff(void);
 
@@ -457,7 +460,15 @@ static void dsp_task(void *arg)
 	uint32_t diag_last_ms = millis();
 #endif
 
+	dsp_alive = 1;
 	for (;;) {
+		if (dsp_paused) {
+			// 一時停止中は ADC に触らない (呼び出し側が DMA を止めている)
+			dsp_idle = 1;
+			vTaskDelay(pdMS_TO_TICKS(10));
+			continue;
+		}
+		dsp_idle = 0;
 		size_t got = audio_read(raw, DSP_HOP);
 		if (got == 0) continue;
 
@@ -597,6 +608,26 @@ static void dsp_task(void *arg)
 			}
 		}
 #endif
+	}
+}
+
+//	一時停止: タスクを待機させてから ADC DMA を止める。
+//	ADC continuous DMA を動かしたまま WiFi を起動すると割り込み
+//	ウォッチドッグ (TG1WDT) でリセットされるため、WiFi を使う間は
+//	必ず DMA を止める。再開時は ADC を初期化し直す。
+void dsp_set_paused(uint8_t paused)
+{
+	if (paused) {
+		if (dsp_paused) return;
+		dsp_paused = 1;
+		for (int i = 0; i < 50 && dsp_alive && !dsp_idle; i++) {
+			delay(10);                  // 進行中の audio_read (最大6ms) を待つ
+		}
+		audio_stop();
+	} else {
+		if (!dsp_paused) return;
+		audio_init();
+		dsp_paused = 0;
 	}
 }
 

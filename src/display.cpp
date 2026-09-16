@@ -5,6 +5,8 @@
 //	  y 173..239 左: FFTスペクトラム(PK表示) / 右: オシロスコープ(波形ON/OFFボタン)
 //	オシロは生波形(min/maxバンド)・トーンエンベロープ・キー判定を
 //	同一時間軸(1列=6ms)で色分け重畳する。
+//	文字エリア中央付近のタップで時計画面へ切り替わる (main.cpp)。
+//	時計表示中は visible=0 で描画を止め、受信文字はグリッドに溜める。
 //
 #include <Arduino.h>
 #include <string.h>
@@ -13,6 +15,7 @@
 #include "decoder.h"
 #include "decode.h"
 #include "dsp.h"
+#include "version.h"
 
 #define STATUS_H 27
 #define TEXT_TOP 28
@@ -73,6 +76,9 @@ static LGFX_Sprite scope_spr(&lcd);
 static LGFX_Sprite status_spr(&lcd);
 
 static QueueHandle_t char_queue;
+static uint8_t visible = 1;             // 0=他画面表示中 (描画抑止)
+static uint8_t status_dirty = 1;        // 1=ステータス行を強制描画
+static void (*center_tap_fn)(void) = NULL;
 
 static uint16_t grid[TEXT_ROWS][TEXT_COLS];
 static uint8_t cur_row = 0;
@@ -145,6 +151,7 @@ static void draw_cell(uint8_t r, uint8_t c, uint16_t color)
 	int y = TEXT_TOP + r * CELL_H;
 	uint16_t cp = grid[r][c];
 
+	if (!visible) return;
 	lcd.fillRect(x, y, CELL_W, CELL_H, TFT_BLACK);
 	if (cp == ' ' || cp == 0) return;
 
@@ -164,11 +171,13 @@ static void draw_cursor(uint8_t r, uint8_t c, uint8_t on)
 {
 	int x = TEXT_X0 + c * CELL_W;
 	int y = TEXT_TOP + r * CELL_H + CELL_H - 2;
+	if (!visible) return;
 	lcd.fillRect(x + 2, y, CELL_W - 4, 2, on ? C_CURSOR : TFT_BLACK);
 }
 
 static void redraw_text_area(void)
 {
+	if (!visible) return;
 	lcd.startWrite();
 	for (uint8_t r = 0; r < TEXT_ROWS; r++) {
 		for (uint8_t c = 0; c < TEXT_COLS; c++) {
@@ -314,9 +323,11 @@ static void draw_status(void)
 	uint8_t tone = dsp_tone_index();
 	uint16_t thz = dsp_tone_hz();
 
-	if (wpm == s_wpm && mode == s_mode && tone == s_tone && thz == s_thz) {
+	if (!status_dirty &&
+	    wpm == s_wpm && mode == s_mode && tone == s_tone && thz == s_thz) {
 		return;
 	}
+	status_dirty = 0;
 	s_wpm = wpm; s_mode = mode; s_tone = tone; s_thz = thz;
 
 	char buf[24];
@@ -612,6 +623,8 @@ static void draw_scope_panel(void)
 //==================================================================
 //	公開API
 //==================================================================
+static void alloc_sprites(void);
+
 void display_init(void)
 {
 	lcd.init_auto();              // ST7789 / ILI9341 (自動判定 or ビルドフラグ)
@@ -624,12 +637,7 @@ void display_init(void)
 	// 消えないようにする
 	lcd.setTextWrap(false);
 
-	status_spr.setColorDepth(16);
-	status_spr.createSprite(320, STATUS_H);
-	fft_spr.setColorDepth(16);
-	fft_spr.createSprite(PANEL_W, PANEL_H);
-	scope_spr.setColorDepth(16);
-	scope_spr.createSprite(PANEL_W, PANEL_H);
+	alloc_sprites();
 
 	char_queue = xQueueCreate(128, sizeof(uint8_t));
 
@@ -680,17 +688,68 @@ void display_splash(void)
 	lcd.setFont(&fonts::Font2);
 	lcd.setTextColor(C_LABEL);
 	{
-		char sub[48];
-		snprintf(sub, sizeof(sub), "%s / LovyanGFX  -  Version 2.0", lcd.panel_name());
-		lcd.drawString(sub, 160, 202);
+		char sub[64];
+		snprintf(sub, sizeof(sub), "%s / LovyanGFX  -  Version " FW_VERSION, lcd.panel_name());
+		lcd.drawString(sub, 160, 196);
+		snprintf(sub, sizeof(sub), "Build %s", FW_BUILD);
+		lcd.drawString(sub, 160, 216);
 	}
 
 	lcd.setTextDatum(lgfx::textdatum_t::top_left);
 	delay(1500);
+	display_redraw();
+}
+
+LGFX *display_lcd(void)
+{
+	return &lcd;
+}
+
+void display_set_visible(uint8_t v)
+{
+	visible = v ? 1 : 0;
+}
+
+//	画面全体を現在のグリッド内容で描き直す (起動時 / 他画面から戻ったとき)
+void display_redraw(void)
+{
+	visible = 1;
 	lcd.fillScreen(TFT_BLACK);
 	lcd.drawFastHLine(0, STATUS_H, 320, C_SEP);
 	lcd.drawFastHLine(0, PANEL_TOP - 1, 320, C_SEP);
-	draw_cursor(0, 0, 1);
+	redraw_text_area();
+	if (cur_col < TEXT_COLS) {
+		draw_cursor(cur_row, cur_col, 1);
+	}
+	status_dirty = 1;
+}
+
+void display_set_center_tap(void (*fn)(void))
+{
+	center_tap_fn = fn;
+}
+
+static void alloc_sprites(void)
+{
+	status_spr.setColorDepth(16);
+	status_spr.createSprite(320, STATUS_H);
+	fft_spr.setColorDepth(16);
+	fft_spr.createSprite(PANEL_W, PANEL_H);
+	scope_spr.setColorDepth(16);
+	scope_spr.createSprite(PANEL_W, PANEL_H);
+}
+
+void display_release(void)
+{
+	status_spr.deleteSprite();
+	fft_spr.deleteSprite();
+	scope_spr.deleteSprite();
+}
+
+void display_restore(void)
+{
+	alloc_sprites();
+	status_dirty = 1;
 }
 
 void display_enqueue(uint8_t ch)
@@ -707,6 +766,12 @@ void display_enqueue(uint8_t ch)
 //	- FFTパネル内: タップ位置の周波数に最も近いトーンを直接選択
 //==================================================================
 #define TOUCH_DEBUG 0
+
+// 「画面中央付近」の判定矩形 (文字エリアの中ほど)
+#define CENTER_X0 80
+#define CENTER_X1 240
+#define CENTER_Y0 60
+#define CENTER_Y1 140
 
 static void poll_touch(void)
 {
@@ -744,6 +809,13 @@ static void poll_touch(void)
 				} else if (x >= 196) {
 					// 中央チップ / > : トーンを次へ
 					dsp_set_tone((uint8_t)((dsp_tone_index() + 1) % (DSP_TONE_COUNT + 1)));
+					last_act_ms = t;
+				}
+			} else if (y >= CENTER_Y0 && y < CENTER_Y1 &&
+			           x >= CENTER_X0 && x < CENTER_X1) {
+				// 文字エリア中央付近: 時計画面へ
+				if (center_tap_fn) {
+					center_tap_fn();
 					last_act_ms = t;
 				}
 			} else if (y >= PANEL_TOP + 40 && x >= PANEL_W) {
@@ -786,6 +858,15 @@ static void poll_touch(void)
 
 void display_update(void)
 {
+	if (!visible) {
+		// 他画面表示中: 受信文字だけグリッドへ取り込む (描画しない)
+		uint8_t ch;
+		int budget = 8;
+		while (budget-- > 0 && xQueueReceive(char_queue, &ch, 0) == pdTRUE) {
+			text_putchar(ch);
+		}
+		return;
+	}
 	{
 		static uint32_t last_poll = 0;
 		uint32_t now = millis();
