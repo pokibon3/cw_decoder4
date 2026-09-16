@@ -20,7 +20,7 @@
 #define SCOPE_HOPS_Q8_MIN 384   // 1.5 hop (40WPM)
 #define SCOPE_HOPS_Q8_MAX 768   // 3.0 hop (20WPM以下)
 #define SPEC_INTERVAL_HOPS 6    // 36ms 毎 (約28fps)
-#define DSP_PEAK_MIN 2400       // ピーク周波数表示のしきい値
+#define DSP_AUTO_MIN_MAG 800    // AUTO同調とピーク表示の共通絶対床
 #define DSP_DIAG 0              // 毎秒 blk/s・mag統計をシリアル出力
 
 #if DSP_DIAG
@@ -41,6 +41,8 @@ static volatile uint16_t gate_hz = 700;             // ゲート中心 (AUTO待�
 // AUTO同調の候補追跡
 static uint16_t cand_hz = 0;
 static uint8_t cand_cnt = 0;
+static uint16_t peak_cand_hz = 0;
+static uint8_t peak_cand_cnt = 0;
 
 static int16_t sample_ring[512];
 static uint16_t sample_pos = 0;
@@ -334,7 +336,6 @@ static void process_spectrum(void)
 #define DSP_AUTO_HZ_MAX 1000
 // AUTO引き込みの絶対床: 主判定は相対条件(ノイズ床3倍+3フレーム一致)で、
 // これは無音時の誤ロックを防ぐ最低限の値 (PK表示のしきい値とは別)
-#define DSP_AUTO_MIN_MAG 800
 	if (tone_sel == DSP_TONE_AUTO) {
 		const int lo = 16;   // 500Hz (550Hz - 1.5bin)
 		const int hi = 33;   // 1031.25Hz (1000Hz + 1bin)
@@ -399,8 +400,20 @@ static void process_spectrum(void)
 		}
 	}
 
+	// ピーク表示もAUTO同調と同じ絶対床・SNR・3フレーム安定条件にする。
+	// 探索帯域は表示用の約300〜1200Hz (bin 10〜38) を維持。
+	float peak_nf = 0.0f;
+	int peak_nn = 0;
+	for (int i = 10; i <= 38; i++) {
+		if (i >= max_i - 1 && i <= max_i + 1) continue;
+		peak_nf += mags[i];
+		peak_nn++;
+	}
+	if (peak_nn > 0) peak_nf /= (float)peak_nn;
+
 	uint16_t pk = 0;
-	if (max_m >= (float)DSP_PEAK_MIN && max_i > 4 && max_i < DSP_SPEC_BINS) {
+	if (max_m >= (float)DSP_AUTO_MIN_MAG && max_m > peak_nf * 3.0f &&
+	    max_i > 10 && max_i < 38) {
 		// 放物線補間でビン間周波数を推定
 		float a = mags[max_i - 1], b = mags[max_i], c = mags[max_i + 1];
 		float denom = a - 2.0f * b + c;
@@ -408,7 +421,18 @@ static void process_spectrum(void)
 		if (d < -0.5f) d = -0.5f;
 		if (d > 0.5f) d = 0.5f;
 		float f = ((float)max_i + d) * ((float)DSP_SAMPLE_RATE / (float)DSP_SPEC_N);
-		pk = (uint16_t)(f + 0.5f);
+		uint16_t measured_hz = (uint16_t)(f + 0.5f);
+		int diff = (int)measured_hz - (int)peak_cand_hz;
+		if (peak_cand_cnt > 0 && diff >= -20 && diff <= 20) {
+			peak_cand_hz = (uint16_t)(((int)peak_cand_hz + (int)measured_hz) / 2);
+			if (peak_cand_cnt < 3) peak_cand_cnt++;
+		} else {
+			peak_cand_hz = measured_hz;
+			peak_cand_cnt = 1;
+		}
+		if (peak_cand_cnt >= 3) pk = peak_cand_hz;
+	} else {
+		peak_cand_cnt = 0;
 	}
 
 	taskENTER_CRITICAL(&dsp_mux);
