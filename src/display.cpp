@@ -15,6 +15,7 @@
 #include "decoder.h"
 #include "decode.h"
 #include "dsp.h"
+#include "audio.h"
 #include "version.h"
 
 #define STATUS_H 27
@@ -508,16 +509,37 @@ static void draw_fft_panel(void)
 		fft_spr.setCursor(PANEL_W - 4 - (int)strlen(pkbuf) * 6, 3);
 		fft_spr.print(pkbuf);
 
-		// 入力レベルメーター (フルスケール比。100%付近=クリップ注意)
+		// 入力レベルメーター (フルスケール比)。ESP32 の ADC は 12dB 減衰でも
+		// 約2.45V (フルスケールの79%) から非線形になるため、1.65V バイアスの
+		// 正側は +0.8V = 約55% までしか直線ではない。それ以上は圧縮歪みで
+		// サイドビンが上がりデコード率が落ちる → 55% から黄、75% から赤。
+		// ADC レール到達を検出したら "CLIP" を 0.5 秒点灯
 		{
 			const int bx = 28, by = 2, bw = 54, bh = 7;
 			uint8_t lv = dsp_input_level_pct();
 			int fw = (int)lv * bw / 100;
-			uint16_t col = (lv >= 90) ? C_LVL_HI : (lv >= 70) ? C_LVL_MID : C_LVL_LO;
+			uint16_t col = (lv >= 75) ? C_LVL_HI : (lv >= 55) ? C_LVL_MID : C_LVL_LO;
 			fft_spr.drawRect(bx, by, bw, bh, C_FRAME);
 			if (fw > 0) fft_spr.fillRect(bx, by, fw, bh, col);
-			// 90%目盛(クリップ警戒線)
-			fft_spr.drawFastVLine(bx + bw * 90 / 100, by, bh, C_LVL_HI);
+			// 55% 目盛 (直線範囲の上限)
+			fft_spr.drawFastVLine(bx + bw * 55 / 100, by, bh, C_LVL_MID);
+
+			static uint32_t clip_seen = 0;
+			static uint32_t clip_ms = 0;
+			uint32_t clips = audio_clip_total();
+			uint32_t now_ms = millis();
+			if (clips != clip_seen) {
+				clip_seen = clips;
+				clip_ms = now_ms;
+			}
+			if (clip_ms != 0 && (now_ms - clip_ms) < 500) {
+				// バー全体を赤にして白抜き "CLIP" (右側の Peak 表示と重ねない)
+				fft_spr.fillRect(bx, by, bw, bh, C_LVL_HI);
+				fft_spr.setFont(&fonts::Font0);
+				fft_spr.setTextColor(TFT_WHITE);
+				fft_spr.setCursor(bx + (bw - 24) / 2, by - 1);
+				fft_spr.print("CLIP");
+			}
 		}
 	}
 	// 周波数目盛

@@ -13,6 +13,8 @@ size_t audio_read(uint16_t *dst, size_t n);
 // Stops the ADC DMA and releases the driver. audio_init() may be called
 // again afterwards to restart capture (used around WiFi activity).
 void audio_stop(void);
+// Running count of conversions that hit the ADC rails (hard clipping).
+uint32_t audio_clip_total(void);
 #if AUDIO_RATE_DIAG
 void audio_rate_sweep(void);   // 実効サンプルレートの掃引計測 (診断)
 #endif

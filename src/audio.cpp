@@ -21,10 +21,12 @@
 
 static adc_continuous_handle_t adc_handle = nullptr;
 static uint32_t audio_req_rate = AUDIO_ADC_RATE_REQ;      // 診断掃引で差し替える
+static volatile uint32_t audio_clips = 0;   // ADC レール到達 (0 / 4095 付近) の変換数
 
 void audio_init(void)
 {
-	// 192 conversions at 32kHz = 6ms, matching one 48-sample DSP hop.
+	// DSP_HOP*4 conversions at 32kHz = one DSP hop (59 samples = 7.375ms).
+	// conv_frame_size must be a multiple of SOC_ADC_DIGI_DATA_BYTES_PER_CONV (4).
 	adc_continuous_handle_cfg_t handle_cfg = {};
 	handle_cfg.max_store_buf_size = AUDIO_POOL_BYTES;
 	handle_cfg.conv_frame_size = AUDIO_FRAME_BYTES;
@@ -44,6 +46,11 @@ void audio_init(void)
 	cfg.format = ADC_DIGI_OUTPUT_FORMAT_TYPE1;
 	ESP_ERROR_CHECK(adc_continuous_config(adc_handle, &cfg));
 	ESP_ERROR_CHECK(adc_continuous_start(adc_handle));
+}
+
+uint32_t audio_clip_total(void)
+{
+	return audio_clips;
 }
 
 void audio_stop(void)
@@ -74,7 +81,9 @@ size_t audio_read(uint16_t *dst, size_t n)
 			const adc_digi_output_data_t *result =
 				(const adc_digi_output_data_t *)&frame[i];
 			if (result->type1.channel != ADC_CHANNEL_7) continue;
-			sum += result->type1.data;
+			uint16_t v = result->type1.data;
+			if (v <= 4 || v >= 4090) audio_clips++;   // ハードクリップ検出
+			sum += v;
 			if (++sum_count == AUDIO_OVERSAMPLE) {
 				dst[produced++] = (uint16_t)((sum + AUDIO_OVERSAMPLE / 2) /
 				                             AUDIO_OVERSAMPLE);
