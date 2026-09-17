@@ -16,10 +16,16 @@
 // トーン判定: 中心ビンがサイドレベルの何倍あれば正弦波とみなすか。
 #define TONE_SIDE_RATIO 3
 #define TONE_SIDE_RATIO_OFF_X10 25
-// 近サイド(±136Hz = ±1 hopビン)比。純音は近サイド≒0で比が大、330Hz以上の
-// フィルタノイズは近サイド≒中心で比≒1になり棄却される。
-#define TONE_NEAR_RATIO 2
-#define TONE_NEAR_RATIO_OFF_X10 15
+// 近サイド(±136Hz = ±1 hopビン)比。純音は近サイド≒0で比が大、帯域制限
+// ノイズは近サイドにもエネルギーが乗って比が小さくなる。
+// キーイングのギャップは「中心も近サイドもノイズ」なので比が 3 前後まで
+// 落ちるのに対し、マーク中は 4.5 以上を保つ (実測 2 例: ギャップ最大 2.98 /
+// マーク最小 3.73)。振幅だけを見る OFF 条件はギャップの 1 列でしか成立せず、
+// ブロック単位の揺れでノイズブランカのタイマーがリセットされて解除に失敗し、
+// 短点と長点が融合していた (Y が O、BY が BTM になる)。近サイド比なら
+// ギャップの全列で OFF が成立し続ける。
+#define TONE_NEAR_RATIO_X10 35
+#define TONE_NEAR_RATIO_OFF_X10 32
 // 包絡線ジッタ棄却: ジッタが中心の何割を超えたらノイズとみなすか (x10)。
 // 純音のマーク中はジッタ数%、帯域制限ノイズは30〜50%。3 = 30%。
 #define TONE_JITTER_OFF_X10 3
@@ -401,15 +407,16 @@ void decoder_process_block(int32_t magnitude, int32_t side_mag, int32_t side_mag
 	// ±100Hz 程度ズレていても中心が両サイドより必ず大きい。
 	//
 	// さらに帯域制限ノイズ(狭帯域フィルタ後の白色ノイズ)対策:
-	//  近サイド(±136Hz): 中心 > 近サイド×比。フィルタ幅≧330Hz の
-	//  ノイズは近サイドが上がり比が小さくなって棄却、純音は通過。
+	//  近サイド(±136Hz): 中心 > 近サイド×比。ノイズは近サイドも上がって
+	//  比が小さくなるので棄却され、純音は通過する。キーイングのギャップの
+	//  解除もこの条件が担う (振幅条件だけでは足りない。上の定義を参照)
 	// (包絡線ジッタ案はキーイングのエッジと区別できず実信号を削るため不採用)
 	(void)jitter;
 	{
 		uint8_t tone_on  = (((uint32_t)magnitude * 5U) > ((uint32_t)magnitudelimit * 3U)) &&
 		                   (magnitude > side_mag * TONE_SIDE_RATIO) &&
 		                   (magnitude > side_mag_max) &&
-		                   (magnitude > near_side * TONE_NEAR_RATIO);
+		                   (magnitude * 10 > near_side * TONE_NEAR_RATIO_X10);
 		uint8_t tone_off = (((uint32_t)magnitude * 5U) < ((uint32_t)magnitudelimit * 2U)) ||
 		                   (magnitude * 10 < side_mag * TONE_SIDE_RATIO_OFF_X10) ||
 		                   (magnitude * 10 < near_side * TONE_NEAR_RATIO_OFF_X10);
