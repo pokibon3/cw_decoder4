@@ -41,6 +41,12 @@ static volatile uint16_t gate_hz = 700;             // ゲート中心 (AUTO待�
 // AUTO同調の候補追跡
 static uint16_t cand_hz = 0;
 static uint8_t cand_cnt = 0;
+// ロック中周波数の FFT ピークホールド (フレーム毎に 3% 減衰)。
+// 隙間のノイズピークへの乗り換えを防ぐ: 70Hz 超の乗り換えは候補が
+// これの 1.5 倍以上のときだけ許す。局が消えれば 1〜2 秒で減衰して次を掴む
+static float lock_hold = 0.0f;
+#define DSP_AUTO_NEAR_HZ 70          // これ以下のズレはゲートOFF時に無条件で追従
+#define DSP_AUTO_STEAL_RATIO 1.5f    // 遠くへ乗り換える条件: 候補 > ホールド x これ
 static uint16_t peak_cand_hz = 0;
 static uint8_t peak_cand_cnt = 0;
 
@@ -330,12 +336,18 @@ static void process_spectrum(void)
 
 	// AUTOモード: 550〜1000Hz (±1ビン強の探索マージン付き) の最強ピークへ
 	// ゲート中心を自動同調する (手動TONEは600〜1000のまま)。
-	// 注意: 500Hz台へロックすると下側サイドが167Hz付近に落ちるため、
+	// 注意: 500Hz台へロックすると下側サイドが230Hz付近に落ちるため、
 	// 低域ノイズ環境ではスケルチが締まり感度が下がる場合がある。
 	// - ピークが帯域内ノイズ床(ピーク±1ビン除外の平均)の3倍以上のとき
 	//   だけ「信号」とみなす (ノイズの偶発ピークを追わない)
-	// - 3フレーム(約100ms)連続で±20Hz以内に立ったときだけ引き込む
+	// - 3フレーム(約130ms)連続で±20Hz以内に立ったときだけ引き込む
 	// - ゲートON中(受信中)は±25Hzの微修正のみ許可 (局の乗り換え禁止)
+	// - ゲートOFF時: ズレ 70Hz 以内 (帯域端に半分かかった信号) は追従、
+	//   それ以上の乗り換えは候補がロック中周波数のピークホールドの 1.5 倍
+	//   以上のときだけ。符号間・文字間・語間の隙間はゲートOFFなので、
+	//   ゲート状態だけで判定すると隙間のノイズピークに乗り換えてしまう。
+	//   (時間ホールド方式は帯域端の信号でゲートが断続ONになると永遠に
+	//    引き込めなくなるため不採用)
 	// - 信号が消えたら最後の周波数をホールド
 #define DSP_AUTO_HZ_MIN 550
 #define DSP_AUTO_HZ_MAX 1000
@@ -344,6 +356,12 @@ static void process_spectrum(void)
 	if (tone_sel == DSP_TONE_AUTO) {
 		const int lo = 16;   // 500Hz (550Hz - 1.5bin)
 		const int hi = 33;   // 1031.25Hz (1000Hz + 1bin)
+		{
+			int gb = (int)((float)gate_hz * (float)DSP_SPEC_N / (float)DSP_SAMPLE_RATE + 0.5f);
+			float cur = (gb >= 0 && gb <= DSP_SPEC_BINS) ? mags[gb] : 0.0f;
+			lock_hold *= 0.97f;
+			if (cur > lock_hold) lock_hold = cur;
+		}
 		int bi = lo;
 		float bm = 0.0f;
 		for (int i = lo; i <= hi; i++) {
@@ -392,7 +410,10 @@ static void process_spectrum(void)
 				if (nh > DSP_AUTO_HZ_MAX) nh = DSP_AUTO_HZ_MAX;
 				int diff = (int)nh - (int)gate_hz;
 				if (diff < 0) diff = -diff;
-				if (diff > 5 && (diff <= 25 || !decoder_gate())) {
+				uint8_t steal_ok = (diff <= DSP_AUTO_NEAR_HZ) ||
+				                   (lock_hold < (float)DSP_AUTO_MIN_MAG) ||
+				                   (bm > lock_hold * DSP_AUTO_STEAL_RATIO);
+				if (diff > 5 && (diff <= 25 || (!decoder_gate() && steal_ok))) {
 					if (diff > 100) {
 						side_ema_started = 0;
 					}
