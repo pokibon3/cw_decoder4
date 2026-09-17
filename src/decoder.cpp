@@ -84,8 +84,7 @@ static uint32_t highduration;
 static uint32_t hightimesavg = 60;
 static uint32_t startttimelow;
 static uint32_t lowduration;
-static uint32_t laststarttime = 0;
-static uint16_t nbtime = 6;
+static uint8_t nb_acc = 0;          // ノイズブランカの積分値 (0..nb_max)
 
 static char code[20];
 static uint16_t stop_flag = KEY_LOW;
@@ -140,22 +139,6 @@ static gap_type_t classify_gap(uint32_t gap, uint32_t unit)
 		return GAP_WORD;
 	}
 	return GAP_CHAR;
-}
-
-//==================================================================
-//	ノイズブランカ時間を短点長から算出
-//==================================================================
-static uint16_t compute_nbtime(uint32_t unit_ms)
-{
-	if (unit_ms == 0) return 10;
-	uint32_t t = unit_ms / 5;
-	if (t < (unit_ms / 3)) {
-		uint32_t max_t = unit_ms / 3;
-		if (t > max_t) t = max_t;
-	}
-	if (t < 3) t = 3;
-	if (t > 8) t = 8;
-	return (uint16_t)t;
 }
 
 //==================================================================
@@ -315,7 +298,7 @@ void decoder_init(void)
 	stop_flag = KEY_LOW;
 	dec_ms = 0;
 	dec_samples = 0;
-	laststarttime = 0;
+	nb_acc = 0;
 	starttimehigh = 0;
 	startttimelow = 0;
 	code_pre_gap = 0;
@@ -441,21 +424,36 @@ void decoder_process_block(int32_t magnitude, int32_t side_mag, int32_t side_mag
 		                       ((realstate == KEY_HIGH) ? 4 : 0));
 	}
 
-	// ノイズブランカで状態を安定化
-	if (realstate != realstatebefore) {
-		laststarttime = dec_ms;
-	}
+	// ノイズブランカ: realstate を上下カウンタで積分して filteredstate を出す。
+	//
+	// 旧「nbtime ms 安定したら反映」方式は、しきい値付近で realstate が
+	// ブロック毎に往復すると laststarttime が毎回リセットされ、安定条件が
+	// 永久に満たされずに状態が反映されない。実測ログではキーイングの
+	// ギャップ中の realstate が 3 ブロック中 1 しか HIGH でないのにゲートは
+	// ON のままで、短点 2 つが 1 本の長点に融合していた (S が R になる)。
+	// また nbtime は 8ms 上限にクランプされており、20WPM では単位長の
+	// 0.13 しかなく、数ブロックのノイズのパルスも通していた。
+	//
+	// 積分方式なら往復していても多数決で収束し、短いパルスも潰せる。
+	// 反転に必要なブロック数は単位長の約 0.35 (短点より十分短い)。
+	// 立ち上がりと立ち下がりが同じだけ遅れるので要素長は保たれる。
 #if NOISE_BLANKER_ENABLED
 	{
 		uint32_t unit = (hightimesavg > 0) ? hightimesavg : highduration;
-		nbtime = compute_nbtime(unit);
+		uint32_t n = unit / 21;         // 1ブロック7.375ms → 約0.35単位
+		if (n < 2) n = 2;
+		if (n > 6) n = 6;
 		if (filteredstate == KEY_LOW && realstate == KEY_HIGH && lowduration > unit * 6) {
-			filteredstate = realstate;
+			nb_acc = (uint8_t)n;        // 長い無音のあとの頭は削らない
+		} else if (realstate == KEY_HIGH) {
+			if (nb_acc < (uint8_t)n) nb_acc++;
+		} else if (nb_acc > 0) {
+			nb_acc--;
 		}
-	}
-	if ((dec_ms - laststarttime) > nbtime) {
-		if (realstate != filteredstate) {
-			filteredstate = realstate;
+		if (nb_acc >= (uint8_t)n) {
+			filteredstate = KEY_HIGH;
+		} else if (nb_acc == 0) {
+			filteredstate = KEY_LOW;
 		}
 	}
 #else
@@ -488,9 +486,15 @@ void decoder_process_block(int32_t magnitude, int32_t side_mag, int32_t side_mag
 			}
 		}
 		if (filteredstate == KEY_LOW) {
-			startttimelow = dec_ms;
 			highduration = (dec_ms - starttimehigh);
 			scopelog_element(1, highduration, hightimesavg);
+			// 符号にならない短いマーク (ノイズの単発) でギャップを分断しない。
+			// startttimelow を進めなければ前後の無音が 1 つのギャップとして
+			// 測られる。これが無いと文字間ギャップが 2 つに割れて短くなり、
+			// 文字が繋がってしまう (TH が 6 になる)
+			if (hightimesavg == 0 || (uint32_t)highduration * 5 >= (uint32_t)hightimesavg * 3) {
+				startttimelow = dec_ms;
+			}
 #if DEC_DIAG
 			Serial.printf("[dec] M %4lu u=%lu\n", (unsigned long)highduration,
 			              (unsigned long)hightimesavg);
