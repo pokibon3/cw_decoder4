@@ -43,6 +43,7 @@
 #include "clock.h"
 #include "setup.h"
 #include "netsync.h"
+#include "scopelog.h"
 
 const char FW_BUILD[] = __DATE__ " " __TIME__;
 
@@ -239,6 +240,10 @@ void setup()
 
 	audio_init();
 	dsp_start();
+
+	// スコープログは既定で ON (SETUP で切れる)。送出は表示ループからの
+	// 非ブロッキング処理で、受け手がいなければそのまま捨てられる
+	scopelog_set_enabled(1);
 }
 
 void loop()
