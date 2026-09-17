@@ -57,6 +57,13 @@
   }
   details { margin-top: 10px; color: var(--dim); }
   details summary { cursor: pointer; }
+  #analysis {
+    background: #05080d; border: 1px solid var(--line); border-radius: 8px;
+    padding: 10px 12px; margin: 0 0 10px; max-height: 260px; overflow: auto;
+    font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 12px; line-height: 1.45;
+    color: var(--tx); white-space: pre;
+  }
+  #selbar b { color: var(--dim); font-weight: 400; }
   details pre { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 10px; overflow-x: auto; color: var(--tx); }
   .err { color: var(--red); }
 </style>
@@ -116,11 +123,23 @@
   <input type="range" id="scrub" min="0" max="0" value="0" disabled>
 </div>
 
+<div class="bar" id="selbar" style="display:none">
+  <b>選択範囲</b><span id="selinfo">--</span>
+  <button id="copyAnalysis" class="primary">解析をコピー</button>
+  <button id="copyRaw">ログをコピー</button>
+  <button id="selClear">選択解除</button>
+  <span id="copied" style="color:var(--dim)"></span>
+</div>
+<pre id="analysis" style="display:none"></pre>
+
 <div id="text"></div>
 
 <details>
   <summary>使い方とログ形式 (src/scopelog.h)</summary>
   <p>「追従中」を押すと停止して、スライダ・ドラッグ・ホイールで横スクロールできます (もう一度押すと再開)。
+  <b>Shift + ドラッグ</b>で範囲を選択すると、その区間の要素長 (マーク/スペースの ms と短点長比) を表にして
+  クリップボードへコピーできます (誤認識の原因を調べるとき用)。</p>
+  <p>
   Web Serial API を使うため <b>Chrome / Edge</b> で <code>file://</code> か <code>http://localhost</code> から開いてください
   (Safari / Firefox では「ログを開く」での再生のみ利用できます)。</p>
 <pre>H rate=8000 hop=59 cols=150 ver=2.1      開始時と 5 秒ごと
@@ -157,6 +176,7 @@ const DEV = { textH: 16, keyH: 3, gapH: 5, waveH: 21 };
 const MAX_COLS = 200000;
 const cols = new Map();          // col index -> {t, mn, mx, env, gate}
 const chars = [];                // {col, ch}
+const elems = [];                // {col, mark, ms, unit} (E レコード = デコーダ実測)
 let minCol = null, maxCol = null;
 const state = {
   rate: 8000, hop: 59, ver: '?',
@@ -175,7 +195,8 @@ function msPerCol() {
 }
 
 function resetData() {
-  cols.clear(); chars.length = 0; rawLog = [];
+  cols.clear(); chars.length = 0; elems.length = 0; rawLog = [];
+  selA = selB = null; updateSelBar();
   minCol = maxCol = null; viewEnd = null; lastView = null;
   state.wpm = state.tone = state.peak = null;
   state.clip = state.dropped = 0;
@@ -192,6 +213,7 @@ function trim() {
   for (let i = 0; i < drop; i++) cols.delete(minCol + i);
   minCol += drop;
   while (chars.length && chars[0].col < minCol) chars.shift();
+  while (elems.length && elems[0].col < minCol) elems.shift();
 }
 
 //====================================================================
@@ -217,6 +239,9 @@ function feedLine(line) {
       break;
     case 'W':
       if (f.length >= 2) chars.push({ col: +f[1], ch: ' ' });
+      break;
+    case 'E':
+      if (f.length >= 5) elems.push({ col: +f[1], mark: f[2] === 'M', ms: +f[3], unit: +f[4] });
       break;
     case 'T':
       for (const kv of f.slice(2)) {
@@ -383,6 +408,18 @@ function draw() {
       ctx.textAlign = 'left';
     }
 
+    // 選択範囲のハイライト
+    const sel = selRange();
+    if (sel && sel.b >= start && sel.a <= end) {
+      const xa = m.x0 + (Math.max(sel.a, start) - start) * m.sx;
+      const xb = m.x0 + (Math.min(sel.b, end) - start + 1) * m.sx;
+      ctx.fillStyle = 'rgba(90,150,210,0.18)';
+      ctx.fillRect(xa, 1, xb - xa, m.H - 2);
+      ctx.fillStyle = '#5a96d2';
+      if (sel.a >= start) ctx.fillRect(xa, 1, 1, m.H - 2);
+      if (sel.b <= end) ctx.fillRect(xb - 1, 1, 1, m.H - 2);
+    }
+
     lastView = { start, end, nCols: m.nCols };
   }
 }
@@ -413,15 +450,44 @@ cv.addEventListener('wheel', ev => {
   panBy(Math.sign(d) * Math.max(1, Math.round(Math.abs(d) / 4)));
 }, { passive: false });
 
-let dragX = null, dragEnd = 0;
+let dragX = null, dragEnd = 0, selecting = false;
+let selA = null, selB = null;          // 選択範囲 (列番号)
+
+function selRange() {
+  if (selA === null || selB === null) return null;
+  return { a: Math.min(selA, selB), b: Math.max(selA, selB) };
+}
+
+//	キャンバス上の X 座標 → 列番号
+function colAtClientX(clientX) {
+  const m = metrics();
+  const r = cv.getBoundingClientRect();
+  const x = (clientX - r.left) * (m.W / r.width);
+  const start = lastView ? lastView.start : maxCol - m.nCols + 1;
+  const col = start + Math.round((x - m.x0) / m.sx);
+  return Math.max(minCol, Math.min(maxCol, col));
+}
+
 cv.addEventListener('pointerdown', ev => {
   if (maxCol === null) return;
+  cv.setPointerCapture(ev.pointerId);
+  if (ev.shiftKey) {                    // Shift+ドラッグ = 範囲選択
+    if (following) setFollowing(false);
+    selecting = true;
+    selA = selB = colAtClientX(ev.clientX);
+    updateSelBar();
+    return;
+  }
   if (following) setFollowing(false);
   dragX = ev.clientX; dragEnd = viewEnd ?? maxCol;
   cv.classList.add('drag');
-  cv.setPointerCapture(ev.pointerId);
 });
 cv.addEventListener('pointermove', ev => {
+  if (selecting) {
+    selB = colAtClientX(ev.clientX);
+    updateSelBar();
+    return;
+  }
   if (dragX === null) return;
   const m = metrics();
   const r = cv.getBoundingClientRect();
@@ -430,7 +496,138 @@ cv.addEventListener('pointermove', ev => {
   updateStat();
 });
 for (const e of ['pointerup', 'pointercancel']) {
-  cv.addEventListener(e, () => { dragX = null; cv.classList.remove('drag'); });
+  cv.addEventListener(e, () => {
+    if (selecting) {
+      selecting = false;
+      if (selRange() && selRange().a === selRange().b) { selA = selB = null; }
+      updateSelBar();
+    }
+    dragX = null; cv.classList.remove('drag');
+  });
+}
+
+//====================================================================
+//  範囲選択の解析 (誤認識の原因調べ用)
+//====================================================================
+function pad(v, w) { return String(v).padStart(w); }
+
+function markVerdict(ms, u) {
+  if (!u) return '?';
+  if (ms < 2 * u && ms * 5 > 3 * u) return '短点 .';
+  if (ms > 2 * u && ms < 6 * u) return '長点 -';
+  return ms * 5 <= 3 * u ? '短すぎ (符号にならない)' : '長すぎ (符号にならない)';
+}
+function gapVerdict(ms, u) {
+  if (!u) return '?';
+  if (ms < u * 1.5) return '文字内';
+  if (ms < u * 4.5) return '文字間';
+  if (ms >= u * 6) return '語間';
+  return '文字間';
+}
+
+function buildAnalysis() {
+  const r = selRange();
+  if (!r) return '';
+  const mc = msPerCol();
+  const ca = cols.get(r.a), cb = cols.get(r.b);
+  const n = r.b - r.a + 1;
+  const out = [];
+  out.push('# CW Decoder 4 scope  ver=' + state.ver + '  wpm=' + state.wpm +
+           '  tone=' + state.tone + 'Hz' + (state.auto ? '(AUTO)' : '') +
+           '  掃引=' + mc.toFixed(1) + 'ms/列');
+  out.push('# 選択 col ' + r.a + '..' + r.b + '  ' + n + '列 / ' + (n * mc / 1000).toFixed(2) + '秒' +
+           (ca && cb ? '  t=' + ca.t + '..' + cb.t + 'ms' : ''));
+  const cs = chars.filter(c => c.col >= r.a - 4 && c.col <= r.b + 4);
+  out.push('# 文字: ' + (cs.length ? cs.map(c => (c.ch === ' ' ? '_' : c.ch) + '(' + c.col + ')').join(' ') : '(なし)'));
+
+  const es = elems.filter(e => e.col >= r.a && e.col <= r.b);
+  if (es.length) {
+    out.push('# 要素 (デコーダ実測)');
+    out.push('#    col 種別  長さms  unit    比  判定');
+    for (const e of es) {
+      const u = e.unit || 0;
+      out.push('  ' + pad(e.col, 6) + '  ' + (e.mark ? 'M' : 'S') + pad(e.ms, 7) + pad(e.unit, 6) +
+               pad(u ? (e.ms / u).toFixed(2) : '-', 6) + '  ' +
+               (e.mark ? markVerdict(e.ms, u) : gapVerdict(e.ms, u)));
+    }
+  } else {
+    out.push('# 要素 (KEY列から復元: ' + mc.toFixed(1) + 'ms 量子化。E レコード付きのファームならより正確)');
+    out.push('#    col 種別  長さms  unit    比  判定');
+    const u = state.wpm ? Math.round(1200 / state.wpm) : 0;
+    let runVal = null, runStart = 0;
+    const emit = (val, a, b) => {
+      const ms = Math.round((b - a + 1) * mc);
+      out.push('  ' + pad(a, 6) + '  ' + (val ? 'M' : 'S') + pad(ms, 7) + pad(u, 6) +
+               pad(u ? (ms / u).toFixed(2) : '-', 6) + '  ' +
+               (val ? markVerdict(ms, u) : gapVerdict(ms, u)));
+    };
+    for (let i = r.a; i <= r.b; i++) {
+      const c = cols.get(i);
+      if (!c) continue;
+      if (runVal === null) { runVal = c.gate; runStart = i; }
+      else if (c.gate !== runVal) { emit(runVal, runStart, i - 1); runVal = c.gate; runStart = i; }
+    }
+    if (runVal !== null) emit(runVal, runStart, r.b);
+  }
+  return out.join('\n');
+}
+
+function buildRawLog() {
+  const r = selRange();
+  if (!r) return '';
+  const head = [];
+  const body = [];
+  let lastT = null, lastH = null, lastL = null;
+  for (const line of rawLog) {
+    const f = line.split(/\s+/);
+    const c = +f[1];
+    if (f[0] === 'H') { lastH = line; continue; }
+    if (f[0] === 'L') { lastL = line; continue; }
+    if (f[0] === 'T' && Number.isFinite(c) && c < r.a) { lastT = line; continue; }
+    if ((f[0] === 'S' || f[0] === 'C' || f[0] === 'W' || f[0] === 'E' || f[0] === 'T') &&
+        Number.isFinite(c) && c >= r.a && c <= r.b) {
+      body.push(line);
+    }
+  }
+  if (lastH) head.push(lastH);
+  if (lastT) head.push(lastT);
+  if (lastL) head.push(lastL);
+  return head.concat(body).join('\n');
+}
+
+function updateSelBar() {
+  const r = selRange();
+  const bar = document.getElementById('selbar');
+  const pre = document.getElementById('analysis');
+  if (!r) {
+    bar.style.display = 'none';
+    pre.style.display = 'none';
+    return;
+  }
+  const n = r.b - r.a + 1;
+  bar.style.display = '';
+  document.getElementById('selinfo').textContent =
+    'col ' + r.a + '..' + r.b + ' (' + n + '列 / ' + (n * msPerCol() / 1000).toFixed(2) + '秒)';
+  if (!selecting) {
+    pre.style.display = '';
+    pre.textContent = buildAnalysis();
+  }
+}
+
+async function copyText(text, label) {
+  const note = document.getElementById('copied');
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch (e) {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand('copy'); } catch (_) {}
+    ta.remove();
+  }
+  note.textContent = label + ' をコピーしました (' + text.length + ' 文字)';
+  setTimeout(() => { note.textContent = ''; }, 3000);
 }
 
 //====================================================================
@@ -563,6 +760,9 @@ saveBtn.onclick = () => {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 };
 followBtn.onclick = () => { setFollowing(!following); updateStat(); };
+document.getElementById('copyAnalysis').onclick = () => copyText(buildAnalysis(), '解析');
+document.getElementById('copyRaw').onclick = () => copyText(buildRawLog(), 'ログ');
+document.getElementById('selClear').onclick = () => { selA = selB = null; updateSelBar(); };
 scrub.oninput = () => {
   if (following) setFollowing(false);
   viewEnd = minCol + (+scrub.value);

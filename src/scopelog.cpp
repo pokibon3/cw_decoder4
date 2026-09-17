@@ -10,10 +10,12 @@
 #include "version.h"
 
 #define LOG_CHAR_N 32
+#define LOG_ELEM_N 32
 #define HEADER_INTERVAL_MS 5000
 #define LEVEL_INTERVAL_MS 1000
 
 typedef struct { uint8_t ch; uint32_t col; } log_char_t;
+typedef struct { uint32_t col; uint16_t ms; uint16_t unit; uint8_t mark; } log_elem_t;
 
 static volatile uint8_t enabled = 0;
 static uint32_t next_col = 0;           // 次に送る列番号
@@ -26,6 +28,10 @@ static uint8_t s_auto = 0xFF;
 static log_char_t chars[LOG_CHAR_N];
 static volatile uint8_t ch_head = 0;    // DSP タスクが進める
 static uint8_t ch_tail = 0;             // 表示ループが進める
+
+static log_elem_t elems[LOG_ELEM_N];
+static volatile uint8_t el_head = 0;
+static uint8_t el_tail = 0;
 
 //	TX バッファに入るときだけ書く。入らなければ false (呼び出し側で欠落扱い)
 static bool put_line(const char *line)
@@ -47,6 +53,7 @@ void scopelog_set_enabled(uint8_t on)
 		t_level = 0;
 		s_wpm = 0xFFFF; s_tone = 0xFFFF; s_hopq8 = 0; s_auto = 0xFF;
 		ch_tail = ch_head;
+		el_tail = el_head;
 	}
 	enabled = on ? 1 : 0;
 }
@@ -63,6 +70,17 @@ void scopelog_char(uint8_t ch, uint32_t col)
 	chars[h].ch = ch;
 	chars[h].col = col;
 	ch_head = (uint8_t)((h + 1) % LOG_CHAR_N);
+}
+
+void scopelog_element(uint8_t mark, uint32_t ms, uint32_t unit)
+{
+	if (!enabled) return;
+	uint8_t h = el_head;
+	elems[h].col = dsp_scope_col_index();
+	elems[h].ms = (uint16_t)((ms > 65535) ? 65535 : ms);
+	elems[h].unit = (uint16_t)((unit > 65535) ? 65535 : unit);
+	elems[h].mark = mark;
+	el_head = (uint8_t)((h + 1) % LOG_ELEM_N);
 }
 
 //	デコーダの出力バイト → UTF-8 (display.cpp と同じ対応。ホレ/ラタは「」)
@@ -156,6 +174,15 @@ void scopelog_poll(void)
 		}
 		if (!put_line(line)) break;     // 次フレームに回す
 		ch_tail = (uint8_t)((ch_tail + 1) % LOG_CHAR_N);
+	}
+
+	// 要素 (マーク/スペース) の実測長
+	while (el_tail != el_head) {
+		const log_elem_t *e = &elems[el_tail];
+		snprintf(line, sizeof(line), "E %lu %c %u %u\n", (unsigned long)e->col,
+		         e->mark ? 'M' : 'S', e->ms, e->unit);
+		if (!put_line(line)) break;
+		el_tail = (uint8_t)((el_tail + 1) % LOG_ELEM_N);
 	}
 
 	// 入力レベル (毎秒)

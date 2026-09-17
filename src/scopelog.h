@@ -11,6 +11,8 @@
 //	  S <col> <t_ms> <min> <max> <env> <gate> スコープ列ごと (t_ms はサンプル数由来)
 //	  C <col> <文字 UTF-8>                     デコード文字 (符号区間中央の列)
 //	  W <col>                                  語間 (スペース)
+//	  E <col> <M|S> <ms> <unit>                要素 (マーク/スペース) の実測長と
+//	                                           そのときの短点長推定 (デコーダ内部値)
 //	  L <peak> <clip>                          入力ピーク (カウント) と累積クリップ数、毎秒
 //	  X dropped=<n>                            欠落列数 (欠落があったときだけ)
 //
@@ -23,3 +25,8 @@ void scopelog_poll(void);               // 表示ループから毎フレーム�
 // デコード文字の記録 (display_enqueue から。DSP タスク文脈、書き込みのみ)。
 // ch == ' ' は語間として W レコードで出す
 void scopelog_char(uint8_t ch, uint32_t col);
+// 要素 (マーク/スペース) が確定したときに decoder から呼ぶ。
+// mark=1 でマーク、0 でスペース。ms は実測長、unit は短点長の推定値。
+// スコープの KEY 列は 1 列 = 数 hop の多数決で量子化されるので、
+// タイミングの検証にはこちらの値を使う
+void scopelog_element(uint8_t mark, uint32_t ms, uint32_t unit);

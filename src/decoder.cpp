@@ -11,6 +11,7 @@
 #include "decoder.h"
 #include "decode.h"
 #include "dsp.h"
+#include "scopelog.h"
 
 // トーン判定: 中心ビンがサイドレベルの何倍あれば正弦波とみなすか。
 #define TONE_SIDE_RATIO 3
@@ -441,6 +442,7 @@ void decoder_process_block(int32_t magnitude, int32_t side_mag, int32_t side_mag
 		if (filteredstate == KEY_HIGH) {
 			starttimehigh = dec_ms;
 			lowduration = (dec_ms - startttimelow);
+			scopelog_element(0, lowduration, hightimesavg);
 #if DEC_DIAG
 			Serial.printf("[dec] S %4lu u=%lu\n", (unsigned long)lowduration,
 			              (unsigned long)hightimesavg);
@@ -463,6 +465,7 @@ void decoder_process_block(int32_t magnitude, int32_t side_mag, int32_t side_mag
 		if (filteredstate == KEY_LOW) {
 			startttimelow = dec_ms;
 			highduration = (dec_ms - starttimehigh);
+			scopelog_element(1, highduration, hightimesavg);
 #if DEC_DIAG
 			Serial.printf("[dec] M %4lu u=%lu\n", (unsigned long)highduration,
 			              (unsigned long)hightimesavg);

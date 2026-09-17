@@ -604,7 +604,7 @@ static void draw_scope_panel(void)
 	dsp_get_scope(cols, SCOPE_COLS);
 
 	const int x0 = 4;
-	const int text_h = 16;                // デコード文字行 (lgfxJapanGothic_16)
+	const int text_h = 16;                // デコード文字行 (lgfxJapanGothicP_16)
 	const int plot_top = text_h + 1;      // KEY判定バーの行 (17)
 	const int wave_top = plot_top + 8;    // 波形上限: KEYバーの下に約5px空ける (25)
 	const int plot_bot = 46;
@@ -666,7 +666,9 @@ static void draw_scope_panel(void)
 	// (掃引とともに左へ流れる)。"SCOPE" ラベルはこの行を空けるため廃止
 	if (show_key) {                 // KEY ボタンで符号バーと文字を一緒に ON/OFF
 		const uint32_t cur = dsp_scope_col_index();     // 最新列 = cur-1
-		scope_spr.setFont(&fonts::lgfxJapanGothic_16);
+		// SETUP/時計と同じ P 付き (等幅の lgfxJapanGothic_16 は
+		// このフォントだけで Flash を 159KB 消費するため使わない)
+		scope_spr.setFont(&fonts::lgfxJapanGothicP_16);
 		scope_spr.setTextColor(C_TEXT_NEW);
 		for (int i = 0; i < TICKER_N; i++) {
 			uint32_t col = ticker[i].col;
