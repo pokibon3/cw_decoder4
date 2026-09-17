@@ -26,6 +26,11 @@ typedef struct {
 	uint16_t near;              // 近サイド (正規化後)
 	uint16_t limit;             // 適応振幅しきい値 magnitudelimit
 	uint16_t nf;                // ノイズ床推定 noise_floor
+	uint16_t mag_min;           // 列内ブロックの最小マグニチュード
+	uint8_t on_cnt;             // 列内で tone_on が成立したブロック数
+	uint8_t off_cnt;            // 列内で tone_off が成立したブロック数
+	uint8_t real_cnt;           // 列内で realstate が HIGH だったブロック数
+	uint8_t hops;               // 列のブロック数 (上の分母)
 } scope_col_t;
 
 #define DSP_TONE_COUNT 5            // 600/700/800/900/1000Hz

@@ -71,6 +71,7 @@ static int32_t magnitudelimit_low = 140;
 // 絶対床 140 だけだと入力を極端に絞ったときしかスケルチが効かず、通常
 // レベルではノイズ棄却が比率条件だけになって帯域制限ノイズの偽符号が増える。
 static int32_t noise_floor = 0;
+static volatile uint8_t gate_flags = 0;     // bit0=tone_on bit1=tone_off bit2=realstate
 static int32_t noise_acc = 0;       // noise_floor の Q8 蓄積値 (整数 EMA のラチェット防止)
 #define NOISE_FLOOR_DIV 128
 #define NOISE_SQUELCH_X10 80
@@ -340,6 +341,11 @@ int32_t decoder_noise_floor(void)
 	return noise_floor;
 }
 
+uint8_t decoder_gate_flags(void)
+{
+	return gate_flags;
+}
+
 int32_t decoder_maglimit(void)
 {
 	return magnitudelimit;
@@ -431,6 +437,8 @@ void decoder_process_block(int32_t magnitude, int32_t side_mag, int32_t side_mag
 		} else if (tone_off) {
 			realstate = KEY_LOW;
 		}
+		gate_flags = (uint8_t)((tone_on ? 1 : 0) | (tone_off ? 2 : 0) |
+		                       ((realstate == KEY_HIGH) ? 4 : 0));
 	}
 
 	// ノイズブランカで状態を安定化

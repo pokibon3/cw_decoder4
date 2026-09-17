@@ -542,7 +542,9 @@ static void dsp_task(void *arg)
 	uint16_t col_acc_q8 = 0;
 	int16_t col_mn = 32767, col_mx = -32768;
 	uint16_t col_m1 = 0, col_m2 = 0;
+	uint16_t col_mmin = 65535;
 	uint8_t col_gate_cnt = 0;
+	uint8_t col_on = 0, col_off = 0, col_real = 0;
 	uint8_t col_hops = 0;
 #if DSP_DIAG
 	uint32_t diag_last_ms = millis();
@@ -635,6 +637,13 @@ static void dsp_task(void *arg)
 			col_m2 = mag16;
 		}
 		col_gate_cnt = (uint8_t)(col_gate_cnt + decoder_gate());
+		if (mag16 < col_mmin) col_mmin = mag16;
+		{
+			uint8_t f = decoder_gate_flags();
+			if (f & 1) col_on++;
+			if (f & 2) col_off++;
+			if (f & 4) col_real++;
+		}
 		col_hops++;
 		col_acc_q8 += 256;
 		if (col_acc_q8 >= scope_period_q8) {
@@ -657,6 +666,11 @@ static void dsp_task(void *arg)
 				col->limit = (uint16_t)((lm > 65535) ? 65535 : ((lm < 0) ? 0 : lm));
 				col->nf = (uint16_t)((nfv > 65535) ? 65535 : ((nfv < 0) ? 0 : nfv));
 			}
+			col->mag_min = col_mmin;
+			col->on_cnt = col_on;
+			col->off_cnt = col_off;
+			col->real_cnt = col_real;
+			col->hops = col_hops;
 			scope_pos = (uint16_t)((scope_pos + 1) % SCOPE_RING_SIZE);
 			scope_total++;
 			taskEXIT_CRITICAL(&dsp_mux);
@@ -664,7 +678,9 @@ static void dsp_task(void *arg)
 			col_mx = -32768;
 			col_m1 = 0;
 			col_m2 = 0;
+			col_mmin = 65535;
 			col_gate_cnt = 0;
+			col_on = col_off = col_real = 0;
 			col_hops = 0;
 			// 次列の周期をWPMから更新 (20WPM以下=2.0hop、40WPM=1.0hop)
 			{

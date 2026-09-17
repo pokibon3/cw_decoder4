@@ -153,10 +153,12 @@ void scopelog_poll(void)
 		dropped += lost;
 		for (int i = 0; i < n; i++) {
 			uint32_t idx = first + (uint32_t)i;
-			snprintf(line, sizeof(line), "S %lu %lu %d %d %u %u %u %u %u %u\n",
+			snprintf(line, sizeof(line), "S %lu %lu %d %d %u %u %u %u %u %u %u %u %u %u %u\n",
 			         (unsigned long)idx, (unsigned long)cols[i].t_ms,
 			         cols[i].mn, cols[i].mx, cols[i].mag, cols[i].gate,
-			         cols[i].side, cols[i].near, cols[i].limit, cols[i].nf);
+			         cols[i].side, cols[i].near, cols[i].limit, cols[i].nf,
+			         cols[i].mag_min, cols[i].on_cnt, cols[i].off_cnt,
+			         cols[i].real_cnt, cols[i].hops);
 			if (!put_line(line)) {
 				dropped++;              // 入らない列は捨てて先へ進む
 			}
