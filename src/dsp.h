@@ -20,6 +20,7 @@ typedef struct {
 	int16_t mx;                 // 生波形 max
 	uint16_t mag;               // トーンエンベロープ (デコーダ正規化後)
 	uint8_t gate;               // デコーダのキー判定 (0/1)
+	uint32_t t_ms;              // 列生成時刻 (サンプル数由来 ms、ログの時間軸用)
 } scope_col_t;
 
 #define DSP_TONE_COUNT 5            // 600/700/800/900/1000Hz
@@ -39,12 +40,26 @@ uint16_t dsp_tone_hz(void);         // 現在のゲート中心周波数 (AUTO�
 uint16_t dsp_tone_hz_at(uint8_t idx);
 // 直近 n カラム分を out[0]=最古 .. out[n-1]=最新 でコピー
 int dsp_get_scope(scope_col_t *out, int n);
+// これまでに生成したスコープ列の通し番号 (最新列 = 戻り値-1)。
+// デコード文字をスコープの時間軸上に置くのに使う
+uint32_t dsp_scope_col_index(void);
+// 列番号 from_idx 以降の列を最大 max 個コピー (ログ用)。*first に先頭の列番号、
+// *lost にリングから溢れて取れなかった列数。戻り値はコピーした列数
+int dsp_get_scope_since(uint32_t from_idx, scope_col_t *out, int max,
+                        uint32_t *first, uint32_t *lost);
+uint16_t dsp_scope_period_q8(void);     // 現在の 1 列あたり hop 数 (Q8)
+// デコード確定時に呼ぶ: その文字の符号区間 (最初のON列〜最後のOFF列) を返し、
+// 次の文字の区間を開く。デコーダの emit コールバック内 (DSPタスク) から使う
+void dsp_scope_char_span(uint32_t *start, uint32_t *end);
 // スコープ1列の時間 (0.1ms単位)。掃引はWPM追従で可変
 uint16_t dsp_scope_col_ms_x10(void);
 // 現在のトーン判定帯域幅 (Hz)。窓長のWPM追従で83/167が切り替わる
 uint16_t dsp_gate_bw_hz(void);
 // 入力レベル (ADCフルスケール比 0〜100%)。100%付近はクリップの目安
 uint8_t dsp_input_level_pct(void);
+// 入力ピーク振幅 (カウント、0〜2048 = ADC 半スイング、ピークホールド)。
+// 1 カウント ≈ 0.76mV (12dB 減衰)。dB 表示用
+int16_t dsp_input_peak(void);
 // DSP_SPEC_BINS+1 個 (bin 0..64) をコピー
 void dsp_get_spectrum(uint16_t *out);
 uint16_t dsp_peak_hz(void);         // 検出ピーク周波数 (無信号時 0)

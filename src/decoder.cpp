@@ -291,7 +291,7 @@ void decoder_init(void)
 	prev_short_mark_ms = 0;
 	short_mark_run = 0;
 	pending_snap = 0;
-	wpm = 0;
+	wpm = 20;                       // 起動時の表示/窓選択の既定 (hightimesavg=60ms と一致)
 	code[0] = '\0';
 	lastChar = 0;
 	stop_flag = KEY_LOW;

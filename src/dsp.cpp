@@ -36,7 +36,7 @@ static int64_t diag_jit_sum = 0;
 
 static const uint16_t tone_tbl[DSP_TONE_COUNT] = { 600, 700, 800, 900, 1000 };
 static volatile uint8_t tone_sel = DSP_TONE_AUTO;   // デフォルトはAUTO
-static volatile uint16_t gate_hz = 700;             // ゲート中心 (AUTO待機時は帯域中央)
+static volatile uint16_t gate_hz = 600;             // ゲート中心 (AUTO待機時の既定 600Hz)
 
 // AUTO同調の候補追跡
 static uint16_t cand_hz = 0;
@@ -56,8 +56,15 @@ static int32_t dc_est = 2048 * 256;   // 生ADC値の直流分 (Q8)
 
 static scope_col_t scope_ring[SCOPE_RING_SIZE];
 static uint16_t scope_pos = 0;
+static volatile uint32_t scope_total = 0;   // 生成したスコープ列の通し番号 (文字の時間軸位置用)
+// デコード中の文字の符号区間 (スコープ列番号): 前回の文字確定後、最初に
+// ゲートが ON になった列 〜 最後に OFF になった列。文字をその中央に置く
+static volatile uint32_t span_start = 0;
+static volatile uint32_t span_end = 0;
+static volatile uint8_t span_open = 0;
 static volatile uint16_t scope_period_q8 = 768;   // 現在の1列hop数 (Q8)
 static volatile uint8_t input_pct = 0;            // 入力レベル (フルスケール比%)
+static volatile int16_t input_peak = 0;           // 入力ピーク振幅 (カウント、ピークホールド)
 
 static uint16_t spec_mag[DSP_SPEC_BINS + 1];
 static uint16_t peak_hz = 0;
@@ -113,6 +120,44 @@ uint16_t dsp_tone_hz_at(uint8_t idx)
 	return tone_tbl[(idx < DSP_TONE_COUNT) ? idx : 0];
 }
 
+uint32_t dsp_scope_col_index(void)
+{
+	return scope_total;
+}
+
+uint16_t dsp_scope_period_q8(void)
+{
+	return scope_period_q8;
+}
+
+int dsp_get_scope_since(uint32_t from_idx, scope_col_t *out, int max,
+                        uint32_t *first, uint32_t *lost)
+{
+	taskENTER_CRITICAL(&dsp_mux);
+	uint32_t total = scope_total;
+	uint32_t oldest = (total > SCOPE_RING_SIZE) ? total - SCOPE_RING_SIZE : 0;
+	uint32_t start = from_idx;
+	*lost = 0;
+	if (start < oldest) {
+		*lost = oldest - start;
+		start = oldest;
+	}
+	int n = 0;
+	for (uint32_t i = start; i < total && n < max; i++, n++) {
+		out[n] = scope_ring[i % SCOPE_RING_SIZE];
+	}
+	taskEXIT_CRITICAL(&dsp_mux);
+	*first = start;
+	return n;
+}
+
+void dsp_scope_char_span(uint32_t *start, uint32_t *end)
+{
+	*start = span_start;
+	*end = span_end;
+	span_open = 0;                  // 次の文字の区間を新しく開く
+}
+
 int dsp_get_scope(scope_col_t *out, int n)
 {
 	if (n > SCOPE_RING_SIZE) n = SCOPE_RING_SIZE;
@@ -152,6 +197,11 @@ uint16_t dsp_gate_bw_hz(void)
 uint8_t dsp_input_level_pct(void)
 {
 	return input_pct;
+}
+
+int16_t dsp_input_peak(void)
+{
+	return input_peak;
 }
 
 //==================================================================
@@ -349,7 +399,7 @@ static void process_spectrum(void)
 	// 低域ノイズ環境ではスケルチが締まり感度が下がる場合がある。
 	// - ピークが帯域内ノイズ床(ピーク±1ビン除外の平均)の3倍以上のとき
 	//   だけ「信号」とみなす (ノイズの偶発ピークを追わない)
-	// - 3フレーム(約130ms)連続で±20Hz以内に立ったときだけ引き込む
+	// - 3フレーム(約130ms)連続で±20Hz以内に立ったときだけ引き込む (待機時は 600Hz)
 	// - ゲートON中(受信中)は±25Hzの微修正のみ許可 (局の乗り換え禁止)
 	// - ゲートOFF時: ズレ 70Hz 以内 (帯域端に半分かかった信号) は追従、
 	//   それ以上の乗り換えは候補がロック中周波数のピークホールドの 1.5 倍
@@ -492,6 +542,7 @@ static void dsp_task(void *arg)
 	uint32_t diag_last_ms = millis();
 #endif
 
+	static uint64_t samples_total = 0;      // 取り込んだサンプル数 (ログの時間軸)
 	dsp_alive = 1;
 	for (;;) {
 		if (dsp_paused) {
@@ -503,6 +554,7 @@ static void dsp_task(void *arg)
 		dsp_idle = 0;
 		size_t got = audio_read(raw, DSP_HOP);
 		if (got == 0) continue;
+		samples_total += got;
 
 		int16_t mn = 32767, mx = -32768;
 		for (size_t i = 0; i < got; i++) {
@@ -525,10 +577,24 @@ static void dsp_task(void *arg)
 			if (ipk < 0) ipk = 0;
 			int32_t p = ipk * 100 / 2048;
 			input_pct = (uint8_t)((p > 100) ? 100 : p);
+			input_peak = (int16_t)((ipk > 2048) ? 2048 : ipk);
 		}
 
 		int32_t mag = process_gate();
 		uint16_t mag16 = (mag > 65535) ? 65535 : (uint16_t)((mag < 0) ? 0 : mag);
+		{
+			// 文字の符号区間の追跡 (デコード文字のスコープ表示用)
+			static uint8_t gate_prev = 0;
+			uint8_t g = decoder_gate();
+			if (g && !gate_prev && !span_open) {
+				span_open = 1;
+				span_start = scope_total;
+			}
+			if (!g && gate_prev) {
+				span_end = scope_total;
+			}
+			gate_prev = g;
+		}
 
 		// ゲート窓長のWPM追従 (ヒステリシス付き)。切替時はサイドEMAを
 		// リセット (ノイズのスケールが √2 変わるため)。
@@ -577,7 +643,9 @@ static void dsp_task(void *arg)
 			// KEY は多数決 (半数以上ONで列ON): OR だと短い要素間ギャップが
 			// 飲み込まれ符号パターンに見えなくなる
 			col->gate = ((uint16_t)col_gate_cnt * 2 >= col_hops) ? 1 : 0;
+			col->t_ms = (uint32_t)(samples_total / (DSP_SAMPLE_RATE / 1000));
 			scope_pos = (uint16_t)((scope_pos + 1) % SCOPE_RING_SIZE);
+			scope_total++;
 			taskEXIT_CRITICAL(&dsp_mux);
 			col_mn = 32767;
 			col_mx = -32768;

@@ -1,6 +1,6 @@
 //
 //	画面構成 (320x240 横):
-//	  y   0..26  ステータス行 (US/JPボタン / SPEED / トーン切替 < chip >)
+//	  y   0..26  ステータス行 (US/JPボタン / TONEボタン / SPEED:xxWPM / 時計 HH:MM:SS)
 //	  y  28..171 デコード文字エリア 16列 x 6行 (24x24 全角フォント、ピッチ20px)
 //	  y 173..239 左: FFTスペクトラム(PK表示) / 右: オシロスコープ(波形ON/OFFボタン)
 //	オシロは生波形(min/maxバンド)・トーンエンベロープ・キー判定を
@@ -10,6 +10,7 @@
 //
 #include <Arduino.h>
 #include <string.h>
+#include <math.h>
 #include "lgfx_config.h"
 #include "display.h"
 #include "decoder.h"
@@ -17,6 +18,8 @@
 #include "dsp.h"
 #include "audio.h"
 #include "version.h"
+#include "clock.h"
+#include "scopelog.h"
 
 #define STATUS_H 27
 #define TEXT_TOP 28
@@ -77,6 +80,13 @@ static LGFX_Sprite scope_spr(&lcd);
 static LGFX_Sprite status_spr(&lcd);
 
 static QueueHandle_t char_queue;
+
+// スコープ上に流すデコード文字: 文字とデコード時点のスコープ列番号。
+// DSP タスク (display_enqueue) が書き、表示側が読む単一生産者/消費者リング
+#define TICKER_N 48
+typedef struct { uint8_t ch; uint32_t col; } ticker_t;
+static ticker_t ticker[TICKER_N];
+static volatile uint8_t ticker_head = 0;
 static uint8_t visible = 1;             // 0=他画面表示中 (描画抑止)
 static uint8_t status_dirty = 1;        // 1=ステータス行を強制描画
 static void (*center_tap_fn)(void) = NULL;
@@ -245,20 +255,19 @@ static void text_putcp(uint16_t cp)
 	}
 }
 
+// デコーダの出力バイト → Unicode コードポイント
+static uint16_t codepoint_of(uint8_t ch)
+{
+	if (ch == 5) return 0x300C;                 // ホレ (和文開始) → 「
+	if (ch == 6) return 0x300D;                 // ラタ (和文終了) → 」
+	if (ch >= 0xA1 && ch <= 0xDF) return kana_cp[ch - 0xA1];
+	if (ch < 0x80) return ch;
+	return '*';
+}
+
 static void text_putchar(uint8_t ch)
 {
-	uint16_t cp;
-	if (ch == 5) {
-		cp = 0x300C;              // ホレ (和文開始) → 「
-	} else if (ch == 6) {
-		cp = 0x300D;              // ラタ (和文終了) → 」
-	} else if (ch >= 0xA1 && ch <= 0xDF) {
-		cp = kana_cp[ch - 0xA1];
-	} else if (ch < 0x80) {
-		cp = ch;
-	} else {
-		cp = '*';
-	}
+	uint16_t cp = codepoint_of(ch);
 
 	if (cp == ' ') {
 		if (last_valid) {
@@ -312,24 +321,34 @@ static void draw_panel_button(LGFX_Sprite *spr, int x, int y, int w, int h,
 	                on ? C_BTN_TX : C_BTN_OFF_TX);
 }
 
+// ステータス行のレイアウト: [US/JP] [TONE] SPEED:xxWPM ...... HH:MM:SS
+#define ST_BTN_W 64
+#define ST_BTN_H 23
+#define ST_MODE_X 2
+#define ST_TONE_X 68
+#define ST_WPM_X 138
+#define ST_CLOCK_RIGHT 318        // 時計の右端
+
 static void draw_status(void)
 {
 	static uint16_t s_wpm = 0xFFFF;
 	static uint8_t s_mode = 0xFF;
 	static uint8_t s_tone = 0xFF;
 	static uint16_t s_thz = 0xFFFF;
+	static uint32_t s_sec = 0xFFFFFFFF;
 
 	uint16_t wpm = decoder_wpm();
 	uint8_t mode = decoder_mode();
 	uint8_t tone = dsp_tone_index();
 	uint16_t thz = dsp_tone_hz();
+	uint32_t now = clock_now();       // millis() ベースの軽い計算 (DSP には無関係)
 
-	if (!status_dirty &&
+	if (!status_dirty && now == s_sec &&
 	    wpm == s_wpm && mode == s_mode && tone == s_tone && thz == s_thz) {
 		return;
 	}
 	status_dirty = 0;
-	s_wpm = wpm; s_mode = mode; s_tone = tone; s_thz = thz;
+	s_wpm = wpm; s_mode = mode; s_tone = tone; s_thz = thz; s_sec = now;
 
 	char buf[24];
 	status_spr.fillSprite(C_STATUS_BG);
@@ -337,32 +356,38 @@ static void draw_status(void)
 
 	// US/JP モード切替ボタン (横長、モードで色分け)
 	if (mode == MODE_US) {
-		draw_panel_button(&status_spr, 2, 2, 64, 23, "US", 1);
+		draw_panel_button(&status_spr, ST_MODE_X, 2, ST_BTN_W, ST_BTN_H, "US", 1);
 	} else {
-		draw_button_col(&status_spr, 2, 2, 64, 23, "JP",
+		draw_button_col(&status_spr, ST_MODE_X, 2, ST_BTN_W, ST_BTN_H, "JP",
 		                C_BTNJP_BG, C_BTNJP_BD, C_BTNJP_TX);
 	}
 
+	// トーン切替ボタン: AUTO → 600 → 700 → 800 → 900 → 1000 の順送り
+	if (dsp_tone_is_auto()) {
+		draw_button_col(&status_spr, ST_TONE_X, 2, ST_BTN_W, ST_BTN_H, "AUTO",
+		                C_BTN_BG, C_BTN_BD, C_GATE);
+	} else {
+		snprintf(buf, sizeof(buf), "%u", (unsigned)thz);
+		draw_panel_button(&status_spr, ST_TONE_X, 2, ST_BTN_W, ST_BTN_H, buf, 1);
+	}
+
 	// 速度表示
+	status_spr.setFont(&fonts::AsciiFont8x16);
 	status_spr.setTextColor(C_WPM);
-	status_spr.setCursor(74, 6);
+	status_spr.setCursor(ST_WPM_X, 6);
 	snprintf(buf, sizeof(buf), "SPEED:%2dWPM", wpm);
 	status_spr.print(buf);
 
-	// トーン切替: < [AUTO/600/700/800/900/1000] >
-	draw_panel_button(&status_spr, 166, 2, 28, 23, "<", 1);
-	draw_panel_button(&status_spr, 196, 2, 92, 23, "", 1);
-	if (dsp_tone_is_auto()) {
-		status_spr.setTextColor(C_GATE);
-		snprintf(buf, sizeof(buf), "AUTO");
-	} else {
-		status_spr.setTextColor(C_BTN_TX);
-		snprintf(buf, sizeof(buf), "%u", (unsigned)thz);
+	// 時計 HH:MM:SS (右端、SPEED と同じ AsciiFont8x16)
+	{
+		clock_tm_t tm;
+		clock_break(now, &tm);
+		snprintf(buf, sizeof(buf), "%02u:%02u:%02u", tm.hour, tm.min, tm.sec);
+		status_spr.setFont(&fonts::AsciiFont8x16);
+		status_spr.setTextColor(C_STATUS_TX);
+		status_spr.setCursor(ST_CLOCK_RIGHT - 8 * 8, 6);
+		status_spr.print(buf);
 	}
-	status_spr.setFont(&fonts::AsciiFont8x16);
-	status_spr.setCursor(196 + (92 - (int)strlen(buf) * 8) / 2, 6);
-	status_spr.print(buf);
-	draw_panel_button(&status_spr, 290, 2, 28, 23, ">", 1);
 
 	status_spr.pushSprite(0, 0);
 }
@@ -509,20 +534,28 @@ static void draw_fft_panel(void)
 		fft_spr.setCursor(PANEL_W - 4 - (int)strlen(pkbuf) * 6, 3);
 		fft_spr.print(pkbuf);
 
-		// 入力レベルメーター (フルスケール比)。ESP32 の ADC は 12dB 減衰でも
-		// 約2.45V (フルスケールの79%) から非線形になるため、1.65V バイアスの
-		// 正側は +0.8V = 約55% までしか直線ではない。それ以上は圧縮歪みで
-		// サイドビンが上がりデコード率が落ちる → 55% から黄、75% から赤。
-		// ADC レール到達を検出したら "CLIP" を 0.5 秒点灯
+		// 入力レベルメーター (dB スケール、LVL_DB_MIN〜0 dBFS を全幅)。
+		// 0 dBFS = ADC 半スイング 2048 カウント ≈ 1.55V ピーク。実運用の入力は
+		// 0.1V ピーク程度 (-24 dBFS) で、リニア表示だと数%しか振れないため
+		// 対数にする。ESP32 の ADC は 12dB 減衰でも約2.45V から非線形になる
+		// ので、1.65V バイアスの正側は +0.85V ≈ -5 dBFS までが直線範囲
+		// (黄の目盛)。-2.5 dBFS 以上は赤。ADC レール到達で "CLIP" を 0.5 秒点灯
 		{
 			const int bx = 28, by = 2, bw = 54, bh = 7;
-			uint8_t lv = dsp_input_level_pct();
-			int fw = (int)lv * bw / 100;
-			uint16_t col = (lv >= 75) ? C_LVL_HI : (lv >= 55) ? C_LVL_MID : C_LVL_LO;
+			const float LVL_DB_MIN = -50.0f;
+			const float LVL_DB_LIN = -5.2f;      // 直線範囲の上限 (0.55 x 2048)
+			const float LVL_DB_RED = -2.5f;
+			int16_t pk = dsp_input_peak();
+			float db = (pk > 0) ? 20.0f * log10f((float)pk / 2048.0f) : LVL_DB_MIN;
+			if (db < LVL_DB_MIN) db = LVL_DB_MIN;
+			if (db > 0.0f) db = 0.0f;
+			int fw = (int)((db - LVL_DB_MIN) / (0.0f - LVL_DB_MIN) * (float)bw + 0.5f);
+			uint16_t col = (db >= LVL_DB_RED) ? C_LVL_HI : (db >= LVL_DB_LIN) ? C_LVL_MID : C_LVL_LO;
 			fft_spr.drawRect(bx, by, bw, bh, C_FRAME);
 			if (fw > 0) fft_spr.fillRect(bx, by, fw, bh, col);
-			// 55% 目盛 (直線範囲の上限)
-			fft_spr.drawFastVLine(bx + bw * 55 / 100, by, bh, C_LVL_MID);
+			// 直線範囲の上限 (-5 dBFS) の目盛
+			fft_spr.drawFastVLine(bx + (int)((LVL_DB_LIN - LVL_DB_MIN) / (0.0f - LVL_DB_MIN) * (float)bw + 0.5f),
+			                      by, bh, C_LVL_MID);
 
 			static uint32_t clip_seen = 0;
 			static uint32_t clip_ms = 0;
@@ -571,9 +604,10 @@ static void draw_scope_panel(void)
 	dsp_get_scope(cols, SCOPE_COLS);
 
 	const int x0 = 4;
-	const int plot_top = 12;              // KEY判定バーの行
-	const int wave_top = plot_top + 8;    // 波形上限: KEYバーの下に約5px空ける
-	const int plot_bot = 44;
+	const int text_h = 16;                // デコード文字行 (lgfxJapanGothic_16)
+	const int plot_top = text_h + 1;      // KEY判定バーの行 (17)
+	const int wave_top = plot_top + 8;    // 波形上限: KEYバーの下に約5px空ける (25)
+	const int plot_bot = 46;
 	const int mid_y = (wave_top + plot_bot) / 2;
 	const int half_h = (plot_bot - wave_top) / 2;
 	const int env_base = plot_bot;
@@ -628,16 +662,30 @@ static void draw_scope_panel(void)
 		}
 	}
 
-	// ラベル
-	scope_spr.setFont(&fonts::Font0);
-	scope_spr.setTextColor(C_LABEL);
-	scope_spr.setCursor(4, 3);
-	scope_spr.print("SCOPE");
+	// デコード文字を KEY バーの上に、デコードされた時点の時間軸位置で流す
+	// (掃引とともに左へ流れる)。"SCOPE" ラベルはこの行を空けるため廃止
+	if (show_key) {                 // KEY ボタンで符号バーと文字を一緒に ON/OFF
+		const uint32_t cur = dsp_scope_col_index();     // 最新列 = cur-1
+		scope_spr.setFont(&fonts::lgfxJapanGothic_16);
+		scope_spr.setTextColor(C_TEXT_NEW);
+		for (int i = 0; i < TICKER_N; i++) {
+			uint32_t col = ticker[i].col;
+			if (col == 0 || col >= cur || (cur - col) > (uint32_t)SCOPE_COLS + 8) continue;
+			int x = x0 + (SCOPE_COLS - 1) - (int)(cur - 1 - col);   // 符号区間の中央
+			char u8[4];
+			utf8_encode(codepoint_of(ticker[i].ch), u8);
+			int w = scope_spr.textWidth(u8);
+			int tx = x - w / 2;
+			if (tx + w <= 1 || tx >= PANEL_W - 1) continue;
+			scope_spr.setCursor(tx, 0);
+			scope_spr.print(u8);
+		}
+	}
 
 	// 波形ON/OFFボタン (下段)
-	draw_panel_button(&scope_spr, 4, 46, 46, 18, "KEY", show_key);
-	draw_panel_button(&scope_spr, 57, 46, 46, 18, "ENV", show_env);
-	draw_panel_button(&scope_spr, 110, 46, 46, 18, "RAW", show_raw);
+	draw_panel_button(&scope_spr, 4, 48, 46, 17, "KEY", show_key);
+	draw_panel_button(&scope_spr, 57, 48, 46, 17, "ENV", show_env);
+	draw_panel_button(&scope_spr, 110, 48, 46, 17, "RAW", show_raw);
 
 	scope_spr.pushSprite(PANEL_W, PANEL_TOP);
 }
@@ -788,12 +836,22 @@ void display_enqueue(uint8_t ch)
 	if (char_queue) {
 		xQueueSend(char_queue, &ch, 0);
 	}
+	if (ch != ' ') {
+		uint32_t st, en;
+		dsp_scope_char_span(&st, &en);
+		if (en < st) en = st;
+		uint8_t h = ticker_head;
+		ticker[h].ch = ch;
+		ticker[h].col = (st + en) / 2;              // 符号区間の中央
+		ticker_head = (uint8_t)((h + 1) % TICKER_N);
+		scopelog_char(ch, ticker[h].col);
+	}
 }
 
 //==================================================================
 //	タッチ操作
 //	- US/JPバッジ: モード切替
-//	- TONE表示: トーン周波数を順送り (600→700→800→900→1000)
+//	- TONEボタン: AUTO→600→700→800→900→1000 の順送り
 //	- FFTパネル内: タップ位置の周波数に最も近いトーンを直接選択
 //==================================================================
 #define TOUCH_DEBUG 0
@@ -830,15 +888,11 @@ static void poll_touch(void)
 		if ((t - last_act_ms) >= 250) {
 			if (y < TEXT_TOP + 8) {
 				// ステータス行 (少し下までタップ許容)
-				if (x < 70) {
+				if (x >= ST_MODE_X - 2 && x < ST_MODE_X + ST_BTN_W + 4) {
 					decoder_toggle_mode();
 					last_act_ms = t;
-				} else if (x >= 160 && x < 196) {
-					// < : トーンを前へ
-					dsp_set_tone((uint8_t)((dsp_tone_index() + DSP_TONE_COUNT) % (DSP_TONE_COUNT + 1)));
-					last_act_ms = t;
-				} else if (x >= 196) {
-					// 中央チップ / > : トーンを次へ
+				} else if (x >= ST_TONE_X - 2 && x < ST_TONE_X + ST_BTN_W + 4) {
+					// TONE ボタン: AUTO → 600 → ... → 1000 → AUTO
 					dsp_set_tone((uint8_t)((dsp_tone_index() + 1) % (DSP_TONE_COUNT + 1)));
 					last_act_ms = t;
 				}
@@ -849,7 +903,7 @@ static void poll_touch(void)
 					center_tap_fn();
 					last_act_ms = t;
 				}
-			} else if (y >= PANEL_TOP + 40 && x >= PANEL_W) {
+			} else if (y >= PANEL_TOP + 44 && x >= PANEL_W) {
 				// スコープの波形ON/OFFボタン (下段)
 				int lx = (int)x - PANEL_W;
 				if (lx >= 4 && lx < 51) {
@@ -889,6 +943,7 @@ static void poll_touch(void)
 
 void display_update(void)
 {
+	scopelog_poll();                // ログ送出 (Core 1、非ブロッキング)
 	if (!visible) {
 		// 他画面表示中: 受信文字だけグリッドへ取り込む (描画しない)
 		uint8_t ch;

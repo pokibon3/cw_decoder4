@@ -6,6 +6,7 @@
 //	│      [ ファームウェアアップデート ]        │
 //	│      [ WiFi設定 ]                          │
 //	│      [ WiFi初期化 ]                        │
+//	│      [ スコープログ: OFF/ON ]              │
 //	│  バージョン / WiFi / 時刻同期              │
 //	└────────────────────────────────────────────┘
 //
@@ -18,6 +19,7 @@
 #include "ota.h"
 #include "dsp.h"
 #include "version.h"
+#include "scopelog.h"
 
 #define C_BG      lgfx::color565(14, 17, 22)
 #define C_TITLEBG lgfx::color565(26, 34, 46)
@@ -40,13 +42,14 @@
 
 #define ITEM_X 20
 #define ITEM_W 280
-#define ITEM_H 30
+#define ITEM_H 26
 #define ITEM1_Y 40
-#define ITEM2_Y 74
-#define ITEM3_Y 108
-#define ITEM4_Y 142
+#define ITEM2_Y 70
+#define ITEM3_Y 100
+#define ITEM4_Y 130
+#define ITEM5_Y 160
 
-#define INFO_Y 180
+#define INFO_Y 191
 
 static LGFX *lcd;
 
@@ -77,7 +80,7 @@ static void wait_release(void)
 
 #define INFO_ROWS 3
 #define INFO_VAL_X 116
-#define INFO_PITCH 19
+#define INFO_PITCH 16
 
 //	ステータス欄。毎秒呼ばれるが、値が変わった行だけ描き直す
 //	(全部塗り直すとバージョン欄までちらついて読みにくいため)。
@@ -114,7 +117,7 @@ static void draw_info(bool full)
 	lcd->setFont(&fonts::lgfxJapanGothicP_16);
 	if (full) {
 		lcd->fillRect(0, INFO_Y, 320, 240 - INFO_Y, C_BG);
-		lcd->drawFastHLine(20, INFO_Y - 6, 280, lgfx::color565(40, 60, 85));
+		lcd->drawFastHLine(20, INFO_Y - 3, 280, lgfx::color565(40, 60, 85));
 		lcd->setTextColor(C_LABEL, C_BG);
 		for (int i = 0; i < INFO_ROWS; i++) {
 			lcd->drawString(LABEL[i], 20, INFO_Y + i * INFO_PITCH);
@@ -156,6 +159,11 @@ static void draw_screen(void)
 	            C_BTN_BG, C_BTN_BD, C_BTN_TX, &fonts::lgfxJapanGothicP_16);
 	draw_button(ITEM_X, ITEM4_Y, ITEM_W, ITEM_H, "WiFi初期化",
 	            C_BTN_BG, C_BTN_BD, C_BTN_TX, &fonts::lgfxJapanGothicP_16);
+	draw_button(ITEM_X, ITEM5_Y, ITEM_W, ITEM_H,
+	            scopelog_enabled() ? "スコープログ: ON (シリアル)" : "スコープログ: OFF",
+	            scopelog_enabled() ? C_OK_BG : C_BTN_BG,
+	            scopelog_enabled() ? C_OK_BD : C_BTN_BD, C_BTN_TX,
+	            &fonts::lgfxJapanGothicP_16);
 
 	draw_info(true);
 }
@@ -252,6 +260,10 @@ void setup_run(LGFX *lcd_)
 			ap_mode_enter();
 			wifi_setup_run(lcd);
 			ap_mode_leave();
+			draw_screen();
+		} else if (hit(tx, ty, ITEM_X, ITEM5_Y, ITEM_W, ITEM_H)) {
+			wait_release();
+			scopelog_set_enabled(!scopelog_enabled());
 			draw_screen();
 		} else if (hit(tx, ty, ITEM_X, ITEM4_Y, ITEM_W, ITEM_H)) {
 			wait_release();
