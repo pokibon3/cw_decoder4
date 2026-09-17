@@ -8,7 +8,11 @@
 //	行フォーマット (1 行 1 レコード、フィールドは空白区切り):
 //	  H rate=8000 hop=59 cols=150 ver=2.1      開始時と 5 秒ごと
 //	  T <col> wpm=<n> tone=<hz> auto=<0/1> hopq8=<q8>   状態変化時 (掃引=hopq8/256 hop/列)
-//	  S <col> <t_ms> <min> <max> <env> <gate> スコープ列ごと (t_ms はサンプル数由来)
+//	  S <col> <t_ms> <min> <max> <env> <gate> <side> <near> <limit> <nf>
+//	                                           スコープ列ごと (t_ms はサンプル数由来)。
+//	                                           side/near/limit/nf はトーン判定に使われた値で、
+//	                                           ON: env > 0.6*limit かつ env > side*3 かつ env > near*2
+//	                                           OFF: env < 0.4*limit または env < side*2.5 または env < near*1.5
 //	  C <col> <文字 UTF-8>                     デコード文字 (符号区間中央の列)
 //	  W <col>                                  語間 (スペース)
 //	  E <col> <M|S> <ms> <unit>                要素 (マーク/スペース) の実測長と

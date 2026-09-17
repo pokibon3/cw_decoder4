@@ -228,7 +228,9 @@ function feedLine(line) {
       if (f.length < 7) return;
       const idx = +f[1];
       if (!Number.isFinite(idx)) return;
-      cols.set(idx, { t: +f[2], mn: +f[3], mx: +f[4], env: +f[5], gate: +f[6] });
+      cols.set(idx, { t: +f[2], mn: +f[3], mx: +f[4], env: +f[5], gate: +f[6],
+                      side: f.length > 7 ? +f[7] : null, near: f.length > 8 ? +f[8] : null,
+                      limit: f.length > 9 ? +f[9] : null, nf: f.length > 10 ? +f[10] : null });
       if (minCol === null || idx < minCol) minCol = idx;
       if (maxCol === null || idx > maxCol) maxCol = idx;
       trim();
@@ -568,6 +570,25 @@ function buildAnalysis() {
       else if (c.gate !== runVal) { emit(runVal, runStart, i - 1); runVal = c.gate; runStart = i; }
     }
     if (runVal !== null) emit(runVal, runStart, r.b);
+  }
+  // 列ごとの判定値 (新しいファームの S レコードにだけ入っている)
+  const det = [];
+  for (let i = r.a; i <= r.b; i++) {
+    const c = cols.get(i);
+    if (c && c.limit !== null && c.limit !== undefined) det.push([i, c]);
+  }
+  if (det.length && det.length <= 150) {
+    out.push('# 列詳細  ON: env>0.6*limit かつ >side*3 かつ >near*2 / OFF: env<0.4*limit または <side*2.5 または <near*1.5');
+    out.push('#    col g    env  limit     nf   side   near | OFF条件 amp/side/near');
+    for (const d of det) {
+      const i = d[0], c = d[1];
+      const offAmp  = c.env * 5 < c.limit * 2;
+      const offSide = c.env * 10 < c.side * 25;
+      const offNear = c.env * 10 < c.near * 15;
+      out.push('  ' + pad(i, 6) + pad(c.gate, 2) + pad(c.env, 7) + pad(c.limit, 7) +
+               pad(c.nf, 7) + pad(c.side, 7) + pad(c.near, 7) + ' |' +
+               pad(offAmp ? 'Y' : '-', 8) + pad(offSide ? 'Y' : '-', 5) + pad(offNear ? 'Y' : '-', 5));
+    }
   }
   return out.join('\n');
 }

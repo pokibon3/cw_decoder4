@@ -80,6 +80,10 @@ static uint8_t side_ema_started = 0;
 // 7.4ms窓(59)へ戻す。ヒステリシス: ≥32WPMで59 / ≤28WPMで118。
 static volatile uint8_t gate_win = DSP_GATE_WIN;
 
+// 直近ブロックのトーン判定値 (スコープログ用)
+static volatile int32_t last_side_norm = 0;
+static volatile int32_t last_near_norm = 0;
+
 static portMUX_TYPE dsp_mux = portMUX_INITIALIZER_UNLOCKED;
 static volatile uint8_t dsp_paused = 0;
 static volatile uint8_t dsp_idle = 0;       // 1=一時停止中でタスクが audio_read を呼んでいない
@@ -340,6 +344,8 @@ static int32_t process_gate(void)
 	int32_t near_norm = near_side >> 2;
 	int32_t jitter_norm = jitter_ema >> 2;
 
+	last_side_norm = side_norm;
+	last_near_norm = near_norm;
 	decoder_process_block(mag_norm, side_norm, side_inst_norm, side_max_norm,
 	                      near_norm, jitter_norm);
 
@@ -644,6 +650,13 @@ static void dsp_task(void *arg)
 			// 飲み込まれ符号パターンに見えなくなる
 			col->gate = ((uint16_t)col_gate_cnt * 2 >= col_hops) ? 1 : 0;
 			col->t_ms = (uint32_t)(samples_total / (DSP_SAMPLE_RATE / 1000));
+			col->side = (uint16_t)((last_side_norm > 65535) ? 65535 : last_side_norm);
+			col->near = (uint16_t)((last_near_norm > 65535) ? 65535 : last_near_norm);
+			{
+				int32_t lm = decoder_maglimit(), nfv = decoder_noise_floor();
+				col->limit = (uint16_t)((lm > 65535) ? 65535 : ((lm < 0) ? 0 : lm));
+				col->nf = (uint16_t)((nfv > 65535) ? 65535 : ((nfv < 0) ? 0 : nfv));
+			}
 			scope_pos = (uint16_t)((scope_pos + 1) % SCOPE_RING_SIZE);
 			scope_total++;
 			taskEXIT_CRITICAL(&dsp_mux);

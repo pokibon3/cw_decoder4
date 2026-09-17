@@ -21,6 +21,11 @@ typedef struct {
 	uint16_t mag;               // トーンエンベロープ (デコーダ正規化後)
 	uint8_t gate;               // デコーダのキー判定 (0/1)
 	uint32_t t_ms;              // 列生成時刻 (サンプル数由来 ms、ログの時間軸用)
+	// トーン判定に使われた値 (スコープログでの原因調査用。列内最後のブロックの値)
+	uint16_t side;              // 遠サイド (幾何平均、正規化後)
+	uint16_t near;              // 近サイド (正規化後)
+	uint16_t limit;             // 適応振幅しきい値 magnitudelimit
+	uint16_t nf;                // ノイズ床推定 noise_floor
 } scope_col_t;
 
 #define DSP_TONE_COUNT 5            // 600/700/800/900/1000Hz
