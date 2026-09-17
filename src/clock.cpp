@@ -44,10 +44,10 @@
 // パタパタは日付のすぐ下。上下の余白は 4px だけ残す
 #define CARD_Y 38               // 下端は 160
 // 下 1/3 は世界時計 (コードのボタン + hh:mm を 6 個)
-#define ZONE_Y 164
+#define ZONE_Y 164              // 6 列 x 2 行 (164..238)
 #define ZONE_W 53               // 6 列 x 53 = 318
-#define ZONE_BTN_H 22
-#define ZONE_TIME_Y (ZONE_Y + 30)
+#define ZONE_ROW_H 37
+#define ZONE_H 35               // 1 枠 (コード + 時刻)
 
 #define BIG_W 122               // 時・分のカード (Font8 の "88" = 110px + 余白)
 #define BIG_H 122
@@ -183,13 +183,20 @@ void clock_break(uint32_t epoch, clock_tm_t *tm)
 //==================================================================
 #define CLOCK_BASE_MIN (9 * 60)         // 内部時刻の基準 (JST)
 
+//	朝が早い順 (標準時オフセットの大きい順)
 const clock_zone_t clock_zones[CLOCK_ZONE_N] = {
 	{ "ZL",   12 * 60, CLOCK_DST_NZ },      // ニュージーランド
 	{ "VK",   10 * 60, CLOCK_DST_AU },      // オーストラリア東部
 	{ "JA",    9 * 60, CLOCK_DST_NONE },    // 日本
+	{ "BY",    8 * 60, CLOCK_DST_NONE },    // 中国
+	{ "VU",   5 * 60 + 30, CLOCK_DST_NONE },// インド (UTC+5:30)
+	{ "UA",    3 * 60, CLOCK_DST_NONE },    // ロシア (モスクワ、2014年以降 夏時間なし)
+	{ "DL",    1 * 60, CLOCK_DST_EU },      // ドイツ (欧州中部)
 	{ "UTC",        0, CLOCK_DST_NONE },    // 世界標準時
+	{ "LU",   -3 * 60, CLOCK_DST_NONE },    // アルゼンチン (2009年以降 夏時間なし)
 	{ "W1",   -5 * 60, CLOCK_DST_US },      // 米国東部
 	{ "W6",   -8 * 60, CLOCK_DST_US },      // 米国西部
+	{ "KH6", -10 * 60, CLOCK_DST_NONE },    // ハワイ (夏時間なし)
 };
 
 static uint8_t zone_sel = CLOCK_ZONE_HOME;
@@ -546,34 +553,36 @@ static void draw_card_static(const card_t &c, uint8_t value)
 }
 
 //	日付: Orbitron で YYYY/MM/DD(SAT) と、右に選択中のゾーンのコード。
-//	上端いっぱいに詰め、罫線は引かない。全体をまとめて中央寄せする。
+//	上端いっぱいに詰め、罫線は引かない。コードも日付と同じフォントで揃える。
 static void draw_date(const clock_tm_t *tm)
 {
 	lcd->fillRect(0, 0, SCR_W, DATE_Y + DATE_H, C_BG);
 
 	char head[24], tail[8];
 	snprintf(head, sizeof(head), "%04d/%02d/%02d", tm->year, tm->mon, tm->day);
-	snprintf(tail, sizeof(tail), "(%s)", WDAY_EN[tm->wday]);
+	snprintf(tail, sizeof(tail), "%s", WDAY_EN[tm->wday]);
 	uint16_t wcol = (tm->wday == 0) ? C_SUN
 	              : (tm->wday == 6) ? C_SAT : C_DATETX;
 	const char *code = clock_zones[zone_sel].code;
 
-	// Orbitron は字幅が広い。32px で収まらなければ 24px に落とす
-	const int gap = 8;              // 日付と (曜日) の間
-	const int gap2 = 12;            // (曜日) とコードの間
+	// 全体 (日付 + 曜日 + コード) をスペース 1 個ぶんずつ空けて中央寄せする。
+	// Orbitron は字幅が広いので、32px で収まらなければ 24px に落とす
+	int wh, wt, wc, sp;
 	lcd->setFont(&fonts::Orbitron_Light_32);
-	int wh = lcd->textWidth(head);
-	int wt = lcd->textWidth(tail);
-	lcd->setFont(&fonts::AsciiFont8x16);
-	int wc = lcd->textWidth(code);
-	if (wh + gap + wt + gap2 + wc > SCR_W - 8) {
+	wh = lcd->textWidth(head);
+	wt = lcd->textWidth(tail);
+	wc = lcd->textWidth(code);
+	sp = lcd->textWidth(" ");
+	if (wh + wt + wc + sp * 2 > SCR_W - 8) {
 		lcd->setFont(&fonts::Orbitron_Light_24);
 		wh = lcd->textWidth(head);
 		wt = lcd->textWidth(tail);
+		wc = lcd->textWidth(code);
+		sp = lcd->textWidth(" ");
 	}
-	int x = (SCR_W - (wh + gap + wt + gap2 + wc)) / 2;
-	if (x < 4) {
-		x = 4;
+	int x = (SCR_W - (wh + wt + wc + sp * 2)) / 2;
+	if (x < 2) {
+		x = 2;
 	}
 	const int cy = DATE_Y + DATE_H / 2;
 
@@ -581,10 +590,9 @@ static void draw_date(const clock_tm_t *tm)
 	lcd->setTextColor(C_DATETX, C_BG);
 	lcd->drawString(head, x, cy);
 	lcd->setTextColor(wcol, C_BG);
-	lcd->drawString(tail, x + wh + gap, cy);
-	lcd->setFont(&fonts::AsciiFont8x16);
+	lcd->drawString(tail, x + wh + sp, cy);
 	lcd->setTextColor(C_ZONE_SBD, C_BG);
-	lcd->drawString(code, x + wh + gap + wt + gap2, cy);
+	lcd->drawString(code, x + wh + sp + wt + sp, cy);
 	lcd->setTextDatum(lgfx::textdatum_t::top_left);
 }
 
@@ -600,28 +608,29 @@ static void draw_zone_cell(uint8_t i, bool force)
 	}
 	zone_shown[i] = t.min;
 
-	const int x = 1 + i * ZONE_W;
+	const int x = 1 + (i % CLOCK_ZONE_COLS) * ZONE_W;
+	const int y = ZONE_Y + (i / CLOCK_ZONE_COLS) * ZONE_ROW_H;
 	const bool sel = (i == zone_sel);
+	const uint16_t bg = sel ? C_ZONE_SBG : C_ZONE_BG;
 
-	if (force) {
-		lcd->fillRect(x, ZONE_Y, ZONE_W, SCR_H - ZONE_Y, C_BG);
-		lcd->fillRoundRect(x + 2, ZONE_Y, ZONE_W - 5, ZONE_BTN_H, 4,
-		                   sel ? C_ZONE_SBG : C_ZONE_BG);
-		lcd->drawRoundRect(x + 2, ZONE_Y, ZONE_W - 5, ZONE_BTN_H, 4,
+	if (force) {                    // 枠とコードは選択が変わったときだけ
+		lcd->fillRect(x, y, ZONE_W, ZONE_ROW_H, C_BG);
+		lcd->fillRoundRect(x + 1, y, ZONE_W - 3, ZONE_H, 5, bg);
+		lcd->drawRoundRect(x + 1, y, ZONE_W - 3, ZONE_H, 5,
 		                   sel ? C_ZONE_SBD : C_ZONE_BD);
 		lcd->setFont(&fonts::AsciiFont8x16);
-		lcd->setTextColor(sel ? C_ZONE_STX : C_ZONE_TX);
+		lcd->setTextColor(sel ? C_ZONE_STX : C_ZONE_TX, bg);
 		lcd->setTextDatum(lgfx::textdatum_t::middle_center);
-		lcd->drawString(clock_zones[i].code, x + ZONE_W / 2 - 1, ZONE_Y + ZONE_BTN_H / 2);
+		lcd->drawString(clock_zones[i].code, x + ZONE_W / 2 - 1, y + 10);
 	}
 
 	char buf[8];
 	snprintf(buf, sizeof(buf), "%02u:%02u", t.hour, t.min);
-	lcd->fillRect(x, ZONE_TIME_Y, ZONE_W, 16, C_BG);
+	lcd->fillRect(x + 2, y + 18, ZONE_W - 5, 16, bg);
 	lcd->setFont(&fonts::AsciiFont8x16);
-	lcd->setTextColor(sel ? C_ZONE_SBD : C_ZONE_TIME);
+	lcd->setTextColor(sel ? C_ZONE_SBD : C_ZONE_TIME, bg);
 	lcd->setTextDatum(lgfx::textdatum_t::middle_center);
-	lcd->drawString(buf, x + ZONE_W / 2 - 1, ZONE_TIME_Y + 8);
+	lcd->drawString(buf, x + ZONE_W / 2 - 1, y + 26);
 	lcd->setTextDatum(lgfx::textdatum_t::top_left);
 }
 
@@ -636,14 +645,20 @@ static void draw_zones(bool force)
 //	タップ位置からゾーンを選ぶ。切り替えたら true
 bool clock_zone_touch(int32_t tx, int32_t ty)
 {
-	if (ty < ZONE_Y || ty >= SCR_H) {
+	if (ty < ZONE_Y) {
 		return false;
 	}
-	int i = (tx - 1) / ZONE_W;
-	if (i < 0 || i >= CLOCK_ZONE_N || (uint8_t)i == zone_sel) {
+	int row = (ty - ZONE_Y) / ZONE_ROW_H;
+	int col = (tx - 1) / ZONE_W;
+	if (row < 0 || row >= CLOCK_ZONE_N / CLOCK_ZONE_COLS ||
+	    col < 0 || col >= CLOCK_ZONE_COLS) {
 		return false;
 	}
-	zone_sel = (uint8_t)i;
+	uint8_t i = (uint8_t)(row * CLOCK_ZONE_COLS + col);
+	if (i >= CLOCK_ZONE_N || i == zone_sel) {
+		return false;
+	}
+	zone_sel = i;
 	draw_zones(true);               // 選択枠を描き直す
 	clock_tm_t tm;
 	clock_break(clock_zone_now(zone_sel), &tm);

@@ -25,7 +25,8 @@
 //	    │              WiFi設定 / WiFi初期化 / スコープログ。OTA・WiFi設定は
 //	    │              受信を止めて AP を立て、[キャンセル] または
 //	    │              保存/更新完了で戻る
-//	    └ 時計画面 ... 世界時計 (下段の国コードを押すとその国の時刻になる)。
+//	    └ 時計画面 ... 世界時計 (下段の国コードを押すとその国の時刻になる。
+//	                   パタパタ部分をタップするとデコーダ画面へ戻る)。
 //	                   DSP/デコーダは裏で動き続け、受信文字は溜まる。
 //	                   WiFi による NTP 同期はこの画面でしか行わず、
 //	                   同期中は DSP を一時停止して無線ノイズを遮断する
@@ -88,15 +89,10 @@ static uint8_t screen = SCR_DECODER;
 static uint8_t clock_requested = 0;     // デコーダ画面の中央タップで立つ
 static uint8_t setup_requested = 0;     // ステータス行の SETUP ボタンで立つ
 
-// 時計画面: 左下のバージョン表示のみ
-#define C_CLK_BG      lgfx::color565(10, 11, 13)      // clock.cpp の C_BG と同色
-#define C_CLK_FOOT    lgfx::color565(110, 114, 122)
-
-// 時計中央のタップでデコーダ画面へ戻る判定矩形 (カード列の中ほど)
-#define CLK_CENTER_X0 80
-#define CLK_CENTER_X1 240
-#define CLK_CENTER_Y0 60
-#define CLK_CENTER_Y1 180
+// 時計画面: パタパタのカード部分をタップするとデコーダ画面へ戻る
+// (下段は世界時計のボタンなので、そこは clock_zone_touch が処理する)
+#define CLK_BACK_Y0 36
+#define CLK_BACK_Y1 162
 
 static bool hit(int tx, int ty, int x, int y, int w, int h)
 {
@@ -109,17 +105,6 @@ static void wait_release(void)
 	while (display_lcd()->getTouch(&tx, &ty)) {
 		delay(10);
 	}
-}
-
-//	clock_redraw() から呼ばれる (時計側が画面を消したあとに描き直す)。
-//	SETUP はデコーダ画面のステータス行へ移したので、ここには置かない
-static void draw_clock_ui(void)
-{
-	LGFX *lcd = display_lcd();
-	lcd->setFont(&fonts::FreeSans9pt7b);
-	lcd->setTextColor(C_CLK_FOOT, C_CLK_BG);
-	lcd->drawString("CW Decoder 4  v" FW_VERSION, 8, 196);
-	lcd->drawString(FW_BUILD, 8, 216);
 }
 
 static void on_center_tap(void)
@@ -167,9 +152,8 @@ static void clock_screen_loop(void)
 	display_update();               // 非表示中は文字の取り込みのみ
 
 	if (display_lcd()->getTouch(&tx, &ty)) {
-		if (hit(tx, ty, CLK_CENTER_X0, CLK_CENTER_Y0,
-		        CLK_CENTER_X1 - CLK_CENTER_X0, CLK_CENTER_Y1 - CLK_CENTER_Y0)) {
-			leave_clock();
+		if (ty >= CLK_BACK_Y0 && ty < CLK_BACK_Y1) {
+			leave_clock();          // パタパタ部分 = デコーダ画面へ戻る
 			return;
 		}
 		// 下段の世界時計: 押した国の時刻へ (カードはパタパタで切り替わる)
@@ -230,7 +214,6 @@ void setup()
 
 	// 時計 / NTP 設定の読み込み (WiFi はここでは起動しない)
 	netsync_init();
-	clock_set_redraw_hook(draw_clock_ui);
 	clock_init(display_lcd());
 	clock_alloc();                  // 字面の実測 (初回のみ)
 

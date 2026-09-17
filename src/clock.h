@@ -49,7 +49,8 @@ typedef struct {
 #define CLOCK_DST_NZ   3        // 9月最終日曜 02:00 〜 4月第1日曜 02:00
 #define CLOCK_DST_AU   4        // 10月第1日曜 02:00 〜 4月第1日曜 02:00
 
-#define CLOCK_ZONE_N 6
+#define CLOCK_ZONE_N 12
+#define CLOCK_ZONE_COLS 6       // 6 列 x 2 行
 #define CLOCK_ZONE_HOME 2       // JA (既定)
 extern const clock_zone_t clock_zones[CLOCK_ZONE_N];
 
