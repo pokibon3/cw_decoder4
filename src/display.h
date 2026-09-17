@@ -7,6 +7,10 @@
 
 void display_init(void);
 void display_splash(void);
+// スプラッシュの見出し (タイトル + モールス飾り + 罫線) を title_y に描く。
+// About 画面がスプラッシュと同じ体裁を使うために公開している
+void display_splash_header(int title_y);
+#define DISPLAY_SPLASH_BG lgfx::color565(4, 10, 24)
 void display_enqueue(uint8_t ch);   // decoder emit callback (thread-safe)
 void display_update(void);          // call from loop (~30fps)
 

@@ -2,12 +2,13 @@
 //	セットアップ画面
 //
 //	┌ SETUP                               [戻る] ┐
+//	│      [ WiFi設定 (NTP時刻同期用) ]          │
 //	│      [ 時刻合わせ ]                        │
-//	│      [ ファームウェアアップデート ]        │
-//	│      [ WiFi設定 ]                          │
-//	│      [ WiFi初期化 ]                        │
+//	│      [ Summer Time: OFF/ON ]               │
 //	│      [ スコープログ: OFF/ON ]              │
-//	│  バージョン / WiFi / 時刻同期              │
+//	│      [ ファームウェアアップデート ]        │
+//	│      [ 初期化 (WiFi設定等) ]               │
+//	│      [ CW Decoder について ]  → About      │
 //	└────────────────────────────────────────────┘
 //
 #include <Arduino.h>
@@ -20,6 +21,8 @@
 #include "dsp.h"
 #include "version.h"
 #include "scopelog.h"
+#include "display.h"
+#include <esp_ota_ops.h>
 
 #define C_BG      lgfx::color565(14, 17, 22)
 #define C_TITLEBG lgfx::color565(26, 34, 46)
@@ -42,14 +45,17 @@
 
 #define ITEM_X 20
 #define ITEM_W 280
-#define ITEM_H 26
-#define ITEM1_Y 40
-#define ITEM2_Y 70
-#define ITEM3_Y 100
-#define ITEM4_Y 130
-#define ITEM5_Y 160
+#define ITEM_H 24
+#define ITEM_Y0 42
+#define ITEM_PITCH 28
+#define ITEM_Y(i) (ITEM_Y0 + ITEM_PITCH * (i))
+#define ITEM_N 7
 
-#define INFO_Y 191
+// About 画面 (スプラッシュと同じ体裁)
+#define ABOUT_BACK_X 214
+#define ABOUT_BACK_Y 206
+#define ABOUT_BACK_W 92
+#define ABOUT_BACK_H 28
 
 static LGFX *lcd;
 
@@ -78,63 +84,57 @@ static void wait_release(void)
 	}
 }
 
-#define INFO_ROWS 3
-#define INFO_VAL_X 116
-#define INFO_PITCH 16
-
-//	ステータス欄。毎秒呼ばれるが、値が変わった行だけ描き直す
-//	(全部塗り直すとバージョン欄までちらついて読みにくいため)。
-//	full=true でラベルを含めて全描画する。
-static void draw_info(bool full)
+//==================================================================
+//	About 画面: スプラッシュと同じ見出しに詳細情報を足したもの
+//==================================================================
+static void about_run(void)
 {
-	static String prev[INFO_ROWS];
-	clock_tm_t tm;
-	clock_break(clock_now(), &tm);
+	lcd->fillScreen(DISPLAY_SPLASH_BG);
+	display_splash_header(26);
 
-	static const char *LABEL[INFO_ROWS] = {
-		"バージョン", "WiFi", "時刻同期",
-	};
-	String val[INFO_ROWS];
-	char buf[72];
-
-	// "Sep 16 2026 20:15:00" は長すぎて右端からはみ出すので年と秒を落とす
-	// (FW_BUILD = "Mon DD YYYY HH:MM:SS")
-	char d[8], t[6];
-	memcpy(d, FW_BUILD, 6); d[6] = 0;
-	memcpy(t, FW_BUILD + 12, 5); t[5] = 0;
-	snprintf(buf, sizeof(buf), "v%s   %s %s", FW_VERSION, d, t);
-	val[0] = buf;
-	val[1] = netsync_has_wifi() ? netsync_ssid() : String("未設定 (WiFi設定で登録)");
+	char buf[80];
+	const esp_partition_t *run = esp_ota_get_running_partition();
+	struct { const char *label; String value; } rows[6];
+	rows[0] = { "Version", String(FW_VERSION) };
+	rows[1] = { "Build", String(FW_BUILD) };
+	snprintf(buf, sizeof(buf), "%s / LovyanGFX", lcd->panel_name());
+	rows[2] = { "Panel", String(buf) };
+	snprintf(buf, sizeof(buf), "%s  heap %uKB", run ? run->label : "?",
+	         (unsigned)(ESP.getFreeHeap() / 1024));
+	rows[3] = { "Boot", String(buf) };
+	rows[4] = { "WiFi", netsync_has_wifi() ? netsync_ssid() : String("未設定") };
 	if (netsync_last_epoch()) {
-		clock_tm_t s;
-		clock_break(netsync_last_epoch(), &s);
-		snprintf(buf, sizeof(buf), "NTP %02d/%02d %02d:%02d", s.mon, s.day, s.hour, s.min);
+		clock_tm_t t;
+		clock_break(netsync_last_epoch(), &t);
+		snprintf(buf, sizeof(buf), "%02d/%02d %02d:%02d 同期済", t.mon, t.day, t.hour, t.min);
+		rows[5] = { "NTP", String(buf) };
 	} else {
-		snprintf(buf, sizeof(buf), "未同期 (現在 %02d:%02d)", tm.hour, tm.min);
+		rows[5] = { "NTP", String("未同期") };
 	}
-	val[2] = buf;
 
-	lcd->setFont(&fonts::lgfxJapanGothicP_16);
-	if (full) {
-		lcd->fillRect(0, INFO_Y, 320, 240 - INFO_Y, C_BG);
-		lcd->drawFastHLine(20, INFO_Y - 3, 280, lgfx::color565(40, 60, 85));
-		lcd->setTextColor(C_LABEL, C_BG);
-		for (int i = 0; i < INFO_ROWS; i++) {
-			lcd->drawString(LABEL[i], 20, INFO_Y + i * INFO_PITCH);
-			prev[i] = "";
-		}
-	}
-	lcd->setTextColor(C_VALUE, C_BG);
-	for (int i = 0; i < INFO_ROWS; i++) {
-		if (val[i] == prev[i]) {
-			continue;
-		}
-		prev[i] = val[i];
-		int y = INFO_Y + i * INFO_PITCH;
-		lcd->fillRect(INFO_VAL_X, y, 320 - INFO_VAL_X, INFO_PITCH, C_BG);
-		lcd->setClipRect(INFO_VAL_X, y, 320 - INFO_VAL_X - 4, INFO_PITCH);
-		lcd->drawString(val[i], INFO_VAL_X, y);
+	int y = 102;
+	for (auto &r : rows) {
+		lcd->setFont(&fonts::lgfxJapanGothicP_16);
+		lcd->setTextColor(C_LABEL, DISPLAY_SPLASH_BG);
+		lcd->drawString(r.label, 24, y);
+		lcd->setTextColor(C_VALUE, DISPLAY_SPLASH_BG);
+		lcd->setClipRect(96, y, 320 - 96 - 8, 18);
+		lcd->drawString(r.value, 96, y);
 		lcd->clearClipRect();
+		y += 17;
+	}
+
+	draw_button(ABOUT_BACK_X, ABOUT_BACK_Y, ABOUT_BACK_W, ABOUT_BACK_H, "戻る",
+	            C_BTN_BG, C_BTN_BD, C_BTN_TX, &fonts::lgfxJapanGothicP_16);
+
+	wait_release();
+	int32_t tx, ty;
+	for (;;) {                      // どこをタップしても戻る
+		if (lcd->getTouch(&tx, &ty)) {
+			wait_release();
+			return;
+		}
+		delay(10);
 	}
 }
 
@@ -151,21 +151,25 @@ static void draw_screen(void)
 	draw_button(BACK_X, BACK_Y, BACK_W, BACK_H, "戻る", C_BTN_BG, C_BTN_BD, C_BTN_TX,
 	            &fonts::lgfxJapanGothicP_16);
 
-	draw_button(ITEM_X, ITEM1_Y, ITEM_W, ITEM_H, "時刻合わせ",
-	            C_BTN_BG, C_BTN_BD, C_BTN_TX, &fonts::lgfxJapanGothicP_16);
-	draw_button(ITEM_X, ITEM2_Y, ITEM_W, ITEM_H, "ファームウェアアップデート",
-	            C_BTN_BG, C_BTN_BD, C_BTN_TX, &fonts::lgfxJapanGothicP_16);
-	draw_button(ITEM_X, ITEM3_Y, ITEM_W, ITEM_H, "WiFi設定 (NTP時刻同期用)",
-	            C_BTN_BG, C_BTN_BD, C_BTN_TX, &fonts::lgfxJapanGothicP_16);
-	draw_button(ITEM_X, ITEM4_Y, ITEM_W, ITEM_H, "WiFi初期化",
-	            C_BTN_BG, C_BTN_BD, C_BTN_TX, &fonts::lgfxJapanGothicP_16);
-	draw_button(ITEM_X, ITEM5_Y, ITEM_W, ITEM_H,
-	            scopelog_enabled() ? "スコープログ: ON (シリアル)" : "スコープログ: OFF",
-	            scopelog_enabled() ? C_OK_BG : C_BTN_BG,
-	            scopelog_enabled() ? C_OK_BD : C_BTN_BD, C_BTN_TX,
-	            &fonts::lgfxJapanGothicP_16);
-
-	draw_info(true);
+	char summer[40], scope[40];
+	snprintf(summer, sizeof(summer), "Summer Time: %s", clock_summer_time() ? "ON" : "OFF");
+	snprintf(scope, sizeof(scope), "スコープログ: %s",
+	         scopelog_enabled() ? "ON (シリアル)" : "OFF");
+	const struct { const char *label; bool on; } items[ITEM_N] = {
+		{ "WiFi設定 (NTP時刻同期用)", false },
+		{ "時刻合わせ", false },
+		{ summer, clock_summer_time() != 0 },
+		{ scope, scopelog_enabled() != 0 },
+		{ "ファームウェアアップデート", false },
+		{ "初期化 (WiFi設定等)", false },
+		{ "CW Decoder について", false },
+	};
+	for (int i = 0; i < ITEM_N; i++) {
+		draw_button(ITEM_X, ITEM_Y(i), ITEM_W, ITEM_H, items[i].label,
+		            items[i].on ? C_OK_BG : C_BTN_BG,
+		            items[i].on ? C_OK_BD : C_BTN_BD, C_BTN_TX,
+		            &fonts::lgfxJapanGothicP_16);
+	}
 }
 
 //	確認ダイアログ (title / 2行の説明 / キャンセル・ok_label)
@@ -226,27 +230,42 @@ void setup_run(LGFX *lcd_)
 	wait_release();
 
 	int32_t tx, ty;
-	uint32_t t_info = millis();
 	for (;;) {
-		if (millis() - t_info > 1000) {         // 空きメモリ等を更新
-			t_info = millis();
-			draw_info(false);
-		}
 		if (!lcd->getTouch(&tx, &ty)) {
 			delay(10);
 			continue;
 		}
-
 		if (hit(tx, ty, BACK_X, BACK_Y, BACK_W, BACK_H)) {
 			wait_release();
 			return;
 		}
-		if (hit(tx, ty, ITEM_X, ITEM1_Y, ITEM_W, ITEM_H)) {
-			wait_release();
+		int idx = -1;
+		for (int i = 0; i < ITEM_N; i++) {
+			if (hit(tx, ty, ITEM_X, ITEM_Y(i), ITEM_W, ITEM_H)) {
+				idx = i;
+				break;
+			}
+		}
+		wait_release();
+		if (idx < 0) {
+			continue;
+		}
+		switch (idx) {
+		case 0:                     // WiFi設定 (AP を立ててブラウザから登録)
+			ap_mode_enter();
+			wifi_setup_run(lcd);
+			ap_mode_leave();
+			break;
+		case 1:
 			timeset_run(lcd);
-			draw_screen();
-		} else if (hit(tx, ty, ITEM_X, ITEM2_Y, ITEM_W, ITEM_H)) {
-			wait_release();
+			break;
+		case 2:
+			clock_set_summer_time(!clock_summer_time());
+			break;
+		case 3:
+			scopelog_set_enabled(!scopelog_enabled());
+			break;
+		case 4:
 			if (confirm("OTAモードに入ります",
 			            "受信を止めて WiFi を起動します",
 			            "更新が成功すると再起動します", "開始")) {
@@ -254,27 +273,18 @@ void setup_run(LGFX *lcd_)
 				ota_run(lcd);       // 成功時は再起動、キャンセルで戻る
 				ap_mode_leave();
 			}
-			draw_screen();
-		} else if (hit(tx, ty, ITEM_X, ITEM3_Y, ITEM_W, ITEM_H)) {
-			wait_release();
-			ap_mode_enter();
-			wifi_setup_run(lcd);
-			ap_mode_leave();
-			draw_screen();
-		} else if (hit(tx, ty, ITEM_X, ITEM5_Y, ITEM_W, ITEM_H)) {
-			wait_release();
-			scopelog_set_enabled(!scopelog_enabled());
-			draw_screen();
-		} else if (hit(tx, ty, ITEM_X, ITEM4_Y, ITEM_W, ITEM_H)) {
-			wait_release();
-			if (confirm("WiFi設定を初期化します",
-			            "保存済みの SSID / パスワードを消し",
+			break;
+		case 5:
+			if (confirm("設定を初期化します",
+			            "WiFi の SSID / パスワードを消し",
 			            "NTP 時刻同期を止めます", "初期化")) {
 				netsync_clear_wifi();
 			}
-			draw_screen();
-		} else {
-			wait_release();
+			break;
+		default:
+			about_run();
+			break;
 		}
+		draw_screen();
 	}
 }

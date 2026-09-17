@@ -143,7 +143,11 @@ static void draw_screen(void)
 	lcd->setFont(&fonts::lgfxJapanGothicP_16);
 	lcd->setTextColor(C_TITLETX, C_TITLEBG);
 	lcd->setTextDatum(lgfx::textdatum_t::middle_left);
-	lcd->drawString("時刻合わせ", 8, 17);
+	{
+		char title[32];
+		snprintf(title, sizeof(title), "時刻合わせ (%s)", clock_zones[clock_zone()].code);
+		lcd->drawString(title, 8, 17);
+	}
 	lcd->setTextDatum(lgfx::textdatum_t::top_left);
 
 	lcd->setFont(&fonts::lgfxJapanGothicP_16);
@@ -166,7 +170,7 @@ static void draw_screen(void)
 bool timeset_run(LGFX *lcd_)
 {
 	lcd = lcd_;
-	clock_break(clock_now(), &tm);
+	clock_break(clock_zone_now(clock_zone()), &tm);
 	draw_screen();
 
 	int32_t tx, ty;
@@ -189,7 +193,7 @@ bool timeset_run(LGFX *lcd_)
 		if (hit(tx, ty, 180, BTN_Y, 110, BTN_H)) {
 			while (lcd->getTouch(&tx, &ty)) delay(10);
 			tm.sec = 0;
-			clock_set(clock_make(&tm));
+			clock_set_zone_time(clock_zone(), clock_make(&tm));
 			return true;
 		}
 		if (hit(tx, ty, 30, BTN_Y, 110, BTN_H)) {

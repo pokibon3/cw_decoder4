@@ -32,15 +32,22 @@
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
+#include <Preferences.h>
 #include "clock.h"
 #include "display.h"
 
 #define SCR_W 320
 #define SCR_H 240
-#define DATE_H 40               // 日付 (Orbitron、中央寄せ。バー塗りはしない)
-// カードの天地は画面のちょうど中央に置く
-#define CARD_CENTER_Y (SCR_H / 2)
-#define CARD_Y (CARD_CENTER_Y - BIG_H / 2)      // = 59、下端は 180
+// 日付は上端いっぱいに詰める (罫線は引かない)
+#define DATE_Y 2
+#define DATE_H 32
+// パタパタは日付のすぐ下。上下の余白は 4px だけ残す
+#define CARD_Y 38               // 下端は 160
+// 下 1/3 は世界時計 (コードのボタン + hh:mm を 6 個)
+#define ZONE_Y 164
+#define ZONE_W 53               // 6 列 x 53 = 318
+#define ZONE_BTN_H 22
+#define ZONE_TIME_Y (ZONE_Y + 30)
 
 #define BIG_W 122               // 時・分のカード (Font8 の "88" = 110px + 余白)
 #define BIG_H 122
@@ -71,6 +78,13 @@
 #define C_EDGE_LIT  lgfx::color565(170, 172, 178)
 #define C_TOAST_BG  lgfx::color565(20, 21, 24)
 #define C_TOAST_BD  lgfx::color565(130, 134, 142)
+#define C_ZONE_BG   lgfx::color565(22, 26, 34)      // ゾーンボタン (非選択)
+#define C_ZONE_BD   lgfx::color565(60, 68, 82)
+#define C_ZONE_TX   lgfx::color565(150, 160, 175)
+#define C_ZONE_SBG  lgfx::color565(24, 54, 42)      // 選択中
+#define C_ZONE_SBD  lgfx::color565(90, 200, 140)
+#define C_ZONE_STX  lgfx::color565(200, 240, 215)
+#define C_ZONE_TIME lgfx::color565(196, 202, 210)
 
 // カード地のグラデーション (上端 -> 下端)
 #define CARD_T_R 38
@@ -108,6 +122,7 @@ static uint8_t shown[3] = { 0xFF, 0xFF, 0xFF };     // 表示中の 時/分/秒
 static uint32_t shown_day = 0;                      // 表示中の日付 (epoch/86400)
 
 //	----- 暦の計算 (Howard Hinnant の days_from_civil / civil_from_days) -----
+static int32_t days_from_civil(int32_t y, uint32_t m, uint32_t d);
 
 static int32_t days_from_civil(int32_t y, uint32_t m, uint32_t d)
 {
@@ -160,6 +175,148 @@ void clock_break(uint32_t epoch, clock_tm_t *tm)
 	tm->min = (uint8_t)((rem % 3600u) / 60u);
 	tm->sec = (uint8_t)(rem % 60u);
 	tm->wday = (uint8_t)((days + 4) % 7);       // 1970-01-01 は木曜
+}
+
+//==================================================================
+//	世界時計のゾーンと夏時間
+//	内部時刻は JST 基準。UTC = clock_now() - 9h を起点に各ゾーンを求める。
+//==================================================================
+#define CLOCK_BASE_MIN (9 * 60)         // 内部時刻の基準 (JST)
+
+const clock_zone_t clock_zones[CLOCK_ZONE_N] = {
+	{ "ZL",   12 * 60, CLOCK_DST_NZ },      // ニュージーランド
+	{ "VK",   10 * 60, CLOCK_DST_AU },      // オーストラリア東部
+	{ "JA",    9 * 60, CLOCK_DST_NONE },    // 日本
+	{ "UTC",        0, CLOCK_DST_NONE },    // 世界標準時
+	{ "W1",   -5 * 60, CLOCK_DST_US },      // 米国東部
+	{ "W6",   -8 * 60, CLOCK_DST_US },      // 米国西部
+};
+
+static uint8_t zone_sel = CLOCK_ZONE_HOME;
+static uint8_t summer_time = 1;
+static uint8_t zone_shown[CLOCK_ZONE_N];    // 表示中の分 (書き換え判定用)
+static uint8_t zone_shown_valid = 0;
+
+//	year/mon の nth 番目の日曜 (nth=5 で最終日曜) の日
+static uint8_t nth_sunday(int16_t year, uint8_t mon, uint8_t nth)
+{
+	int32_t first = days_from_civil(year, mon, 1);
+	uint8_t wday = (uint8_t)((first + 4) % 7);          // 0=日
+	uint8_t day = (uint8_t)(1 + ((7 - wday) % 7));      // その月の最初の日曜
+	if (nth >= 5) {
+		uint8_t last = clock_days_in_month(year, mon);
+		while ((uint8_t)(day + 7) <= last) {
+			day = (uint8_t)(day + 7);
+		}
+	} else {
+		day = (uint8_t)(day + 7 * (nth - 1));
+	}
+	return day;
+}
+
+//	year/mon の nth 日曜 hour:00 の epoch (呼び出し側と同じ時間軸で)
+static uint32_t rule_epoch(int16_t year, uint8_t mon, uint8_t nth, uint8_t hour)
+{
+	clock_tm_t t;
+	t.year = year;
+	t.mon = mon;
+	t.day = nth_sunday(year, mon, nth);
+	t.hour = hour;
+	t.min = 0;
+	t.sec = 0;
+	t.wday = 0;
+	return clock_make(&t);
+}
+
+//	夏時間の適用判定。loc は標準時のローカル時刻、utc は協定世界時
+static bool dst_active(uint8_t rule, uint32_t utc, uint32_t loc)
+{
+	if (rule == CLOCK_DST_NONE || !summer_time) {
+		return false;
+	}
+	clock_tm_t t;
+	clock_break(loc, &t);
+	int16_t y = t.year;
+	switch (rule) {
+	case CLOCK_DST_US:      // 3月第2日曜 02:00 〜 11月第1日曜 02:00 (夏時間) = 01:00 標準時
+		return (loc >= rule_epoch(y, 3, 2, 2) && loc < rule_epoch(y, 11, 1, 1));
+	case CLOCK_DST_EU:      // 3月最終日曜 01:00UTC 〜 10月最終日曜 01:00UTC
+		return (utc >= rule_epoch(y, 3, 5, 1) && utc < rule_epoch(y, 10, 5, 1));
+	case CLOCK_DST_NZ:      // 南半球: 9月最終日曜 〜 翌4月第1日曜
+		return (loc >= rule_epoch(y, 9, 5, 2) || loc < rule_epoch(y, 4, 1, 2));
+	case CLOCK_DST_AU:      // 南半球: 10月第1日曜 〜 翌4月第1日曜
+		return (loc >= rule_epoch(y, 10, 1, 2) || loc < rule_epoch(y, 4, 1, 2));
+	default:
+		return false;
+	}
+}
+
+uint8_t clock_zone(void)
+{
+	return zone_sel;
+}
+
+void clock_set_zone(uint8_t idx)
+{
+	if (idx < CLOCK_ZONE_N) {
+		zone_sel = idx;
+	}
+}
+
+uint8_t clock_summer_time(void)
+{
+	return summer_time;
+}
+
+void clock_set_summer_time(uint8_t on)
+{
+	summer_time = on ? 1 : 0;
+	Preferences prefs;
+	if (prefs.begin("cwdec", false)) {
+		prefs.putUChar("summer", summer_time);
+		prefs.end();
+	}
+	zone_shown_valid = 0;
+}
+
+static void summer_time_load(void)
+{
+	Preferences prefs;
+	if (prefs.begin("cwdec", false)) {
+		if (prefs.isKey("summer")) {
+			summer_time = prefs.getUChar("summer", 1);
+		}
+		prefs.end();
+	}
+}
+
+uint32_t clock_zone_now(uint8_t idx)
+{
+	if (idx >= CLOCK_ZONE_N) {
+		idx = CLOCK_ZONE_HOME;
+	}
+	uint32_t utc = clock_now() - (uint32_t)CLOCK_BASE_MIN * 60;
+	const clock_zone_t *z = &clock_zones[idx];
+	uint32_t loc = (uint32_t)((int32_t)utc + (int32_t)z->std_min * 60);
+	if (dst_active(z->dst_rule, utc, loc)) {
+		loc += 3600;
+	}
+	return loc;
+}
+
+//	そのゾーンのローカル時刻を指定して内部時刻を合わせる
+void clock_set_zone_time(uint8_t idx, uint32_t local)
+{
+	if (idx >= CLOCK_ZONE_N) {
+		idx = CLOCK_ZONE_HOME;
+	}
+	const clock_zone_t *z = &clock_zones[idx];
+	// 夏時間の判定は標準時ローカルで行う (入力値をそのまま使って近似)
+	uint32_t utc = (uint32_t)((int32_t)local - (int32_t)z->std_min * 60);
+	if (dst_active(z->dst_rule, utc, local)) {
+		utc -= 3600;
+	}
+	clock_set(utc + (uint32_t)CLOCK_BASE_MIN * 60);
 }
 
 //	ビルド日時 (__DATE__ "Aug 16 2026" / __TIME__ "10:55:00") を基準時刻にする
@@ -388,39 +545,111 @@ static void draw_card_static(const card_t &c, uint8_t value)
 	push_card(c, spr_new);
 }
 
-//	日付: Orbitron で YYYY/MM/DD(SAT)。曜日は 日=赤 / 土=青 / 平日=本文色。
-//	バーは塗らず、細い罫線だけ引いて時計を主役にする。
+//	日付: Orbitron で YYYY/MM/DD(SAT) と、右に選択中のゾーンのコード。
+//	上端いっぱいに詰め、罫線は引かない。全体をまとめて中央寄せする。
 static void draw_date(const clock_tm_t *tm)
 {
-	lcd->fillRect(0, 0, SCR_W, DATE_H + 2, C_BG);
+	lcd->fillRect(0, 0, SCR_W, DATE_Y + DATE_H, C_BG);
 
 	char head[24], tail[8];
 	snprintf(head, sizeof(head), "%04d/%02d/%02d", tm->year, tm->mon, tm->day);
 	snprintf(tail, sizeof(tail), "(%s)", WDAY_EN[tm->wday]);
 	uint16_t wcol = (tm->wday == 0) ? C_SUN
 	              : (tm->wday == 6) ? C_SAT : C_DATETX;
+	const char *code = clock_zones[zone_sel].code;
 
-	// Orbitron は字幅が広い。32px だと 346px になって画面外へ出るので、
-	// 入らなければ 24px に落とす (実測して選ぶので書式を変えても破綻しない)
-	const int gap = 10;             // 日付と (曜日) の間隔
+	// Orbitron は字幅が広い。32px で収まらなければ 24px に落とす
+	const int gap = 8;              // 日付と (曜日) の間
+	const int gap2 = 12;            // (曜日) とコードの間
 	lcd->setFont(&fonts::Orbitron_Light_32);
 	int wh = lcd->textWidth(head);
 	int wt = lcd->textWidth(tail);
-	if (wh + gap + wt > SCR_W - 8) {
+	lcd->setFont(&fonts::AsciiFont8x16);
+	int wc = lcd->textWidth(code);
+	if (wh + gap + wt + gap2 + wc > SCR_W - 8) {
 		lcd->setFont(&fonts::Orbitron_Light_24);
 		wh = lcd->textWidth(head);
 		wt = lcd->textWidth(tail);
 	}
-	int x = (SCR_W - (wh + gap + wt)) / 2;
+	int x = (SCR_W - (wh + gap + wt + gap2 + wc)) / 2;
+	if (x < 4) {
+		x = 4;
+	}
+	const int cy = DATE_Y + DATE_H / 2;
 
 	lcd->setTextDatum(lgfx::textdatum_t::middle_left);
 	lcd->setTextColor(C_DATETX, C_BG);
-	lcd->drawString(head, x, DATE_H / 2);
+	lcd->drawString(head, x, cy);
 	lcd->setTextColor(wcol, C_BG);
-	lcd->drawString(tail, x + wh + gap, DATE_H / 2);
+	lcd->drawString(tail, x + wh + gap, cy);
+	lcd->setFont(&fonts::AsciiFont8x16);
+	lcd->setTextColor(C_ZONE_SBD, C_BG);
+	lcd->drawString(code, x + wh + gap + wt + gap2, cy);
 	lcd->setTextDatum(lgfx::textdatum_t::top_left);
+}
 
-	lcd->drawFastHLine(x, DATE_H, wh + gap + wt, C_DATERULE);
+//==================================================================
+//	世界時計の行 (コードのボタン + hh:mm を 6 個、朝が早い順)
+//==================================================================
+static void draw_zone_cell(uint8_t i, bool force)
+{
+	clock_tm_t t;
+	clock_break(clock_zone_now(i), &t);
+	if (!force && zone_shown_valid && zone_shown[i] == t.min) {
+		return;
+	}
+	zone_shown[i] = t.min;
+
+	const int x = 1 + i * ZONE_W;
+	const bool sel = (i == zone_sel);
+
+	if (force) {
+		lcd->fillRect(x, ZONE_Y, ZONE_W, SCR_H - ZONE_Y, C_BG);
+		lcd->fillRoundRect(x + 2, ZONE_Y, ZONE_W - 5, ZONE_BTN_H, 4,
+		                   sel ? C_ZONE_SBG : C_ZONE_BG);
+		lcd->drawRoundRect(x + 2, ZONE_Y, ZONE_W - 5, ZONE_BTN_H, 4,
+		                   sel ? C_ZONE_SBD : C_ZONE_BD);
+		lcd->setFont(&fonts::AsciiFont8x16);
+		lcd->setTextColor(sel ? C_ZONE_STX : C_ZONE_TX);
+		lcd->setTextDatum(lgfx::textdatum_t::middle_center);
+		lcd->drawString(clock_zones[i].code, x + ZONE_W / 2 - 1, ZONE_Y + ZONE_BTN_H / 2);
+	}
+
+	char buf[8];
+	snprintf(buf, sizeof(buf), "%02u:%02u", t.hour, t.min);
+	lcd->fillRect(x, ZONE_TIME_Y, ZONE_W, 16, C_BG);
+	lcd->setFont(&fonts::AsciiFont8x16);
+	lcd->setTextColor(sel ? C_ZONE_SBD : C_ZONE_TIME);
+	lcd->setTextDatum(lgfx::textdatum_t::middle_center);
+	lcd->drawString(buf, x + ZONE_W / 2 - 1, ZONE_TIME_Y + 8);
+	lcd->setTextDatum(lgfx::textdatum_t::top_left);
+}
+
+static void draw_zones(bool force)
+{
+	for (uint8_t i = 0; i < CLOCK_ZONE_N; i++) {
+		draw_zone_cell(i, force);
+	}
+	zone_shown_valid = 1;
+}
+
+//	タップ位置からゾーンを選ぶ。切り替えたら true
+bool clock_zone_touch(int32_t tx, int32_t ty)
+{
+	if (ty < ZONE_Y || ty >= SCR_H) {
+		return false;
+	}
+	int i = (tx - 1) / ZONE_W;
+	if (i < 0 || i >= CLOCK_ZONE_N || (uint8_t)i == zone_sel) {
+		return false;
+	}
+	zone_sel = (uint8_t)i;
+	draw_zones(true);               // 選択枠を描き直す
+	clock_tm_t tm;
+	clock_break(clock_zone_now(zone_sel), &tm);
+	draw_date(&tm);                 // 日付とコードも更新
+	shown_day = clock_zone_now(zone_sel) / 86400u;
+	return true;                    // カードは clock_update がパタパタで追従する
 }
 
 void clock_toast(const char *msg, uint16_t color)
@@ -439,14 +668,16 @@ void clock_redraw(void)
 {
 	lcd->fillScreen(C_BG);
 	clock_tm_t tm;
-	clock_break(clock_now(), &tm);
+	clock_break(clock_zone_now(zone_sel), &tm);
 	draw_date(&tm);
 	for (int i = 0; i < 3; i++) {           // カードの落ち影
 		lcd->fillRoundRect(card[i].x + 2, card[i].y + 3, card[i].w, card[i].h,
 		                   CARD_R, C_CARD_SHDW);
 	}
+	zone_shown_valid = 0;
+	draw_zones(true);
 	shown[0] = shown[1] = shown[2] = 0xFF;
-	shown_day = clock_now() / 86400u;
+	shown_day = clock_zone_now(zone_sel) / 86400u;
 	if (redraw_hook) {
 		redraw_hook();
 	}
@@ -493,6 +724,7 @@ void clock_init(LGFX *lcd_)
 	lcd = lcd_;
 	epoch_base = build_epoch();
 	base_ms = millis();
+	summer_time_load();
 }
 
 //	共有バッファは解放しない (デコーダ画面が使う)。描画だけ止める
@@ -504,13 +736,14 @@ void clock_free(void)
 void clock_update(void)
 {
 	clock_tm_t tm;
-	uint32_t now = clock_now();
+	uint32_t now = clock_zone_now(zone_sel);
 	clock_break(now, &tm);
 
 	if (now / 86400u != shown_day) {
 		shown_day = now / 86400u;
 		draw_date(&tm);
 	}
+	draw_zones(false);              // 分が変わった枠だけ描き直す
 
 	const uint8_t val[3] = { tm.hour, tm.min, tm.sec };
 	for (int i = 0; i < 3; i++) {

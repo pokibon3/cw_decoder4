@@ -343,7 +343,7 @@ static void draw_status(void)
 	uint8_t mode = decoder_mode();
 	uint8_t tone = dsp_tone_index();
 	uint16_t thz = dsp_tone_hz();
-	uint32_t now = clock_now();       // millis() ベースの軽い計算 (DSP には無関係)
+	uint32_t now = clock_zone_now(clock_zone());   // 選択中の国の時刻
 
 	if (!status_dirty && now == s_sec &&
 	    wpm == s_wpm && mode == s_mode && tone == s_tone && thz == s_thz) {
@@ -725,15 +725,13 @@ void display_init(void)
 	}
 }
 
-void display_splash(void)
+//	スプラッシュ / About 共通の見出し
+void display_splash_header(int title_y)
 {
-	lcd.fillScreen(lgfx::color565(4, 10, 24));
 	lcd.setTextDatum(lgfx::textdatum_t::middle_center);
-
-	// タイトル (Orbitron: ネイティブ32px、拡大なし)
 	lcd.setFont(&fonts::Orbitron_Light_32);
 	lcd.setTextColor(C_STATUS_TX);
-	lcd.drawString("CW DECODER 4", 160, 76);
+	lcd.drawString("CW DECODER 4", 160, title_y);
 
 	// モールス飾り: "CQ" (-.-. --.-)
 	{
@@ -743,21 +741,29 @@ void display_splash(void)
 			w += (*p == '-') ? 19 : (*p == '.') ? 10 : 15;
 		}
 		int x = (320 - w) / 2;
+		int y = title_y + 40;
 		for (const char *p = m; *p; p++) {
 			if (*p == '-') {
-				lcd.fillRoundRect(x, 116, 14, 5, 2, C_WPM);
+				lcd.fillRoundRect(x, y, 14, 5, 2, C_WPM);
 				x += 19;
 			} else if (*p == '.') {
-				lcd.fillRoundRect(x, 116, 5, 5, 2, C_WPM);
+				lcd.fillRoundRect(x, y, 5, 5, 2, C_WPM);
 				x += 10;
 			} else {
 				x += 15;
 			}
 		}
 	}
+	lcd.drawFastHLine(40, title_y + 64, 240, C_SEP);
+	lcd.setTextDatum(lgfx::textdatum_t::top_left);
+}
 
-	lcd.drawFastHLine(40, 140, 240, C_SEP);
+void display_splash(void)
+{
+	lcd.fillScreen(DISPLAY_SPLASH_BG);
+	display_splash_header(76);
 
+	lcd.setTextDatum(lgfx::textdatum_t::middle_center);
 	lcd.setFont(&fonts::Orbitron_Light_24);
 	lcd.setTextColor(C_EQ_LINE);
 	lcd.drawString("ESP32", 160, 168);

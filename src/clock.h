@@ -29,9 +29,36 @@ void clock_free(void);              // 描画停止 (バッファはデコーダ
 bool clock_alloc(void);             // 時計画面に入るたびに呼ぶ: 共有バッファへ割り付け
 void clock_redraw(void);            // 他画面から戻ったときの再描画
 void clock_toast(const char *msg, uint16_t color);      // 画面中央に一時メッセージ
+// 下段の世界時計をタップしたときの処理。ゾーンが変わったら true
+bool clock_zone_touch(int32_t tx, int32_t ty);
 
 // clock_redraw() の最後に呼ばれるフック (main 側のボタン再描画用)
 void clock_set_redraw_hook(void (*fn)(void));
+
+//	世界時計のゾーン (朝が早い順)。内部時刻は JST 基準で持ち、表示のときだけ
+//	ゾーンのオフセットを足す。夏時間は SETUP の設定が ON のときだけ適用する
+typedef struct {
+	const char *code;       // アマチュア無線のプリフィクス表記
+	int16_t std_min;        // 標準時オフセット (分)
+	uint8_t dst_rule;       // CLOCK_DST_*
+} clock_zone_t;
+
+#define CLOCK_DST_NONE 0
+#define CLOCK_DST_US   1        // 3月第2日曜 02:00 〜 11月第1日曜 02:00
+#define CLOCK_DST_EU   2        // 3月最終日曜 01:00UTC 〜 10月最終日曜 01:00UTC
+#define CLOCK_DST_NZ   3        // 9月最終日曜 02:00 〜 4月第1日曜 02:00
+#define CLOCK_DST_AU   4        // 10月第1日曜 02:00 〜 4月第1日曜 02:00
+
+#define CLOCK_ZONE_N 6
+#define CLOCK_ZONE_HOME 2       // JA (既定)
+extern const clock_zone_t clock_zones[CLOCK_ZONE_N];
+
+uint8_t clock_zone(void);                   // 選択中のゾーン
+void clock_set_zone(uint8_t idx);
+uint32_t clock_zone_now(uint8_t idx);       // そのゾーンのローカル時刻
+void clock_set_zone_time(uint8_t idx, uint32_t local);  // 時刻合わせ (そのゾーンの時刻で)
+uint8_t clock_summer_time(void);            // 夏時間を使うか (SETUP の設定)
+void clock_set_summer_time(uint8_t on);     // NVS に保存する
 
 uint32_t clock_now(void);           // 現在時刻 (1970-01-01 からの秒, JST)
 void clock_set(uint32_t epoch);     // 時刻合わせ
