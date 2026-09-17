@@ -1,6 +1,6 @@
 //
 //	DSP タスク (Core 0)
-//	- I2S DMA から 48サンプル(6ms)単位で取得
+//	- ADC DMA から 59サンプル(7.375ms)単位で取得
 //	- トーン判定は 3ビン float Goertzel (CH32版 v1.8/1.9 と同一方式)。
 //	  サイドは EMA(α=1/4) 平滑と瞬時値の両方をデコーダへ渡す。
 //	- 256pt FFT (Hann窓) でスペクトラム表示用データ生成
@@ -19,7 +19,7 @@
 // 20WPM=3.0hop(18ms/列)、40WPM=1.5hop(9ms/列)。範囲外はクランプ。
 #define SCOPE_HOPS_Q8_MIN 384   // 1.5 hop (40WPM)
 #define SCOPE_HOPS_Q8_MAX 768   // 3.0 hop (20WPM以下)
-#define SPEC_INTERVAL_HOPS 6    // 36ms 毎 (約28fps)
+#define SPEC_INTERVAL_HOPS 6    // 44ms 毎 (約23fps)
 #define DSP_AUTO_MIN_MAG 800    // AUTO同調とピーク表示の共通絶対床
 #define DSP_DIAG 0              // 毎秒 blk/s・mag統計をシリアル出力
 
@@ -62,9 +62,9 @@ static int32_t side_ema_h = 0;
 static uint8_t side_ema_started = 0;
 
 // トーン判定窓長 (サンプル数)。WPM追従で切替:
-// 12ms窓(96)はエッジが±6msなまり、45WPM(ギャップ27ms)では要素間
+// 14.75ms窓(118)はエッジが±7msなまり、45WPM(ギャップ27ms)では要素間
 // ギャップが20ms未満に潰れて短点が融合する。高速時は v1.9 実証済みの
-// 6ms窓(48)へ戻す。ヒステリシス: ≥32WPMで48 / ≤28WPMで96。
+// 7.4ms窓(59)へ戻す。ヒステリシス: ≥32WPMで59 / ≤28WPMで118。
 static volatile uint8_t gate_win = DSP_GATE_WIN;
 
 static portMUX_TYPE dsp_mux = portMUX_INITIALIZER_UNLOCKED;
@@ -133,8 +133,9 @@ uint16_t dsp_peak_hz(void)
 
 uint16_t dsp_scope_col_ms_x10(void)
 {
-	// 1 hop = 6ms → 0.1ms単位で 60
-	return (uint16_t)(((uint32_t)scope_period_q8 * 60U) >> 8);
+	// 1 hop = DSP_HOP/8kHz (7.375ms) を 0.1ms 単位で。1/1000ms 単位で掛けて丸める
+	const uint32_t hop_us = (uint32_t)DSP_HOP * 1000000UL / DSP_SAMPLE_RATE;   // 7375
+	return (uint16_t)((((uint32_t)scope_period_q8 * hop_us) >> 8) / 100U);
 }
 
 uint16_t dsp_gate_bw_hz(void)
@@ -149,21 +150,22 @@ uint8_t dsp_input_level_pct(void)
 
 //==================================================================
 //	トーン判定: 3ビン float Goertzel (CH32版 v1.8/1.9 と同一方式)
-//	窓長は 96 サンプル (12ms)、ホップ 48 (判定周期 6ms は不変)。
-//	帯域幅 83.3Hz と CH32版(167Hz)の半分で、帯域内ノイズ電力が
-//	半減 = SNR +3dB。重畳バンドノイズ下の弱信号対策。
-//	代償: トーン同調が中心±40Hz程度までシビアになる。
-//	サイド = ±333.33Hz は96サンプル窓では±4 DFTビンにあたり、
+//	窓長は 118 サンプル (14.75ms)、ホップ 59 (判定周期 7.375ms)。
+//	帯域幅 67.8Hz と CH32版(167Hz)の約4割で、帯域内ノイズ電力が
+//	減る = SNR +3.9dB。重畳バンドノイズ下の弱信号対策。
+//	代償: トーン同調が中心±34Hz程度までシビアになる。
+//	サイド = ±271Hz (±2 hopビン) は118サンプル窓では±4 DFTビンにあたり、
 //	引き続き矩形窓 Dirichlet核のヌル上 (純音はサイドへ漏れない)。
+//	(値は v2.0 実機調整時の物理条件を再現したもの。dsp.h DSP_HOP 参照)
 //	(FFTゲートはヌル配置が崩れトーンの周波数ズレに弱く、実機で
 //	 デコード率が劣化したため廃止。FFT はスペアナ表示専用)
 //	戻り値: デコーダ正規化後の中心マグニチュード
 //==================================================================
 static float g_coeff_c = 0.0f;
-static float g_coeff_l = 0.0f;    // 遠サイド -333.33Hz (±2/±4 bin)
-static float g_coeff_h = 0.0f;    // 遠サイド +333.33Hz
-static float g_coeff_nl = 0.0f;   // 近サイド -166.67Hz (±1/±2 bin)
-static float g_coeff_nh = 0.0f;   // 近サイド +166.67Hz
+static float g_coeff_l = 0.0f;    // 遠サイド -2 hopビン = -271Hz (±2/±4 bin)
+static float g_coeff_h = 0.0f;    // 遠サイド +271Hz
+static float g_coeff_nl = 0.0f;   // 近サイド -1 hopビン = -136Hz (±1/±2 bin)
+static float g_coeff_nh = 0.0f;   // 近サイド +136Hz
 
 // 近サイド用EMA + 包絡線ジッタ
 static int32_t near_ema_l = 0;
@@ -174,7 +176,7 @@ static int32_t mag_prev = 0;
 static void gate_update_coeff(void)
 {
 	float fc = (float)gate_hz;
-	float fstep = (float)DSP_SAMPLE_RATE / (float)DSP_HOP;   // 166.67Hz
+	float fstep = (float)DSP_SAMPLE_RATE / (float)DSP_HOP;   // 135.6Hz (1 hopビン)
 	g_coeff_c  = 2.0f * cosf(2.0f * (float)M_PI * fc / (float)DSP_SAMPLE_RATE);
 	g_coeff_l  = 2.0f * cosf(2.0f * (float)M_PI * (fc - 2.0f * fstep) / (float)DSP_SAMPLE_RATE);
 	g_coeff_h  = 2.0f * cosf(2.0f * (float)M_PI * (fc + 2.0f * fstep) / (float)DSP_SAMPLE_RATE);
@@ -193,7 +195,7 @@ static inline int32_t goertzel_mag(float q1, float q2, float coeff)
 
 static int32_t process_gate(void)
 {
-	// 直近 gate_win サンプルを窓として使う (96時はホップ48で50%重複)
+	// 直近 gate_win サンプルを窓として使う (118時はホップ59で50%重複)
 	const int n = gate_win;
 	float win[DSP_GATE_WIN];
 	float mean = 0.0f;
@@ -621,7 +623,7 @@ void dsp_set_paused(uint8_t paused)
 		if (dsp_paused) return;
 		dsp_paused = 1;
 		for (int i = 0; i < 50 && dsp_alive && !dsp_idle; i++) {
-			delay(10);                  // 進行中の audio_read (最大6ms) を待つ
+			delay(10);                  // 進行中の audio_read (最大7.4ms) を待つ
 		}
 		audio_stop();
 		Serial.printf("[dsp] paused (idle=%d) heap=%u\n", (int)dsp_idle,

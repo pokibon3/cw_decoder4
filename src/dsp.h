@@ -5,7 +5,12 @@
 #include <stdint.h>
 
 #define DSP_SAMPLE_RATE 8000
-#define DSP_HOP 48              // 6ms: トーン判定ブロック長 (Goertzel窓)
+// トーン判定ブロック長 (ホップ)。59 サンプル = 7.375ms。
+// v2.0 のノイズ対策は ADC が実効 6.5kHz で動いていた状態で実機調整されており、
+// そのときの物理条件 (ブロック 7.33ms / 窓 68Hz / サイド ±273Hz) を
+// 正しい 8kHz のもとで再現する値。48 (6ms) では時定数が 18% 短く、
+// 窓とサイドが 22% 広くなってノイズ耐性が落ちる (実機で確認)
+#define DSP_HOP 59
 #define DSP_SPEC_N 256          // 表示用FFT (31.25Hz/bin)
 #define DSP_SPEC_LOG2 8
 #define DSP_SPEC_BINS 64        // 表示 0〜2kHz
@@ -19,7 +24,7 @@ typedef struct {
 
 #define DSP_TONE_COUNT 5            // 600/700/800/900/1000Hz
 #define DSP_TONE_AUTO DSP_TONE_COUNT // AUTO: 600〜1000Hzの最強ピークへ自動同調
-#define DSP_GATE_WIN 96             // トーン判定Goertzel窓 (12ms、帯域83.3Hz)
+#define DSP_GATE_WIN (DSP_HOP * 2)  // トーン判定Goertzel窓 118 (14.75ms、帯域67.8Hz)
 
 void dsp_start(void);
 // 一時停止: DSPタスクを待機させ ADC DMA を止める (再開時に初期化し直す)。

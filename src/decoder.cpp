@@ -10,11 +10,12 @@
 #include <string.h>
 #include "decoder.h"
 #include "decode.h"
+#include "dsp.h"
 
 // トーン判定: 中心ビンがサイドレベルの何倍あれば正弦波とみなすか。
 #define TONE_SIDE_RATIO 3
 #define TONE_SIDE_RATIO_OFF_X10 25
-// 近サイド(±166.67Hz)比。純音は近サイド≒0で比が大、330Hz以上の
+// 近サイド(±136Hz = ±1 hopビン)比。純音は近サイド≒0で比が大、330Hz以上の
 // フィルタノイズは近サイド≒中心で比≒1になり棄却される。
 #define TONE_NEAR_RATIO 2
 #define TONE_NEAR_RATIO_OFF_X10 15
@@ -27,8 +28,9 @@
 #define NOISE_BLANKER_ENABLED 1
 // 診断: マーク/スペース長・符号列をシリアル出力
 #define DEC_DIAG 0
-// デコーダ内部時刻の1ブロック分 (48サンプル @8kHz = 6ms)
-#define DEC_BLOCK_MS 6
+// デコーダ内部時刻はサンプル数から作る (1ブロック = DSP_HOP サンプル =
+// 59/8kHz = 7.375ms。整数 ms では表せないのでサンプル数で積算して ms に換算)
+#define DEC_SAMPLES_PER_MS (DSP_SAMPLE_RATE / 1000)
 
 static const uint8_t KEY_LOW = 0;
 static const uint8_t KEY_HIGH = 1;
@@ -69,6 +71,7 @@ static uint32_t code_pre_gap = 0;
 // 走ると、millis() ではマーク/スペース長がバッファ長単位に量子化され
 // 測定を壊すため (実測で32ms単位になりデコード率が劣化した)。
 static uint32_t dec_ms = 0;
+static uint64_t dec_samples = 0;
 
 //==================================================================
 // gap を 1単位 hightimesavg の相対値で分類
@@ -243,6 +246,7 @@ void decoder_init(void)
 	lastChar = 0;
 	stop_flag = KEY_LOW;
 	dec_ms = 0;
+	dec_samples = 0;
 	laststarttime = 0;
 	starttimehigh = 0;
 	startttimelow = 0;
@@ -286,7 +290,8 @@ void decoder_toggle_mode(void)
 void decoder_process_block(int32_t magnitude, int32_t side_mag, int32_t side_mag_inst,
                            int32_t side_mag_max, int32_t near_side, int32_t jitter)
 {
-	dec_ms += DEC_BLOCK_MS;
+	dec_samples += DSP_HOP;
+	dec_ms = (uint32_t)(dec_samples / DEC_SAMPLES_PER_MS);
 
 	// 立ち上がり(現在LOW)時のみ瞬時サイドも見る:
 	// 広帯域インパルスはEMAが追従する前の1ブロック目をすり抜けるため。
@@ -310,7 +315,7 @@ void decoder_process_block(int32_t magnitude, int32_t side_mag, int32_t side_mag
 	// ±100Hz 程度ズレていても中心が両サイドより必ず大きい。
 	//
 	// さらに帯域制限ノイズ(狭帯域フィルタ後の白色ノイズ)対策:
-	//  近サイド(±166.67Hz): 中心 > 近サイド×比。フィルタ幅≧330Hz の
+	//  近サイド(±136Hz): 中心 > 近サイド×比。フィルタ幅≧330Hz の
 	//  ノイズは近サイドが上がり比が小さくなって棄却、純音は通過。
 	// (包絡線ジッタ案はキーイングのエッジと区別できず実信号を削るため不採用)
 	(void)jitter;

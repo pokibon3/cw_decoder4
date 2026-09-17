@@ -4,7 +4,7 @@
 //	  y  28..171 デコード文字エリア 16列 x 6行 (24x24 全角フォント、ピッチ20px)
 //	  y 173..239 左: FFTスペクトラム(PK表示) / 右: オシロスコープ(波形ON/OFFボタン)
 //	オシロは生波形(min/maxバンド)・トーンエンベロープ・キー判定を
-//	同一時間軸(1列=6ms)で色分け重畳する。
+//	同一時間軸(1列=WPM追従の数hop)で色分け重畳する。
 //	文字エリア中央付近のタップで時計画面へ切り替わる (main.cpp)。
 //	時計表示中は visible=0 で描画を止め、受信文字はグリッドに溜める。
 //
@@ -419,7 +419,7 @@ static void draw_fft_panel(void)
 		fft_spr.drawFastVLine(x_hi, plot_top - 2, plot_h + 4, C_MARKER);
 	}
 
-	// 選択中トーンの検出帯域 (Goertzel 1ビン幅、WPM追従で±42/±83Hz) を
+	// 選択中トーンの検出帯域 (Goertzel 1ビン幅、WPM追従で±34/±68Hz) を
 	// 帯で表示。AUTO時は追従先へスライドする
 	{
 		const float half_bw = (float)dsp_gate_bw_hz() * 0.5f;
