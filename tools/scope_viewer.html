@@ -11,25 +11,22 @@
     --line: #2a3140;
     --tx: #d8dee6;
     --dim: #8b94a3;
-    --accent: #5adc78;
-    --amber: #fac775;
     --red: #eb5a50;
   }
   * { box-sizing: border-box; }
   body {
-    margin: 0; padding: 16px;
+    margin: 0; padding: 14px;
     background: var(--bg); color: var(--tx);
     font: 13px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", "Hiragino Sans", "Noto Sans JP", sans-serif;
   }
-  h1 { font-size: 16px; margin: 0 0 12px; font-weight: 600; }
+  h1 { font-size: 16px; margin: 0 0 10px; font-weight: 600; }
   h1 small { color: var(--dim); font-weight: 400; margin-left: 8px; }
   .bar {
     display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
     background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
-    padding: 10px 12px; margin-bottom: 12px;
+    padding: 9px 12px; margin-bottom: 10px;
   }
-  .bar + .bar { margin-top: -4px; }
-  button, select, label.chk {
+  button, select {
     font: inherit; color: var(--tx); background: #1d232d;
     border: 1px solid var(--line); border-radius: 6px; padding: 5px 12px; cursor: pointer;
   }
@@ -37,22 +34,28 @@
   button:disabled { opacity: .45; cursor: default; }
   button.primary { background: #16324a; border-color: #2f6592; }
   button.danger  { background: #3a1f1f; border-color: #6d3535; }
-  label.chk { display: inline-flex; align-items: center; gap: 6px; user-select: none; }
+  /* 実機のパネルボタンと同じ配色の KEY / ENV / RAW */
+  button.trace { font-family: "SF Mono", Menlo, Consolas, monospace; font-weight: 600; min-width: 62px; }
+  button.trace[aria-pressed="true"]  { background: #122d50; border-color: #5a96d2; color: #c8e6ff; }
+  button.trace[aria-pressed="false"] { background: #08121e; border-color: #2d415a; color: #5a6e82; }
+  label { color: var(--dim); display: inline-flex; align-items: center; gap: 5px; }
+  label select { color: var(--tx); }
   .sep { flex: 1; }
   .stat { display: flex; flex-wrap: wrap; gap: 6px 18px; }
   .stat div { white-space: nowrap; }
   .stat b { color: var(--dim); font-weight: 400; margin-right: 6px; }
   .warn { color: var(--red); }
-  canvas { display: block; border-radius: 6px; image-rendering: pixelated; }
-  #wrap { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px; margin-bottom: 12px; overflow-x: auto; }
+  #wrap { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px; margin-bottom: 10px; }
+  canvas { display: block; width: 100%; border-radius: 4px; cursor: grab; touch-action: none; }
+  canvas.drag { cursor: grabbing; }
   #scrub { width: 100%; margin-top: 10px; accent-color: #2f6592; }
   #text {
     background: #05080d; border: 1px solid var(--line); border-radius: 8px;
-    padding: 12px; min-height: 76px; max-height: 160px; overflow-y: auto;
+    padding: 12px; min-height: 70px; max-height: 150px; overflow-y: auto;
     font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 15px;
     letter-spacing: .08em; color: #adff2f; word-break: break-all;
   }
-  details { margin-top: 12px; color: var(--dim); }
+  details { margin-top: 10px; color: var(--dim); }
   details summary { cursor: pointer; }
   details pre { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 10px; overflow-x: auto; color: var(--tx); }
   .err { color: var(--red); }
@@ -70,22 +73,26 @@
   <button id="clear">クリア</button>
   <input type="file" id="file" accept=".log,.txt" hidden>
   <div class="sep"></div>
-  <label class="chk"><input type="checkbox" id="follow" checked> 最新を追う</label>
-  <label>表示列
-    <select id="cols">
-      <option value="150" selected>150 (実機と同じ)</option>
-      <option value="300">300</option>
-      <option value="600">600</option>
-      <option value="1200">1200</option>
+  <button id="follow" class="primary">追従中</button>
+  <button class="trace" id="bKey" aria-pressed="true">KEY</button>
+  <button class="trace" id="bEnv" aria-pressed="true">ENV</button>
+  <button class="trace" id="bRaw" aria-pressed="true">RAW</button>
+  <label>横
+    <select id="zoomX">
+      <option value="1">1x</option>
+      <option value="2">2x</option>
+      <option value="3" selected>3x</option>
+      <option value="4">4x</option>
+      <option value="6">6x</option>
+      <option value="8">8x</option>
     </select>
   </label>
-  <label>拡大
-    <select id="zoom">
-      <option value="fit" selected>自動 (幅に合わせる)</option>
+  <label>縦
+    <select id="zoomY">
+      <option value="1">1x</option>
+      <option value="2" selected>2x</option>
       <option value="3">3x</option>
       <option value="4">4x</option>
-      <option value="5">5x</option>
-      <option value="6">6x</option>
     </select>
   </label>
 </div>
@@ -96,20 +103,24 @@
   <div><b>TONE</b><span id="tone">--</span></div>
   <div><b>掃引</b><span id="sweep">--</span> ms/列</div>
   <div><b>入力</b><span id="level">--</span> dBFS</div>
-  <div><b>列数</b><span id="count">0</span></div>
+  <div><b>表示</b><span id="span">--</span></div>
+  <div><b>保持</b><span id="count">0</span> 列</div>
   <div><b>欠落</b><span id="drop">0</span></div>
   <div><b>CLIP</b><span id="clip">0</span></div>
 </div>
 
 <div id="wrap">
-  <canvas id="cv" width="800" height="335"></canvas>
+  <canvas id="cv"></canvas>
   <input type="range" id="scrub" min="0" max="0" value="0" disabled>
 </div>
 
 <div id="text"></div>
 
 <details>
-  <summary>ログ形式 (src/scopelog.h)</summary>
+  <summary>使い方とログ形式 (src/scopelog.h)</summary>
+  <p>「追従中」を押すと停止して、スライダ・ドラッグ・ホイールで横スクロールできます (もう一度押すと再開)。
+  Web Serial API を使うため <b>Chrome / Edge</b> で <code>file://</code> か <code>http://localhost</code> から開いてください
+  (Safari / Firefox では「ログを開く」での再生のみ利用できます)。</p>
 <pre>H rate=8000 hop=59 cols=150 ver=2.1      開始時と 5 秒ごと
 T &lt;col&gt; wpm=&lt;n&gt; tone=&lt;hz&gt; auto=&lt;0/1&gt; hopq8=&lt;q8&gt;   状態変化時
 S &lt;col&gt; &lt;t_ms&gt; &lt;min&gt; &lt;max&gt; &lt;env&gt; &lt;gate&gt;   スコープ列ごと
@@ -117,15 +128,13 @@ C &lt;col&gt; &lt;文字&gt;                           デコード文字 (符�
 W &lt;col&gt;                                  語間 (スペース)
 L &lt;peak&gt; &lt;clip&gt;                          入力ピーク (カウント) と累積クリップ数
 X dropped=&lt;n&gt;                            欠落列数</pre>
-  <p>Web Serial API を使うため <b>Chrome / Edge</b> で、<code>file://</code> か <code>http://localhost</code> から開いてください
-  (Safari / Firefox では「ログを開く」での再生のみ利用できます)。</p>
 </details>
 
 <script>
 'use strict';
 
 //====================================================================
-//  実機 (src/display.cpp draw_scope_panel) と同じ配色・レイアウト
+//  実機 (src/display.cpp draw_scope_panel) と同じ配色
 //====================================================================
 const C = {
   bg:    '#020810',   // C_PANEL_BG
@@ -135,19 +144,9 @@ const C = {
   gate:  '#5adc78',   // C_GATE
   text:  '#adff2f',   // C_TEXT_NEW
   mid:   '#142837',   // 中心線
-  btnOn:  { bg: '#122d50', bd: '#5a96d2', tx: '#c8e6ff' },
-  btnOff: { bg: '#08121e', bd: '#2d415a', tx: '#5a6e82' },
 };
-const LAYOUT = {
-  x0: 4, panelH: 67,
-  textH: 16, plotTop: 17, waveTop: 25, plotBot: 46,
-  btnY: 48, btnH: 17, btnW: 46, btnX: [4, 57, 110],
-};
-LAYOUT.midY  = Math.floor((LAYOUT.waveTop + LAYOUT.plotBot) / 2);   // 35
-LAYOUT.halfH = Math.floor((LAYOUT.plotBot - LAYOUT.waveTop) / 2);   // 10
-LAYOUT.envH  = LAYOUT.plotBot - LAYOUT.waveTop;                     // 21
-
-const HOP_MS_DEFAULT = 7.375;   // DSP_HOP 59 / 8kHz
+// 実機の縦方向の内訳 (縦 1x のとき): 文字 16 / KEYバー 3 / 隙間 5 / 波形 21
+const DEV = { textH: 16, keyH: 3, gapH: 5, waveH: 21 };
 
 //====================================================================
 //  受信データ
@@ -163,16 +162,22 @@ const state = {
 };
 let rawLog = [];                 // 保存用の生テキスト
 let showKey = true, showEnv = true, showRaw = true;
-// AGC (実機と同じ平滑化。スクラブ中は瞬時値を使う)
-let rawMax = 100, envMax = 500;
+let following = true;            // false = 停止して横スクロール
+let viewEnd = null;              // 表示右端の列番号 (追従中は最新)
+let lastView = null;
+let rawMax = 100, envMax = 500;  // AGC (実機と同じ平滑化。停止中は瞬時値)
+
+function msPerCol() {
+  return state.hopq8 / 256 * (state.hop / state.rate * 1000);
+}
 
 function resetData() {
   cols.clear(); chars.length = 0; rawLog = [];
-  minCol = maxCol = null;
+  minCol = maxCol = null; viewEnd = null; lastView = null;
   state.wpm = state.tone = state.peak = null;
   state.clip = state.dropped = 0;
   rawMax = 100; envMax = 500;
-  scrub.disabled = true; scrub.max = 0; scrub.value = 0;
+  scrub.max = 0; scrub.value = 0; scrub.disabled = true;
   saveBtn.disabled = true;
   textEl.textContent = '';
   updateStat();
@@ -240,7 +245,7 @@ function feedLine(line) {
   }
   rawLog.push(line);
   if (rawLog.length > 400000) rawLog.splice(0, 100000);
-  saveBtn.disabled = rawLog.length === 0;
+  saveBtn.disabled = false;
 }
 
 function feedChunk(text) {
@@ -248,57 +253,65 @@ function feedChunk(text) {
 }
 
 //====================================================================
-//  描画 (実機の draw_scope_panel と同じ手順)
+//  描画 (実機の draw_scope_panel と同じ手順。横/縦の倍率は独立)
 //====================================================================
 const cv = document.getElementById('cv');
 const ctx = cv.getContext('2d');
 
-function visibleRange(nCols) {
-  if (maxCol === null) return null;
-  let end;                                     // 表示する最新列 (この列を含む)
-  if (follow.checked) {
-    end = maxCol;
-  } else {
-    end = Math.min(maxCol, minCol + (+scrub.value));
-  }
-  return { start: end - nCols + 1, end };
+//	画面幅いっぱいに、選んだ倍率で何列入るかを決める
+function metrics() {
+  const sx = +zoomX.value, sy = +zoomY.value;
+  const dpr = window.devicePixelRatio || 1;
+  const W = Math.max(200, Math.floor(wrap.clientWidth - 24));
+  const x0 = 4;
+  const nCols = Math.max(20, Math.floor((W - x0 * 2) / sx));
+  // 文字は横倍率に追従させる (実機と同じで 1 文字 = 16 列ぶん) が、
+  // 大きくしすぎると文字行が画面を占領するので 2 倍で頭打ちにする
+  const tScale = Math.min(2, Math.max(1, sx));
+  const textH = Math.round(DEV.textH * tScale);
+  const keyY = textH + 2;
+  const keyH = Math.max(3, Math.round(DEV.keyH * sy));
+  const waveTop = keyY + keyH + Math.round(DEV.gapH * sy);
+  const waveH = Math.round(DEV.waveH * sy);
+  const waveBot = waveTop + waveH;
+  return { sx, sy, dpr, W, H: waveBot + 3, x0, nCols, textH, keyY, keyH, waveTop, waveH, waveBot, tScale };
 }
 
-function currentZoom(panelW) {
-  if (zoomSel.value !== 'fit') return +zoomSel.value;
-  const avail = document.getElementById('wrap').clientWidth - 24;   // padding 分
-  return Math.max(1, Math.min(8, Math.floor(avail / panelW)));
+function clampEnd(end, nCols) {
+  if (maxCol === null) return null;
+  const lo = Math.min(maxCol, minCol + nCols - 1);
+  return Math.max(lo, Math.min(maxCol, end));
 }
 
 function draw() {
-  const nCols = +colsSel.value;
-  const panelW = nCols + 10;
-  const s = currentZoom(panelW);
-  if (cv.width !== panelW * s || cv.height !== LAYOUT.panelH * s) {
-    cv.width = panelW * s; cv.height = LAYOUT.panelH * s;
+  const m = metrics();
+  if (cv.width !== m.W * m.dpr || cv.height !== m.H * m.dpr) {
+    cv.width = m.W * m.dpr; cv.height = m.H * m.dpr;
+    cv.style.height = m.H + 'px';
   }
-  ctx.setTransform(s, 0, 0, s, 0, 0);
+  ctx.setTransform(m.dpr, 0, 0, m.dpr, 0, 0);
   ctx.imageSmoothingEnabled = false;
 
-  // 背景と枠
   ctx.fillStyle = C.bg;
-  ctx.fillRect(0, 0, panelW, LAYOUT.panelH);
+  ctx.fillRect(0, 0, m.W, m.H);
   ctx.fillStyle = C.frame;
-  rect(0, 0, panelW, 1); rect(0, LAYOUT.panelH - 1, panelW, 1);
-  rect(0, 0, 1, LAYOUT.panelH); rect(panelW - 1, 0, 1, LAYOUT.panelH);
+  ctx.fillRect(0, 0, m.W, 1); ctx.fillRect(0, m.H - 1, m.W, 1);
+  ctx.fillRect(0, 0, 1, m.H); ctx.fillRect(m.W - 1, 0, 1, m.H);
 
-  const range = visibleRange(nCols);
-  if (range) {
+  if (maxCol !== null) {
+    const end = clampEnd(following ? maxCol : (viewEnd ?? maxCol), m.nCols);
+    const start = end - m.nCols + 1;
+
     // AGC: 表示範囲の最大値に追従 (実機と同じ係数)
     let rmax = 0, emax = 0;
-    for (let i = range.start; i <= range.end; i++) {
+    for (let i = start; i <= end; i++) {
       const c = cols.get(i);
       if (!c) continue;
       const a = c.mx > -c.mn ? c.mx : -c.mn;
       if (a > rmax) rmax = a;
       if (c.env > emax) emax = c.env;
     }
-    if (follow.checked) {
+    if (following) {
       rawMax += (rmax * 1.1 - rawMax) * 0.1;
       envMax += (emax * 1.1 - envMax) * 0.1;
     } else {
@@ -307,96 +320,115 @@ function draw() {
     if (rawMax < 60) rawMax = 60;
     if (envMax < 400) envMax = 400;
 
-    if (showRaw) { ctx.fillStyle = C.mid; rect(LAYOUT.x0, LAYOUT.midY, nCols, 1); }
+    const midY = m.waveTop + m.waveH / 2;
+    const halfH = m.waveH / 2;
 
-    let prevEy = -1;
-    ctx.lineWidth = 1;
-    for (let i = 0; i < nCols; i++) {
-      const c = cols.get(range.start + i);
+    if (showRaw) {
+      ctx.fillStyle = C.mid;
+      ctx.fillRect(m.x0, Math.round(midY), m.nCols * m.sx, 1);
+    }
+
+    let prevEy = -1, prevX = 0;
+    ctx.lineWidth = Math.max(1, Math.round(m.sx * 0.6));
+    ctx.lineJoin = 'round';
+    for (let i = 0; i < m.nCols; i++) {
+      const c = cols.get(start + i);
       if (!c) { prevEy = -1; continue; }
-      const x = LAYOUT.x0 + i;
+      const x = m.x0 + i * m.sx;
 
       if (showRaw) {                                  // 生波形 min/max バンド
-        let y1 = LAYOUT.midY - Math.trunc(c.mx / rawMax * LAYOUT.halfH);
-        let y2 = LAYOUT.midY - Math.trunc(c.mn / rawMax * LAYOUT.halfH);
-        if (y1 < LAYOUT.waveTop) y1 = LAYOUT.waveTop;
-        if (y2 > LAYOUT.plotBot) y2 = LAYOUT.plotBot;
+        let y1 = midY - c.mx / rawMax * halfH;
+        let y2 = midY - c.mn / rawMax * halfH;
+        if (y1 < m.waveTop) y1 = m.waveTop;
+        if (y2 > m.waveBot) y2 = m.waveBot;
         if (y2 < y1) { const t = y1; y1 = y2; y2 = t; }
         ctx.fillStyle = C.raw;
-        rect(x, y1, 1, y2 - y1 + 1);
+        ctx.fillRect(x, Math.round(y1), m.sx, Math.max(1, Math.round(y2 - y1)));
       }
 
       if (showEnv) {                                  // エンベロープ
-        let eh = Math.trunc(c.env / envMax * LAYOUT.envH);
-        if (eh > LAYOUT.envH) eh = LAYOUT.envH;
-        const ey = LAYOUT.plotBot - eh;
+        let eh = c.env / envMax * m.waveH;
+        if (eh > m.waveH) eh = m.waveH;
+        const ey = m.waveBot - eh;
+        const cx = x + m.sx / 2;
         if (prevEy >= 0) {
           ctx.strokeStyle = C.env;
           ctx.beginPath();
-          ctx.moveTo(x - 0.5, prevEy + 0.5);
-          ctx.lineTo(x + 0.5, ey + 0.5);
+          ctx.moveTo(prevX, prevEy);
+          ctx.lineTo(cx, ey);
           ctx.stroke();
         }
-        prevEy = ey;
+        prevEy = ey; prevX = cx;
       }
 
       if (showKey && c.gate) {                        // キー判定バー
         ctx.fillStyle = C.gate;
-        rect(x, LAYOUT.plotTop + 1, 1, 3);
+        ctx.fillRect(x, m.keyY, m.sx, m.keyH);
       }
     }
 
     if (showKey) {                                    // デコード文字
       ctx.fillStyle = C.text;
-      ctx.font = '16px "Hiragino Sans", "Noto Sans JP", sans-serif';
+      ctx.font = m.textH + 'px "Hiragino Sans", "Noto Sans JP", sans-serif';
       ctx.textBaseline = 'top';
       ctx.textAlign = 'center';
       for (const ch of chars) {
-        if (ch.ch === ' ') continue;                 // 語間は描かない
-        if (ch.col < range.start - 4 || ch.col > range.end + 4) continue;
-        const x = LAYOUT.x0 + (ch.col - range.start);
-        ctx.fillText(ch.ch, x, 0);
+        if (ch.ch === ' ') continue;                  // 語間は描かない
+        if (ch.col < start - 2 || ch.col > end + 2) continue;
+        ctx.fillText(ch.ch, m.x0 + (ch.col - start) * m.sx + m.sx / 2, 1);
       }
       ctx.textAlign = 'left';
     }
-  }
 
-  // KEY / ENV / RAW ボタン
-  drawButton(0, 'KEY', showKey);
-  drawButton(1, 'ENV', showEnv);
-  drawButton(2, 'RAW', showRaw);
+    lastView = { start, end, nCols: m.nCols };
+  }
 }
 
-function rect(x, y, w, h) { ctx.fillRect(x, y, w, h); }
-
-function drawButton(i, label, on) {
-  const st = on ? C.btnOn : C.btnOff;
-  const x = LAYOUT.btnX[i], y = LAYOUT.btnY, w = LAYOUT.btnW, h = LAYOUT.btnH;
-  ctx.fillStyle = st.bg; ctx.fillRect(x, y, w, h);
-  ctx.fillStyle = st.bd;
-  rect(x, y, w, 1); rect(x, y + h - 1, w, 1);
-  rect(x, y, 1, h); rect(x + w - 1, y, 1, h);
-  ctx.fillStyle = st.tx;
-  ctx.font = 'bold 11px "SF Mono", Menlo, Consolas, monospace';
-  ctx.textBaseline = 'middle'; ctx.textAlign = 'center';
-  ctx.fillText(label, x + w / 2, y + h / 2 + 1);
-  ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
+//====================================================================
+//  停止 / 横スクロール
+//====================================================================
+function setFollowing(on) {
+  following = on;
+  if (!on && viewEnd === null) viewEnd = maxCol;
+  followBtn.textContent = on ? '追従中' : '停止中';
+  followBtn.className = on ? 'primary' : '';
+  scrub.disabled = on || maxCol === null;
 }
 
-cv.addEventListener('click', ev => {
-  const s = currentZoom(+colsSel.value + 10);
-  const r = cv.getBoundingClientRect();
-  const x = (ev.clientX - r.left) * (cv.width / r.width) / s;
-  const y = (ev.clientY - r.top) * (cv.height / r.height) / s;
-  if (y < LAYOUT.btnY || y > LAYOUT.btnY + LAYOUT.btnH) return;
-  for (let i = 0; i < 3; i++) {
-    if (x >= LAYOUT.btnX[i] && x < LAYOUT.btnX[i] + LAYOUT.btnW) {
-      if (i === 0) showKey = !showKey;
-      else if (i === 1) showEnv = !showEnv;
-      else showRaw = !showRaw;
-    }
-  }
+function panBy(deltaCols) {
+  if (maxCol === null) return;
+  if (following) setFollowing(false);
+  const n = lastView ? lastView.nCols : 150;
+  viewEnd = clampEnd((viewEnd ?? maxCol) + deltaCols, n);
+  updateStat();
+}
+
+cv.addEventListener('wheel', ev => {
+  const d = Math.abs(ev.deltaX) > Math.abs(ev.deltaY) ? ev.deltaX : ev.deltaY;
+  if (!d) return;
+  ev.preventDefault();
+  panBy(Math.sign(d) * Math.max(1, Math.round(Math.abs(d) / 4)));
+}, { passive: false });
+
+let dragX = null, dragEnd = 0;
+cv.addEventListener('pointerdown', ev => {
+  if (maxCol === null) return;
+  if (following) setFollowing(false);
+  dragX = ev.clientX; dragEnd = viewEnd ?? maxCol;
+  cv.classList.add('drag');
+  cv.setPointerCapture(ev.pointerId);
 });
+cv.addEventListener('pointermove', ev => {
+  if (dragX === null) return;
+  const m = metrics();
+  const r = cv.getBoundingClientRect();
+  const pxPerCol = (r.width / m.W) * m.sx;
+  viewEnd = clampEnd(dragEnd - Math.round((ev.clientX - dragX) / pxPerCol), m.nCols);
+  updateStat();
+});
+for (const e of ['pointerup', 'pointercancel']) {
+  cv.addEventListener(e, () => { dragX = null; cv.classList.remove('drag'); });
+}
 
 //====================================================================
 //  ステータスとデコード文字列
@@ -404,23 +436,23 @@ cv.addEventListener('click', ev => {
 function updateStat() {
   document.getElementById('wpm').textContent = state.wpm ?? '--';
   document.getElementById('tone').textContent =
-    state.tone === null ? '--' : (state.auto ? `AUTO ${state.tone}Hz` : `${state.tone}Hz`);
-  const msPerCol = state.hopq8 / 256 * (state.hop / state.rate * 1000);
-  document.getElementById('sweep').textContent = msPerCol ? msPerCol.toFixed(1) : '--';
+    state.tone === null ? '--' : (state.auto ? 'AUTO ' + state.tone + 'Hz' : state.tone + 'Hz');
+  document.getElementById('sweep').textContent = msPerCol().toFixed(1);
   document.getElementById('level').textContent =
     state.peak ? (20 * Math.log10(state.peak / 2048)).toFixed(1) : '--';
   document.getElementById('count').textContent = cols.size;
+  document.getElementById('span').textContent = lastView
+    ? lastView.nCols + ' 列 / ' + (lastView.nCols * msPerCol() / 1000).toFixed(1) + ' 秒'
+    : '--';
   const d = document.getElementById('drop');
-  d.textContent = state.dropped;
-  d.className = state.dropped ? 'warn' : '';
+  d.textContent = state.dropped; d.className = state.dropped ? 'warn' : '';
   const cl = document.getElementById('clip');
-  cl.textContent = state.clip;
-  cl.className = state.clip ? 'warn' : '';
+  cl.textContent = state.clip; cl.className = state.clip ? 'warn' : '';
 
   if (maxCol !== null) {
-    scrub.disabled = follow.checked;
     scrub.max = maxCol - minCol;
-    if (follow.checked) scrub.value = scrub.max;
+    scrub.disabled = following;
+    scrub.value = (following ? maxCol : (viewEnd ?? maxCol)) - minCol;
   }
 }
 
@@ -441,10 +473,11 @@ function updateText() {
 const connBtn = document.getElementById('connect');
 const discBtn = document.getElementById('disconnect');
 const saveBtn = document.getElementById('saveFile');
+const followBtn = document.getElementById('follow');
 const scrub   = document.getElementById('scrub');
-const follow  = document.getElementById('follow');
-const colsSel = document.getElementById('cols');
-const zoomSel = document.getElementById('zoom');
+const zoomX   = document.getElementById('zoomX');
+const zoomY   = document.getElementById('zoomY');
+const wrap    = document.getElementById('wrap');
 const textEl  = document.getElementById('text');
 const connEl  = document.getElementById('conn');
 
@@ -459,11 +492,12 @@ async function connect() {
     port = await navigator.serial.requestPort();
     await port.open({ baudRate: 115200, bufferSize: 16384 });
   } catch (e) {
-    connEl.innerHTML = `<span class="err">接続できません: ${e.message}</span>`;
+    connEl.innerHTML = '<span class="err">接続できません: ' + e.message + '</span>';
     return;
   }
   connEl.textContent = '接続中';
   connBtn.disabled = true; discBtn.disabled = false;
+  setFollowing(true);
   keepReading = true;
   readLoop();
 }
@@ -484,7 +518,7 @@ async function readLoop() {
       }
     }
   } catch (e) {
-    connEl.innerHTML = `<span class="err">受信が止まりました: ${e.message}</span>`;
+    connEl.innerHTML = '<span class="err">受信が止まりました: ' + e.message + '</span>';
   } finally {
     try { reader.releaseLock(); } catch (_) {}
   }
@@ -508,23 +542,40 @@ document.getElementById('file').onchange = async ev => {
   if (!f) return;
   resetData();
   feedChunk(await f.text());
-  follow.checked = false;
-  connEl.textContent = `ファイル: ${f.name}`;
+  setFollowing(false);
+  viewEnd = maxCol;
+  connEl.textContent = 'ファイル: ' + f.name + ' (' + cols.size + ' 列)';
+  updateStat();
   ev.target.value = '';
 };
 saveBtn.onclick = () => {
   const blob = new Blob([rawLog.join('\n') + '\n'], { type: 'text/plain' });
+  const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = `cwdec_scope_${new Date().toISOString().replace(/[:.]/g, '-')}.log`;
+  a.href = url;
+  a.download = 'cwdec_scope_' + new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19) + '.log';
+  document.body.appendChild(a);
   a.click();
-  URL.revokeObjectURL(a.href);
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 };
-follow.onchange = () => { scrub.disabled = follow.checked; };
-scrub.oninput = () => { follow.checked = false; scrub.disabled = false; };
+followBtn.onclick = () => { setFollowing(!following); updateStat(); };
+scrub.oninput = () => {
+  if (following) setFollowing(false);
+  viewEnd = minCol + (+scrub.value);
+  updateStat();
+};
+for (const spec of [
+  [document.getElementById('bKey'), () => showKey, v => showKey = v],
+  [document.getElementById('bEnv'), () => showEnv, v => showEnv = v],
+  [document.getElementById('bRaw'), () => showRaw, v => showRaw = v],
+]) {
+  const btn = spec[0], get = spec[1], set = spec[2];
+  btn.onclick = () => { set(!get()); btn.setAttribute('aria-pressed', String(get())); };
+}
 
 //====================================================================
-//  描画ループ (実機と同じ ~30fps)
+//  描画ループ
 //====================================================================
 let lastStat = 0;
 function frame(now) {
@@ -533,6 +584,7 @@ function frame(now) {
   requestAnimationFrame(frame);
 }
 resetData();
+setFollowing(true);
 requestAnimationFrame(frame);
 </script>
 </body>
