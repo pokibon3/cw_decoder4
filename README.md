@@ -2,7 +2,7 @@
 
 ESP32 ボード (2.8inch CYD 系: ST7789 / ILI9341 240x320 + XPT2046 タッチ) で動作する CW Decoder です。  
 VS Code + PlatformIO + Arduino + LovyanGFX でビルドできます。  
-現在のバージョンは `v2.2.1` です (`src/version.h` の `FW_VERSION`)。
+現在のバージョンは `v2.3` です (`src/version.h` の `FW_VERSION`)。
 
 CH32V003 / CH32V006 (UIAPduino) 版は
 [UIAP_CWDecoder2](https://github.com/pokibon3/UIAP_CWDecoder2) を参照してください
@@ -210,6 +210,11 @@ environment は `esp32dev` のみです。
   - LCD コントローラ ST7789 / ILI9341 両対応（自動判定 + ビルドフラグ）
   - 音声入力を I2S ADC から ADC continuous DMA (32kHz 取得 → 4 点平均で 8kHz) に変更
   - ±167Hz 近サイドビンによる広帯域ノイズ棄却、入力レベルメータ、Peak 表示の安定化
+- V2.3
+  - 時計画面を世界時計に刷新。12 か国 (朝が早い順) のボタンで、パタパタ時計・日付・
+    デコーダ画面の時計をその国の時刻に切り替え。夏時間は US / EU / NZ / AU の規則で自動計算
+  - SETUP をデコーダ画面のステータス行から直接開けるように (`SETUP` ボタン追加、`SPEED:` 表記は廃止)
+  - SETUP を整理し、`Summer Time` の ON/OFF と About 画面 (CW Decoder について) を追加
 - V2.2.1
   - OTA モードで AP と同時に自宅 WiFi へ接続 (AP+STA)。mDNS で `cwdec.local` を配るので、
     PC のネットワークを切り替えずに更新できる。LAN 側の IP を画面に表示
