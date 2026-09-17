@@ -233,6 +233,15 @@ static int32_t process_gate(void)
 	int32_t mag_nl = goertzel_mag(q1nl, q2nl, g_coeff_nl);
 	int32_t mag_nh = goertzel_mag(q1nh, q2nh, g_coeff_nh);
 
+	// 窓長によるスケール差を補正: 純音の Goertzel 出力は窓長に比例するので、
+	// 短窓 (59) では x2 して長窓 (118) と同じ尺度にする。これが無いと窓切替の
+	// 瞬間にトーン振幅が半分になり、しきい値 (limit) とノイズ床が旧尺度のまま
+	// なので ON にならず、WPM が更新されなくなって短窓から戻れなくなる
+	if (n < DSP_GATE_WIN) {
+		const int32_t k = DSP_GATE_WIN / n;
+		mag_c *= k; mag_l *= k; mag_h *= k; mag_nl *= k; mag_nh *= k;
+	}
+
 	int32_t side_inst = (mag_l < mag_h) ? mag_l : mag_h;
 	int32_t side_inst_max = (mag_l > mag_h) ? mag_l : mag_h;
 	if (!side_ema_started) {
@@ -522,15 +531,21 @@ static void dsp_task(void *arg)
 		uint16_t mag16 = (mag > 65535) ? 65535 : (uint16_t)((mag < 0) ? 0 : mag);
 
 		// ゲート窓長のWPM追従 (ヒステリシス付き)。切替時はサイドEMAを
-		// リセット (窓長で振幅スケールが変わるため)。適応しきい値は
-		// 数十msで自動追従する
+		// リセット (ノイズのスケールが √2 変わるため)。
+		// ラッチアップ防止: 直近 2 秒ゲートONが無ければ WPM に関係なく長窓
+		// (高感度側) へ戻す。短窓で信号を落とすと WPM が更新されず、
+		// 「WPM ≥ 32 だから短窓」のまま固まってしまうため
 		{
+			static uint32_t blocks_since_on = 0;
+			if (decoder_gate()) blocks_since_on = 0;
+			else if (blocks_since_on < 0xFFFF) blocks_since_on++;
+			const uint8_t stalled = blocks_since_on > (2000UL * DSP_SAMPLE_RATE / 1000 / DSP_HOP);
 			uint16_t w = decoder_wpm();
 			uint8_t desired = gate_win;
-			if (w >= 32) {
-				desired = DSP_HOP;           // 48 (6ms窓、v1.9同等)
-			} else if (w != 0 && w <= 28) {
-				desired = DSP_GATE_WIN;      // 96 (12ms窓、+3dB)
+			if (stalled || (w != 0 && w <= 28)) {
+				desired = DSP_GATE_WIN;      // 118 (14.75ms窓、+3dB)
+			} else if (w >= 32) {
+				desired = DSP_HOP;           // 59 (7.4ms窓、v1.9同等)
 			}
 			if (desired != gate_win) {
 				gate_win = desired;
@@ -597,14 +612,15 @@ static void dsp_task(void *arg)
 			if ((now - diag_last_ms) >= 1000) {
 				diag_last_ms = now;
 				uint32_t n = (diag_blocks > 0) ? diag_blocks : 1;
-				Serial.printf("[dsp] blk/s=%u mag avg=%d max=%d side=%d near=%d jit=%d smax=%d limit=%d gate=%d hz=%u\n",
+				Serial.printf("[dsp] blk/s=%u mag avg=%d max=%d side=%d near=%d jit=%d smax=%d limit=%d nf=%d gate=%d hz=%u\n",
 				              (unsigned)diag_blocks,
 				              (int)(diag_mag_sum / n), (int)diag_mag_max,
 				              (int)(diag_side_sum / n),
 				              (int)(diag_near_sum / n),
 				              (int)(diag_jit_sum / n),
 				              (int)(diag_smax_sum / n),
-				              (int)decoder_maglimit(), (int)decoder_gate(),
+				              (int)decoder_maglimit(), (int)decoder_noise_floor(),
+				              (int)decoder_gate(),
 				              (unsigned)gate_hz);
 				diag_blocks = 0;
 				diag_mag_sum = 0;

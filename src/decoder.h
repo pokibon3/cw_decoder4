@@ -16,5 +16,6 @@ void decoder_process_block(int32_t magnitude, int32_t side_mag, int32_t side_mag
 uint16_t decoder_wpm(void);
 uint8_t decoder_gate(void);       // filtered key state (0/1)
 int32_t decoder_maglimit(void);   // 適応振幅しきい値 (診断用)
+int32_t decoder_noise_floor(void); // ゲートOFF中のノイズ床推定 (診断用)
 uint8_t decoder_mode(void);       // MODE_US / MODE_JP
 void decoder_toggle_mode(void);

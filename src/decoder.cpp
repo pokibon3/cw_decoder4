@@ -37,6 +37,26 @@ static const uint8_t KEY_HIGH = 1;
 
 static int32_t magnitudelimit = 140;
 static int32_t magnitudelimit_low = 140;
+// 振幅しきい値 (magnitudelimit) の追従係数: 立ち上がりは速く (1/6 = τ44ms)、
+// 下降は遅く (1/48 = τ0.35s) してピークホールド的に振る舞わせる。
+// 対称 1/6 だと文字間ギャップで limit がノイズ床まで崩落して振幅条件が
+// 無効化され、帯域制限ノイズの偽符号を比率条件だけで防ぐことになる。
+// (旧来は絶対床 140 = 振幅 9.5count が「極小入力のときだけ」ホールドとして
+//  働いていたため、適正入力レベルが極端に低くなっていた)
+#define LIMIT_ATTACK_DIV 6
+#define LIMIT_DECAY_DIV 48
+// ノイズ床に連動した相対スケルチ: ゲートOFF中の中心マグニチュードを遅い
+// EMA (1/128 = τ0.94s) で追い、limit の床を noise_floor x 6 にする
+// (ON 下限 = 0.6 x 床 = ノイズ平均 x 3.6 = +11dB)。ノイズの Goertzel 出力は
+// レイリー分布で平均の 1.5 倍は頻出 (数%/ブロック)、3.6 倍超は ~4e-5。
+// 上げすぎると床がピークホールド (≈0.75 x 信号) を超えてマークの両端が
+// 削られる (x8 ではゲート内 SNR 20dB の実機信号で床≒ピークホールドだった)。
+// 絶対床 140 だけだと入力を極端に絞ったときしかスケルチが効かず、通常
+// レベルではノイズ棄却が比率条件だけになって帯域制限ノイズの偽符号が増える。
+static int32_t noise_floor = 0;
+static int32_t noise_acc = 0;       // noise_floor の Q8 蓄積値 (整数 EMA のラチェット防止)
+#define NOISE_FLOOR_DIV 128
+#define NOISE_SQUELCH_X10 60
 static uint16_t realstate = KEY_LOW;
 static uint16_t realstatebefore = KEY_LOW;
 static uint16_t filteredstate = KEY_LOW;
@@ -54,6 +74,13 @@ static uint16_t stop_flag = KEY_LOW;
 static uint16_t wpm;
 static uint32_t last_mark_ms = 0;
 static uint32_t last_gap_ms = 0;
+// 直前の「短すぎるマーク」(短点として採用されない 0.6 単位未満) の長さと
+// 連続数。ノイズの偽マークは窓のなまり+ブランカで 20〜30ms に揃いやすく
+// 2 連続では防げないので、±25% 以内が 3 連続 (S/H/5 など本物の短点列)
+// のときだけ速度推定に入れる
+static uint32_t prev_short_mark_ms = 0;
+static uint8_t short_mark_run = 0;
+#define SHORT_MARK_CONFIRM 3
 
 static char sw_mode = MODE_US;
 static uint8_t lastChar = 0;
@@ -139,10 +166,28 @@ static void unit_clamp(void)
 	}
 }
 
+// 大きなスナップ (現在の unit から ±35% 超) は 2 連続で整合したときだけ
+// 適用する。本物の速度変化なら整合ペアが続けて出るが、ノイズで分断された
+// マーク/ギャップの断片が偶然 1:3 に見えるのは単発 (実機ログ: ギャップ30 +
+// マーク96 で unit 61→31 に飛んだ)
+static uint32_t pending_snap = 0;
+#define SNAP_BIG_PCT 35
+
 static void unit_apply_snap(uint32_t snap)
 {
 	uint32_t diff = (snap > hightimesavg) ? (snap - hightimesavg)
 	                                      : (hightimesavg - snap);
+	if (diff * 100 > hightimesavg * SNAP_BIG_PCT) {
+		uint32_t hi = (snap > pending_snap) ? snap : pending_snap;
+		uint32_t lo = (snap > pending_snap) ? pending_snap : snap;
+		if (pending_snap == 0 || lo * 4 < hi * 3) {
+			pending_snap = snap;        // 1 回目 (または前回と不整合): 保留
+			return;
+		}
+		pending_snap = 0;               // 2 連続で整合: 採用
+	} else {
+		pending_snap = 0;
+	}
 	if (diff * 4 > hightimesavg) {
 		hightimesavg = snap;
 	} else if (snap >= hightimesavg) {
@@ -234,6 +279,8 @@ static void decode_and_display(void)
 void decoder_init(void)
 {
 	magnitudelimit = magnitudelimit_low;
+	noise_floor = 0;
+	noise_acc = 0;
 	realstate = realstatebefore = KEY_LOW;
 	filteredstate = filteredstatebefore = KEY_LOW;
 	hightimesavg = 60;
@@ -241,6 +288,9 @@ void decoder_init(void)
 	lowduration = 0;
 	last_mark_ms = 0;
 	last_gap_ms = 0;
+	prev_short_mark_ms = 0;
+	short_mark_run = 0;
+	pending_snap = 0;
 	wpm = 0;
 	code[0] = '\0';
 	lastChar = 0;
@@ -266,6 +316,11 @@ uint16_t decoder_wpm(void)
 uint8_t decoder_gate(void)
 {
 	return (uint8_t)filteredstate;
+}
+
+int32_t decoder_noise_floor(void)
+{
+	return noise_floor;
 }
 
 int32_t decoder_maglimit(void)
@@ -299,12 +354,38 @@ void decoder_process_block(int32_t magnitude, int32_t side_mag, int32_t side_mag
 		side_mag = side_mag_inst;
 	}
 
-	// 振幅しきい値を自動更新
-	if (magnitude > magnitudelimit_low) {
-		magnitudelimit = magnitudelimit + ((magnitude - magnitudelimit) / 6);
+	// ノイズ床の更新。判定状態 (realstate) で選別すると、ON に失敗した信号が
+	// 丸ごとノイズ床に取り込まれて床が信号レベルまで上がり二度と ON に
+	// ならない (正帰還のデッドロック) ので、ブロックの性質で選別する:
+	//   - 振幅がノイズ床の 2 倍未満 (ノイズの揺らぎの範囲) か、
+	//   - トーンらしくない (中心 <= サイド x 2 の広帯域) ブロック
+	// だけを取り込む。CW のマークは狭帯域なので状態に関係なく除外され、
+	// ノイズが本当に増えたときは広帯域なので追従する。
+	// EMA は Q8 で蓄積する: 整数 (mag - nf) / 128 だと |差| < 128 で 1 も
+	// 動かず、信号エッジで上がる一方の片道ラチェットになる (実機ログで
+	// 無音 mag=18 なのに nf=107 のまま、信号中に 326 まで上昇し ON
+	// しきい値が信号を超えてマークが削られた)
+	{
+		uint8_t tone_like = (magnitude > side_mag * 2);
+		if (noise_acc == 0) {
+			noise_acc = magnitude << 8;
+		} else if (!tone_like || magnitude < noise_floor) {
+			noise_acc += ((magnitude << 8) - noise_acc) / NOISE_FLOOR_DIV;
+		}
+		noise_floor = noise_acc >> 8;
 	}
-	if (magnitudelimit < magnitudelimit_low) {
-		magnitudelimit = magnitudelimit_low;
+	int32_t limit_floor = noise_floor * NOISE_SQUELCH_X10 / 10;
+	if (limit_floor < magnitudelimit_low) {
+		limit_floor = magnitudelimit_low;
+	}
+
+	// 振幅しきい値を自動更新 (立ち上がり速く、下降は遅く)、床はノイズ連動
+	if (magnitude > magnitudelimit_low) {
+		int32_t d = magnitude - magnitudelimit;
+		magnitudelimit += (d > 0) ? d / LIMIT_ATTACK_DIV : d / LIMIT_DECAY_DIV;
+	}
+	if (magnitudelimit < limit_floor) {
+		magnitudelimit = limit_floor;
 	}
 
 	// 振幅しきい値 + 中心/サイド比でトーン判定 (ヒステリシス付き)
@@ -364,14 +445,16 @@ void decoder_process_block(int32_t magnitude, int32_t side_mag, int32_t side_mag
 			Serial.printf("[dec] S %4lu u=%lu\n", (unsigned long)lowduration,
 			              (unsigned long)hightimesavg);
 #endif
+			// ギャップは直前マークとの 1:3 スナップにだけ使う。単独の平滑更新は
+			// しない: ノイズの偽マークで分断されたギャップの断片や送信の癖で
+			// 1 回に unit が 1/3 も動き、速度が暴れる (マークは短点1/長点3 と
+			// 長さが決まっているので信頼できるが、ギャップはそうではない)
 			if (lowduration >= 20) {
 				if (lowduration < 5 * hightimesavg) {
 					uint32_t snap = (last_mark_ms >= 20)
 						? snap_candidate(lowduration, last_mark_ms) : 0;
 					if (snap != 0) {
 						unit_apply_snap(snap);
-					} else {
-						unit_smooth_update(lowduration);
 					}
 				}
 				last_gap_ms = lowduration;
@@ -390,7 +473,28 @@ void decoder_process_block(int32_t magnitude, int32_t side_mag, int32_t side_mag
 			// 中(前ギャップが短い)の本物のマークは通常どおり更新。
 			uint8_t mark_isolated =
 				(hightimesavg > 0 && lowduration >= hightimesavg * ISOLATED_GAP_UNITS);
-			if (highduration >= 20 && !mark_isolated) {
+			// 短点にも満たない短いマーク (0.6 単位未満) はノイズの疑いが濃い:
+			// 単発では速度推定に入れない (unit_smooth_update が 1 回で 1/3 も
+			// 引き下げ、2〜3 発で 30WPM 超 → 短窓へ切り替わる連鎖の入口)。
+			// 同程度 (±25%) の短いマークが 2 連続したときだけ本物の速度上昇
+			// とみなして通す (スナップ範囲外の大きな速度変化もこれで追従)
+			uint8_t mark_short = (highduration * 5U < hightimesavg * 3U);
+			uint8_t short_consistent = 0;
+			if (mark_short) {
+				uint8_t same = 0;
+				if (prev_short_mark_ms != 0) {
+					uint32_t hi = (highduration > prev_short_mark_ms) ? highduration : prev_short_mark_ms;
+					uint32_t lo = (highduration > prev_short_mark_ms) ? prev_short_mark_ms : highduration;
+					same = (lo * 4 >= hi * 3);
+				}
+				short_mark_run = same ? (uint8_t)(short_mark_run + 1) : 1;
+				short_consistent = (short_mark_run >= SHORT_MARK_CONFIRM);
+				prev_short_mark_ms = highduration;
+			} else {
+				prev_short_mark_ms = 0;
+				short_mark_run = 0;
+			}
+			if (highduration >= 20 && !mark_isolated && (!mark_short || short_consistent)) {
 				uint32_t snap = 0;
 				if (last_mark_ms >= 20) {
 					snap = snap_candidate(highduration, last_mark_ms);
@@ -411,6 +515,8 @@ void decoder_process_block(int32_t magnitude, int32_t side_mag, int32_t side_mag
 			} else if (mark_isolated) {
 				last_mark_ms = 0;
 				last_gap_ms = 0;
+				prev_short_mark_ms = 0;
+				short_mark_run = 0;
 			}
 		}
 	}
