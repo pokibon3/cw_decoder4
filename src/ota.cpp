@@ -63,6 +63,33 @@ static bool wifi_mode = false;          // true=WiFi設定モード (戻れる)
 static bool wifi_saved = false;         // WiFi設定モードで保存された
 static bool routes_ready = false;       // server.on は1回だけ登録する
 
+//	端末の参加/離脱/IP付与をシリアルへ (接続できないときの切り分け用)
+static void on_wifi_event(WiFiEvent_t ev, WiFiEventInfo_t info)
+{
+	switch (ev) {
+	case ARDUINO_EVENT_WIFI_AP_STACONNECTED:
+		Serial.printf("[ota] sta connected aid=%d heap=%u\n",
+		              info.wifi_ap_staconnected.aid, (unsigned)ESP.getFreeHeap());
+		break;
+	case ARDUINO_EVENT_WIFI_AP_STADISCONNECTED:
+		Serial.printf("[ota] sta disconnected aid=%d reason=%d\n",
+		              info.wifi_ap_stadisconnected.aid, info.wifi_ap_stadisconnected.reason);
+		break;
+	case ARDUINO_EVENT_WIFI_AP_STAIPASSIGNED:
+		Serial.printf("[ota] sta ip assigned %s\n",
+		              IPAddress(info.wifi_ap_staipassigned.ip.addr).toString().c_str());
+		break;
+	default:
+		break;
+	}
+}
+
+static void log_heap(const char *tag)
+{
+	Serial.printf("[ota] %s heap=%u dma_largest=%u\n", tag, (unsigned)ESP.getFreeHeap(),
+	              (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_DMA));
+}
+
 static const char PAGE_HEAD[] PROGMEM =
 	"<!DOCTYPE html><html lang=\"ja\"><head><meta charset=\"utf-8\">"
 	"<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
@@ -327,14 +354,17 @@ static void ap_start(LGFX *lcd_)
 	last_sta = 0xFF;
 	wifi_saved = false;
 
-	Serial.printf("[ota] enter %s mode (heap=%u)\n", wifi_mode ? "wifi-setup" : "OTA",
-	              (unsigned)ESP.getFreeHeap());
+	log_heap(wifi_mode ? "enter wifi-setup mode" : "enter OTA mode");
+	if (!routes_ready) {
+		WiFi.onEvent(on_wifi_event);
+	}
 	WiFi.persistent(false);         // 資格情報をNVSに書かない
 	WiFi.mode(WIFI_AP);
-	WiFi.softAP(OTA_AP_SSID, OTA_AP_PASS);
+	bool ok = WiFi.softAP(OTA_AP_SSID, OTA_AP_PASS);
 	delay(100);
-	Serial.printf("[ota] AP ready: %s  ip=%s  heap=%u\n",
-	              OTA_AP_SSID, WiFi.softAPIP().toString().c_str(), (unsigned)ESP.getFreeHeap());
+	Serial.printf("[ota] AP %s: %s  ip=%s\n", ok ? "ready" : "START FAILED",
+	              OTA_AP_SSID, WiFi.softAPIP().toString().c_str());
+	log_heap("AP up");
 
 	draw_screen();
 
@@ -378,7 +408,7 @@ static void ap_stop(void)
 	WiFi.softAPdisconnect(false);
 	WiFi.mode(WIFI_OFF);
 	delay(50);
-	Serial.printf("[ota] AP off, heap=%u\n", (unsigned)ESP.getFreeHeap());
+	log_heap("AP off");
 }
 
 //	AP モードのメインループ。戻り値: true=ユーザーがキャンセル / 保存で終了

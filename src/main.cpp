@@ -143,6 +143,7 @@ static void enter_clock(void)
 {
 	screen = SCR_CLOCK;
 	display_set_visible(0);         // 受信文字は溜め続ける
+	clock_alloc();                  // 共有バッファを時計側へ割り付け直す
 	clock_redraw();
 	wait_release();
 }
@@ -166,6 +167,7 @@ static void clock_screen_loop(void)
 	if (display_lcd()->getTouch(&tx, &ty)) {
 		if (hit(tx, ty, set_btn_x, SET_BTN_Y, set_btn_w, SET_BTN_H)) {
 			setup_run(display_lcd());
+			clock_alloc();
 			clock_redraw();
 		} else if (hit(tx, ty, CLK_CENTER_X0, CLK_CENTER_Y0,
 		               CLK_CENTER_X1 - CLK_CENTER_X0, CLK_CENTER_Y1 - CLK_CENTER_Y0)) {
@@ -229,9 +231,7 @@ void setup()
 	netsync_init();
 	clock_set_redraw_hook(draw_clock_ui);
 	clock_init(display_lcd());
-	// 時計スプライト (約89KB) は起動直後の断片化していないヒープで確保し、
-	// 以後は解放しない (WiFi 使用後は大きな連続領域が取れないことがある)
-	clock_alloc();
+	clock_alloc();                  // 字面の実測 (初回のみ)
 
 	decoder_init();
 	decoder_set_emit(display_enqueue);

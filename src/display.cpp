@@ -729,17 +729,35 @@ void display_set_center_tap(void (*fn)(void))
 	center_tap_fn = fn;
 }
 
-//	スプライトは起動時に一度だけ確保し、以後は解放しない。
+//	共有バッファは起動時に一度だけ DMA 対応メモリから確保し、以後解放しない。
 //	LovyanGFX のスプライトは DMA 対応内部メモリから取るため、WiFi を使った
-//	あとは断片化で 21KB の連続領域が取れず作り直しに失敗する (実機で発生)
+//	あとは断片化で 21KB の連続領域が取れず作り直しに失敗する (実機で発生)。
+static uint8_t *sprite_arena = NULL;
+
+void *display_sprite_arena(size_t need)
+{
+	if (!sprite_arena) {
+		sprite_arena = (uint8_t *)heap_caps_malloc(SPRITE_ARENA_BYTES, MALLOC_CAP_DMA);
+		Serial.printf("[lcd] sprite arena %u bytes %s\n", (unsigned)SPRITE_ARENA_BYTES,
+		              sprite_arena ? "ok" : "FAILED");
+	}
+	return (sprite_arena && need <= SPRITE_ARENA_BYTES) ? sprite_arena : NULL;
+}
+
+//	デコーダ画面の3枚を共有バッファの先頭から並べる。時計画面から戻ったとき
+//	中身は壊れているが、毎フレーム fillSprite から描くので問題ない
 static void alloc_sprites(void)
 {
+	const size_t n_status = SPRITE_BYTES_16(320, STATUS_H);
+	const size_t n_panel = SPRITE_BYTES_16(PANEL_W, PANEL_H);
+	uint8_t *base = (uint8_t *)display_sprite_arena(n_status + n_panel * 2);
+	if (!base) return;
 	status_spr.setColorDepth(16);
-	status_spr.createSprite(320, STATUS_H);
+	status_spr.setBuffer(base, 320, STATUS_H);
 	fft_spr.setColorDepth(16);
-	fft_spr.createSprite(PANEL_W, PANEL_H);
+	fft_spr.setBuffer(base + n_status, PANEL_W, PANEL_H);
 	scope_spr.setColorDepth(16);
-	scope_spr.createSprite(PANEL_W, PANEL_H);
+	scope_spr.setBuffer(base + n_status + n_panel, PANEL_W, PANEL_H);
 }
 
 

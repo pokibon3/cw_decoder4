@@ -33,6 +33,7 @@
 #include <stdio.h>
 #include <string.h>
 #include "clock.h"
+#include "display.h"
 
 #define SCR_W 320
 #define SCR_H 240
@@ -452,28 +453,36 @@ void clock_redraw(void)
 	clock_update();
 }
 
+//	スプライトをデコーダ画面と共有のバッファ (display_sprite_arena) に割り付ける。
+//	時計画面に入るたびに呼ぶ (デコーダ側が同じメモリを使ったあとなので
+//	指し直す)。字面の実測は初回だけ行う。
 bool clock_alloc(void)
 {
-	if (sprites_ready) {
-		return true;
-	}
-	spr_old.setColorDepth(16);
-	spr_new.setColorDepth(16);
-	spr_cmp.setColorDepth(16);
-	sprites_ready = spr_old.createSprite(BIG_W, BIG_H)
-	             && spr_new.createSprite(BIG_W, BIG_H)
-	             && spr_cmp.createSprite(BIG_W, BIG_H);
-	if (!sprites_ready) {
-		Serial.println("[clock] sprite alloc failed");
+	static bool measured = false;
+	const size_t n_card = SPRITE_BYTES_16(BIG_W, BIG_H);
+	uint8_t *base = (uint8_t *)display_sprite_arena(n_card * 3);
+	if (!base) {
+		sprites_ready = false;
+		Serial.println("[clock] sprite arena unavailable");
 		return false;
 	}
-	for (int i = 0; i < 3; i++) {
-		fit_digits(card[i]);
-		measure_digits(card[i]);
+	spr_old.setColorDepth(16);
+	spr_old.setBuffer(base, BIG_W, BIG_H);
+	spr_new.setColorDepth(16);
+	spr_new.setBuffer(base + n_card, BIG_W, BIG_H);
+	spr_cmp.setColorDepth(16);
+	spr_cmp.setBuffer(base + n_card * 2, BIG_W, BIG_H);
+	sprites_ready = true;
+	if (!measured) {
+		measured = true;
+		for (int i = 0; i < 3; i++) {
+			fit_digits(card[i]);
+			measure_digits(card[i]);
+		}
+		Serial.printf("[clock] scale %.2f/%.2f/%.2f  split %d/%d/%d  heap=%u\n",
+		              card[0].scale, card[1].scale, card[2].scale,
+		              card[0].dy, card[1].dy, card[2].dy, (unsigned)ESP.getFreeHeap());
 	}
-	Serial.printf("[clock] scale %.2f/%.2f/%.2f  split %d/%d/%d  heap=%u\n",
-	              card[0].scale, card[1].scale, card[2].scale,
-	              card[0].dy, card[1].dy, card[2].dy, (unsigned)ESP.getFreeHeap());
 	return true;
 }
 
@@ -486,11 +495,9 @@ void clock_init(LGFX *lcd_)
 	base_ms = millis();
 }
 
+//	共有バッファは解放しない (デコーダ画面が使う)。描画だけ止める
 void clock_free(void)
 {
-	spr_old.deleteSprite();
-	spr_new.deleteSprite();
-	spr_cmp.deleteSprite();
 	sprites_ready = false;
 }
 

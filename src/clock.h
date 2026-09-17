@@ -25,8 +25,8 @@ typedef struct {
 
 void clock_init(LGFX *lcd);         // 時刻基準の初期化のみ (描画しない)
 void clock_update(void);            // loop から毎周期呼ぶ
-void clock_free(void);              // OTAへ入る前にスプライトを解放
-bool clock_alloc(void);             // 解放後に作り直す
+void clock_free(void);              // 描画停止 (バッファはデコーダ画面と共有なので解放しない)
+bool clock_alloc(void);             // 時計画面に入るたびに呼ぶ: 共有バッファへ割り付け
 void clock_redraw(void);            // 他画面から戻ったときの再描画
 void clock_toast(const char *msg, uint16_t color);      // 画面中央に一時メッセージ
 
