@@ -578,13 +578,13 @@ function buildAnalysis() {
     if (c && c.limit !== null && c.limit !== undefined) det.push([i, c]);
   }
   if (det.length && det.length <= 150) {
-    out.push('# 列詳細  ON: env>0.6*limit かつ >side*3 かつ >near*2 / OFF: env<0.4*limit または <side*2.5 または <near*1.5');
+    out.push('# 列詳細  ON: env>0.6*limit かつ >side*3 かつ >near*2 / OFF: env<0.4*limit または <side*2.5 または <near*3.2');
     out.push('#    col g    env  limit     nf   side   near | OFF条件 amp/side/near');
     for (const d of det) {
       const i = d[0], c = d[1];
       const offAmp  = c.env * 5 < c.limit * 2;
       const offSide = c.env * 10 < c.side * 25;
-      const offNear = c.env * 10 < c.near * 15;
+      const offNear = c.env * 10 < c.near * 32;
       out.push('  ' + pad(i, 6) + pad(c.gate, 2) + pad(c.env, 7) + pad(c.limit, 7) +
                pad(c.nf, 7) + pad(c.side, 7) + pad(c.near, 7) + ' |' +
                pad(offAmp ? 'Y' : '-', 8) + pad(offSide ? 'Y' : '-', 5) + pad(offNear ? 'Y' : '-', 5));
