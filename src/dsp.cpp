@@ -1,6 +1,6 @@
 //
 //	DSP タスク (Core 0)
-//	- ADC DMA から 59サンプル(7.375ms)単位で取得
+//	- ADC DMA から 30サンプル(3.75ms)単位で取得
 //	- トーン判定は 3ビン float Goertzel (CH32版 v1.8/1.9 と同一方式)。
 //	  サイドは EMA(α=1/4) 平滑と瞬時値の両方をデコーダへ渡す。
 //	- 256pt FFT (Hann窓) でスペクトラム表示用データ生成
@@ -17,9 +17,9 @@
 #define SCOPE_RING_SIZE 256
 // スコープ掃引はWPM追従: 1列のhop数 = 60/WPM (Q8の分数蓄積でリニアに)。
 // 20WPM=3.0hop(18ms/列)、40WPM=1.5hop(9ms/列)。範囲外はクランプ。
-#define SCOPE_HOPS_Q8_MIN 384   // 1.5 hop (40WPM)
-#define SCOPE_HOPS_Q8_MAX 768   // 3.0 hop (20WPM以下)
-#define SPEC_INTERVAL_HOPS 6    // 44ms 毎 (約23fps)
+#define SCOPE_HOPS_Q8_MIN 768   // 3.0 hop = 11ms (40WPM)
+#define SCOPE_HOPS_Q8_MAX 1536  // 6.0 hop = 22ms (20WPM以下)
+#define SPEC_INTERVAL_HOPS 12   // 45ms 毎 (約22fps)
 #define DSP_AUTO_MIN_MAG 800    // AUTO同調とピーク表示の共通絶対床
 #define DSP_DIAG 0              // 毎秒 blk/s・mag統計をシリアル出力
 
@@ -62,7 +62,7 @@ static volatile uint32_t scope_total = 0;   // 生成したスコープ列の通
 static volatile uint32_t span_start = 0;
 static volatile uint32_t span_end = 0;
 static volatile uint8_t span_open = 0;
-static volatile uint16_t scope_period_q8 = 768;   // 現在の1列hop数 (Q8)
+static volatile uint16_t scope_period_q8 = 1536;  // 現在の1列hop数 (Q8)
 static volatile uint8_t input_pct = 0;            // 入力レベル (フルスケール比%)
 static volatile int16_t input_peak = 0;           // 入力ピーク振幅 (カウント、ピークホールド)
 
@@ -75,10 +75,11 @@ static int32_t side_ema_h = 0;
 static uint8_t side_ema_started = 0;
 
 // トーン判定窓長 (サンプル数)。WPM追従で切替:
-// 14.75ms窓(118)はエッジが±7msなまり、45WPM(ギャップ27ms)では要素間
+// 15ms窓(120)はエッジが±7msなまり、50WPM超(ギャップ24ms未満)では要素間
 // ギャップが20ms未満に潰れて短点が融合する。高速時は v1.9 実証済みの
-// 7.4ms窓(59)へ戻す。ヒステリシス: ≥32WPMで59 / ≤28WPMで118。
-static volatile uint8_t gate_win = DSP_GATE_WIN;
+// 7.5ms窓(60)へ戻す。ヒステリシス: ≥45WPMで60 / ≤40WPMで120。
+// ホップを 3.75ms にしたことで長窓のまま 50WPM 付近まで持つ (旧: 32WPM)。
+static volatile uint8_t gate_win = DSP_GATE_WIN_LONG;
 
 // 直近ブロックのトーン判定値 (スコープログ用)
 static volatile int32_t last_side_norm = 0;
@@ -188,8 +189,8 @@ uint16_t dsp_peak_hz(void)
 
 uint16_t dsp_scope_col_ms_x10(void)
 {
-	// 1 hop = DSP_HOP/8kHz (7.375ms) を 0.1ms 単位で。1/1000ms 単位で掛けて丸める
-	const uint32_t hop_us = (uint32_t)DSP_HOP * 1000000UL / DSP_SAMPLE_RATE;   // 7375
+	// 1 hop = DSP_HOP/8kHz (3.75ms) を 0.1ms 単位で。1/1000ms 単位で掛けて丸める
+	const uint32_t hop_us = (uint32_t)DSP_HOP * 1000000UL / DSP_SAMPLE_RATE;   // 3750
 	return (uint16_t)((((uint32_t)scope_period_q8 * hop_us) >> 8) / 100U);
 }
 
@@ -210,11 +211,11 @@ int16_t dsp_input_peak(void)
 
 //==================================================================
 //	トーン判定: 3ビン float Goertzel (CH32版 v1.8/1.9 と同一方式)
-//	窓長は 118 サンプル (14.75ms)、ホップ 59 (判定周期 7.375ms)。
-//	帯域幅 67.8Hz と CH32版(167Hz)の約4割で、帯域内ノイズ電力が
+//	窓長は 120 サンプル (15ms)、ホップ 30 (判定周期 3.75ms、75%重複)。
+//	帯域幅 66.7Hz と CH32版(167Hz)の約4割で、帯域内ノイズ電力が
 //	減る = SNR +3.9dB。重畳バンドノイズ下の弱信号対策。
-//	代償: トーン同調が中心±34Hz程度までシビアになる。
-//	サイド = ±271Hz (±2 hopビン) は118サンプル窓では±4 DFTビンにあたり、
+//	代償: トーン同調が中心±33Hz程度までシビアになる。
+//	サイド = ±267Hz は120サンプル窓では±4 DFTビンにあたり、
 //	引き続き矩形窓 Dirichlet核のヌル上 (純音はサイドへ漏れない)。
 //	(値は v2.0 実機調整時の物理条件を再現したもの。dsp.h DSP_HOP 参照)
 //	(FFTゲートはヌル配置が崩れトーンの周波数ズレに弱く、実機で
@@ -236,7 +237,8 @@ static int32_t mag_prev = 0;
 static void gate_update_coeff(void)
 {
 	float fc = (float)gate_hz;
-	float fstep = (float)DSP_SAMPLE_RATE / (float)DSP_HOP;   // 135.6Hz (1 hopビン)
+	// サイドの間隔は短窓のヌル間隔 = fs/60 = 133.3Hz (長窓ではその2ビンぶん)
+	float fstep = (float)DSP_SAMPLE_RATE / (float)DSP_GATE_WIN_SHORT;   // 133.3Hz
 	g_coeff_c  = 2.0f * cosf(2.0f * (float)M_PI * fc / (float)DSP_SAMPLE_RATE);
 	g_coeff_l  = 2.0f * cosf(2.0f * (float)M_PI * (fc - 2.0f * fstep) / (float)DSP_SAMPLE_RATE);
 	g_coeff_h  = 2.0f * cosf(2.0f * (float)M_PI * (fc + 2.0f * fstep) / (float)DSP_SAMPLE_RATE);
@@ -255,9 +257,9 @@ static inline int32_t goertzel_mag(float q1, float q2, float coeff)
 
 static int32_t process_gate(void)
 {
-	// 直近 gate_win サンプルを窓として使う (118時はホップ59で50%重複)
+	// 直近 gate_win サンプルを窓として使う (120時はホップ30で75%重複)
 	const int n = gate_win;
-	float win[DSP_GATE_WIN];
+	float win[DSP_GATE_WIN_LONG];
 	float mean = 0.0f;
 	uint16_t base = (uint16_t)((sample_pos + 512 - n) % 512);
 	for (int i = 0; i < n; i++) {
@@ -291,8 +293,8 @@ static int32_t process_gate(void)
 	// 短窓 (59) では x2 して長窓 (118) と同じ尺度にする。これが無いと窓切替の
 	// 瞬間にトーン振幅が半分になり、しきい値 (limit) とノイズ床が旧尺度のまま
 	// なので ON にならず、WPM が更新されなくなって短窓から戻れなくなる
-	if (n < DSP_GATE_WIN) {
-		const int32_t k = DSP_GATE_WIN / n;
+	if (n < DSP_GATE_WIN_LONG) {
+		const int32_t k = DSP_GATE_WIN_LONG / n;
 		mag_c *= k; mag_l *= k; mag_h *= k; mag_nl *= k; mag_nh *= k;
 	}
 
@@ -616,10 +618,10 @@ static void dsp_task(void *arg)
 			const uint8_t stalled = blocks_since_on > (2000UL * DSP_SAMPLE_RATE / 1000 / DSP_HOP);
 			uint16_t w = decoder_wpm();
 			uint8_t desired = gate_win;
-			if (stalled || (w != 0 && w <= 28)) {
-				desired = DSP_GATE_WIN;      // 118 (14.75ms窓、+3dB)
-			} else if (w >= 32) {
-				desired = DSP_HOP;           // 59 (7.4ms窓、v1.9同等)
+			if (stalled || (w != 0 && w <= 40)) {
+				desired = DSP_GATE_WIN_LONG;   // 120 (15ms窓、+3dB)
+			} else if (w >= 45) {
+				desired = DSP_GATE_WIN_SHORT;  // 60 (7.5ms窓)
 			}
 			if (desired != gate_win) {
 				gate_win = desired;
@@ -672,7 +674,7 @@ static void dsp_task(void *arg)
 			col->real_cnt = col_real;
 			col->hops = col_hops;
 			scope_pos = (uint16_t)((scope_pos + 1) % SCOPE_RING_SIZE);
-			scope_total++;
+			scope_total = scope_total + 1;      // volatile への ++ は非推奨
 			taskEXIT_CRITICAL(&dsp_mux);
 			col_mn = 32767;
 			col_mx = -32768;
@@ -686,7 +688,7 @@ static void dsp_task(void *arg)
 			{
 				uint16_t w = decoder_wpm();
 				if (w == 0) w = 20;
-				uint32_t q = (60UL << 8) / w;
+				uint32_t q = (120UL << 8) / w;
 				if (q < SCOPE_HOPS_Q8_MIN) q = SCOPE_HOPS_Q8_MIN;
 				if (q > SCOPE_HOPS_Q8_MAX) q = SCOPE_HOPS_Q8_MAX;
 				scope_period_q8 = (uint16_t)q;

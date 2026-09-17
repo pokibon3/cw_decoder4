@@ -440,13 +440,14 @@ void decoder_process_block(int32_t magnitude, int32_t side_mag, int32_t side_mag
 #if NOISE_BLANKER_ENABLED
 	{
 		uint32_t unit = (hightimesavg > 0) ? hightimesavg : highduration;
-		// 1ブロック 7.375ms → 0.35単位 = unit/21.07 ブロック。切り捨てると
-		// 20WPM で 2 ブロックになり、2 ブロック (14ms) のドロップアウトで
-		// カウンタが空になって符号が切れる (N の長点が途中で切れて T + E に
-		// なった実測例)。四捨五入して 3 ブロックにする
-		uint32_t n = (unit + 10) / 21;
+		// 0.35 単位ぶんのブロック数 (四捨五入)。ホップ長から計算するので
+		// DSP_HOP を変えても比率は保たれる。切り捨てると 20WPM で 2 ブロックに
+		// なり、2 ブロックのドロップアウトでカウンタが空になって符号が切れる
+		// (N の長点が途中で切れて T + E になった実測例)
+		uint32_t n = ((unit * 35 * (DSP_SAMPLE_RATE / 1000)) + 50 * DSP_HOP) /
+		             (100 * DSP_HOP);
 		if (n < 2) n = 2;
-		if (n > 6) n = 6;
+		if (n > 12) n = 12;
 		// 立ち上がりと立ち下がりを必ず同じ段数だけ遅らせる。旧方式にあった
 		// 「長い無音のあとは即座に ON」の特例をここで使うと、その要素だけ
 		// 立ち上がりが遅れず立ち下がりだけ遅れるため n ブロック (20WPM で

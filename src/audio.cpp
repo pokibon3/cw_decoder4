@@ -25,7 +25,7 @@ static volatile uint32_t audio_clips = 0;   // ADC レール到達 (0 / 4095 付
 
 void audio_init(void)
 {
-	// DSP_HOP*4 conversions at 32kHz = one DSP hop (59 samples = 7.375ms).
+	// DSP_HOP*4 conversions at 32kHz = one DSP hop (30 samples = 3.75ms).
 	// conv_frame_size must be a multiple of SOC_ADC_DIGI_DATA_BYTES_PER_CONV (4).
 	adc_continuous_handle_cfg_t handle_cfg = {};
 	handle_cfg.max_store_buf_size = AUDIO_POOL_BYTES;
