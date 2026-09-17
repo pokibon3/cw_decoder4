@@ -447,9 +447,11 @@ void decoder_process_block(int32_t magnitude, int32_t side_mag, int32_t side_mag
 		uint32_t n = (unit + 10) / 21;
 		if (n < 2) n = 2;
 		if (n > 6) n = 6;
-		if (filteredstate == KEY_LOW && realstate == KEY_HIGH && lowduration > unit * 6) {
-			nb_acc = (uint8_t)n;        // 長い無音のあとの頭は削らない
-		} else if (realstate == KEY_HIGH) {
+		// 立ち上がりと立ち下がりを必ず同じ段数だけ遅らせる。旧方式にあった
+		// 「長い無音のあとは即座に ON」の特例をここで使うと、その要素だけ
+		// 立ち上がりが遅れず立ち下がりだけ遅れるため n ブロック (20WPM で
+		// 22ms = 0.35単位) 長く測られ、文字群の先頭ごとに速度推定が上振れする
+		if (realstate == KEY_HIGH) {
 			if (nb_acc < (uint8_t)n) nb_acc++;
 		} else if (nb_acc > 0) {
 			nb_acc--;
