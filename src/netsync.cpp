@@ -57,6 +57,11 @@ String netsync_ssid(void)
 	return ssid;
 }
 
+String netsync_pass(void)
+{
+	return pass;
+}
+
 uint32_t netsync_last_epoch(void)
 {
 	return last_epoch;

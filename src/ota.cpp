@@ -17,6 +17,7 @@
 #include <Arduino.h>
 #include <WiFi.h>
 #include <WebServer.h>
+#include <ESPmDNS.h>
 #include <Update.h>
 #include <DNSServer.h>
 #include "ota.h"
@@ -32,6 +33,11 @@
 #define C_OK      lgfx::color565(120, 220, 160)
 #define C_ERR     lgfx::color565(240, 110, 100)
 #define C_FRAME   lgfx::color565(51, 69, 92)
+
+// 左の情報欄 (4行)
+#define ROW_Y0 32
+#define ROW_STEP 28
+#define LAN_ROW_Y (ROW_Y0 + ROW_STEP * 3)
 
 #define BAR_X 8
 #define BAR_Y 201
@@ -62,6 +68,8 @@ static uint8_t last_sta = 0xFF;
 static bool wifi_mode = false;          // true=WiFi設定モード (戻れる)
 static bool wifi_saved = false;         // WiFi設定モードで保存された
 static bool routes_ready = false;       // server.on は1回だけ登録する
+static bool sta_up = false;             // LAN 側 (STA) の接続状態
+static bool mdns_up = false;
 
 //	端末の参加/離脱/IP付与をシリアルへ (接続できないときの切り分け用)
 static void on_wifi_event(WiFiEvent_t ev, WiFiEventInfo_t info)
@@ -134,6 +142,29 @@ static void draw_bar(int pct)
 	lcd->fillRect(BAR_X + 2 + w, BAR_Y + 2, (BAR_W - 4) - w, BAR_H - 4, C_BG);
 }
 
+//	LAN (STA) 側の接続状況。DHCP で決まるので接続できたら描き直す。
+//	この欄は DejaVu (ASCII のみ) で描くので日本語は使わない
+static void draw_lan_row(void)
+{
+	const int y = LAN_ROW_Y;
+	lcd->fillRect(0, y, 200, ROW_STEP, C_BG);
+	lcd->setTextDatum(lgfx::textdatum_t::top_left);
+	lcd->setFont(&fonts::DejaVu12);
+	lcd->setTextColor(C_LABEL, C_BG);
+
+	if (!netsync_has_wifi()) {
+		lcd->drawString("LAN", 8, y);
+		lcd->setFont(&fonts::DejaVu18);
+		lcd->drawString("(wifi not set)", 8, y + 11);
+		return;
+	}
+	bool up = (WiFi.status() == WL_CONNECTED);
+	lcd->drawString(String("LAN  ") + (up ? WiFi.localIP().toString() : String("connecting...")), 8, y);
+	lcd->setFont(&fonts::DejaVu18);
+	lcd->setTextColor(up ? C_OK : C_LABEL, C_BG);
+	lcd->drawString(String("http://") + OTA_HOSTNAME + ".local/", 8, y + 11);
+}
+
 static void draw_stations(uint8_t n)
 {
 	lcd->fillRect(0, INFO_Y, 200, 18, C_BG);
@@ -162,22 +193,23 @@ static void draw_screen(void)
 	lcd->drawString(ver, 312, 15);
 	lcd->setTextDatum(lgfx::textdatum_t::top_left);
 
-	// 左: 接続情報
+	// 左: 接続情報 (SSID / PASS / AP側URL / LAN側URL)
 	struct { const char *label; String value; } rows[] = {
 		{ "SSID", String(OTA_AP_SSID) },
 		{ "PASS", String(OTA_AP_PASS) },
 		{ "URL",  String("http://") + WiFi.softAPIP().toString() + "/" },
 	};
-	int y = 38;
+	int y = ROW_Y0;
 	for (auto &r : rows) {
 		lcd->setFont(&fonts::DejaVu12);
 		lcd->setTextColor(C_LABEL, C_BG);
 		lcd->drawString(r.label, 8, y);
 		lcd->setFont(&fonts::DejaVu18);
 		lcd->setTextColor(C_VALUE, C_BG);
-		lcd->drawString(r.value, 8, y + 14);
-		y += 38;
+		lcd->drawString(r.value, 8, y + 11);
+		y += ROW_STEP;
 	}
+	draw_lan_row();
 	draw_stations(0);
 
 	// 右: WiFi接続用QR (スマホのカメラで読むとAPに参加できる)
@@ -210,13 +242,32 @@ static void draw_screen(void)
 
 //	自分の IP 以外のホスト名で来た要求 (OS の接続確認プローブ等) は
 //	自分のページへ 302 で飛ばす。これがキャプティブポータル検出の合図になる
+//	自分宛て (AP側IP / LAN側IP / mDNS名) の要求かどうか
+static bool host_is_ours(String host)
+{
+	if (host.length() == 0) {
+		return true;
+	}
+	int colon = host.indexOf(':');
+	if (colon >= 0) {
+		host = host.substring(0, colon);
+	}
+	if (host == WiFi.softAPIP().toString()) {
+		return true;
+	}
+	if (WiFi.status() == WL_CONNECTED && host == WiFi.localIP().toString()) {
+		return true;
+	}
+	host.toLowerCase();
+	return (host == OTA_HOSTNAME ".local" || host == OTA_HOSTNAME);
+}
+
 static bool redirect_if_captive(void)
 {
-	String host = server.hostHeader();
-	String ip = WiFi.softAPIP().toString();
-	if (host == ip || host == ip + ":80") {
+	if (host_is_ours(server.hostHeader())) {
 		return false;
 	}
+	String ip = WiFi.softAPIP().toString();
 	server.sendHeader("Location", String("http://") + ip + "/", true);
 	server.send(302, "text/plain", "");
 	return true;
@@ -353,17 +404,26 @@ static void ap_start(LGFX *lcd_)
 	lcd = lcd_;
 	last_sta = 0xFF;
 	wifi_saved = false;
+	sta_up = false;
 
 	log_heap(wifi_mode ? "enter wifi-setup mode" : "enter OTA mode");
 	if (!routes_ready) {
 		WiFi.onEvent(on_wifi_event);
 	}
 	WiFi.persistent(false);         // 資格情報をNVSに書かない
-	WiFi.mode(WIFI_AP);
+	// 自宅WiFiが登録済みなら AP と STA を同時に上げる。STA の接続完了は
+	// 待たない (数秒かかる) — つながったら ap_poll が LAN 行を描き直す
+	bool use_sta = netsync_has_wifi();
+	WiFi.mode(use_sta ? WIFI_AP_STA : WIFI_AP);
 	bool ok = WiFi.softAP(OTA_AP_SSID, OTA_AP_PASS);
 	delay(100);
 	Serial.printf("[ota] AP %s: %s  ip=%s\n", ok ? "ready" : "START FAILED",
 	              OTA_AP_SSID, WiFi.softAPIP().toString().c_str());
+	if (use_sta) {
+		WiFi.setHostname(OTA_HOSTNAME);
+		WiFi.begin(netsync_ssid().c_str(), netsync_pass().c_str());
+		Serial.printf("[ota] STA connecting to %s\n", netsync_ssid().c_str());
+	}
 	log_heap("AP up");
 
 	draw_screen();
@@ -396,6 +456,23 @@ static void ap_poll(void)
 			last_sta = n;
 			draw_stations(n);
 		}
+		// STA がつながったら LAN 行を描き直し、mDNS を上げる
+		bool up = (WiFi.status() == WL_CONNECTED);
+		if (up != sta_up) {
+			sta_up = up;
+			draw_lan_row();
+			if (up) {
+				Serial.printf("[ota] STA up: %s (%s.local)\n",
+				              WiFi.localIP().toString().c_str(), OTA_HOSTNAME);
+				if (MDNS.begin(OTA_HOSTNAME)) {
+					MDNS.addService("http", "tcp", 80);
+					mdns_up = true;
+				}
+			} else if (mdns_up) {
+				MDNS.end();
+				mdns_up = false;
+			}
+		}
 	}
 }
 
@@ -403,6 +480,14 @@ static void ap_stop(void)
 {
 	dns.stop();
 	server.stop();
+	if (mdns_up) {
+		MDNS.end();
+		mdns_up = false;
+	}
+	if (sta_up || WiFi.status() == WL_CONNECTED) {
+		WiFi.disconnect(true, false);
+	}
+	sta_up = false;
 	// AP を止めてから WiFi を落とす。softAPdisconnect(true) だと内部で
 	// 二重に deinit され "netstack cb reg failed" が出るので false にする
 	WiFi.softAPdisconnect(false);

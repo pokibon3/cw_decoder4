@@ -21,4 +21,5 @@ bool netsync_has_wifi(void);
 void netsync_save_wifi(const char *ssid, const char *pass);
 void netsync_clear_wifi(void);              // WiFi初期化 (NVS の SSID/パスワードを消す)
 String netsync_ssid(void);
+String netsync_pass(void);                  // OTA が AP+STA で使う
 uint32_t netsync_last_epoch(void);          // 最後に同期できた時刻 (0=未同期)
