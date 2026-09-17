@@ -47,17 +47,21 @@ static int32_t magnitudelimit_low = 140;
 #define LIMIT_ATTACK_DIV 6
 #define LIMIT_DECAY_DIV 48
 // ノイズ床に連動した相対スケルチ: ゲートOFF中の中心マグニチュードを遅い
-// EMA (1/128 = τ0.94s) で追い、limit の床を noise_floor x 6 にする
-// (ON 下限 = 0.6 x 床 = ノイズ平均 x 3.6 = +11dB)。ノイズの Goertzel 出力は
-// レイリー分布で平均の 1.5 倍は頻出 (数%/ブロック)、3.6 倍超は ~4e-5。
-// 上げすぎると床がピークホールド (≈0.75 x 信号) を超えてマークの両端が
-// 削られる (x8 ではゲート内 SNR 20dB の実機信号で床≒ピークホールドだった)。
+// EMA (1/128 = τ0.94s) で追い、limit の床を noise_floor x 8 にする
+// (ON 下限 = 0.6 x 床 = ノイズ平均 x 4.8)。ノイズの Goertzel 出力はレイリー
+// 分布で大きく揺れ、実測ログではノイズ床 589 に対し瞬時値が 2470 (4.2 倍) まで
+// 出ていた。x6 では ON 下限が 3.6 倍 = 2120 でこれを下回り、キーイングの
+// ギャップ中にノイズでゲートが再点火して短点と長点が 1 本に融合していた
+// (Y が O になる)。x8 なら ON 下限 4.8 倍 = 2827 でノイズのピークを超える。
+// 代償: マークがノイズ床の 4.8 倍に届かない信号は拾えなくなる。
+// (以前 x8 で不調だったのはノイズ床の整数 EMA がラチェットしていたためで、
+//  Q8 化で解消済み)
 // 絶対床 140 だけだと入力を極端に絞ったときしかスケルチが効かず、通常
 // レベルではノイズ棄却が比率条件だけになって帯域制限ノイズの偽符号が増える。
 static int32_t noise_floor = 0;
 static int32_t noise_acc = 0;       // noise_floor の Q8 蓄積値 (整数 EMA のラチェット防止)
 #define NOISE_FLOOR_DIV 128
-#define NOISE_SQUELCH_X10 60
+#define NOISE_SQUELCH_X10 80
 static uint16_t realstate = KEY_LOW;
 static uint16_t realstatebefore = KEY_LOW;
 static uint16_t filteredstate = KEY_LOW;
