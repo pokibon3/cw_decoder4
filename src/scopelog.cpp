@@ -147,9 +147,13 @@ void scopelog_poll(void)
 
 	// デコード文字
 	while (ch_tail != ch_head) {
-		char u8[4];
-		char_utf8(chars[ch_tail].ch, u8);
-		snprintf(line, sizeof(line), "C %lu %s\n", (unsigned long)chars[ch_tail].col, u8);
+		if (chars[ch_tail].ch == ' ') {
+			snprintf(line, sizeof(line), "W %lu\n", (unsigned long)chars[ch_tail].col);
+		} else {
+			char u8[4];
+			char_utf8(chars[ch_tail].ch, u8);
+			snprintf(line, sizeof(line), "C %lu %s\n", (unsigned long)chars[ch_tail].col, u8);
+		}
 		if (!put_line(line)) break;     // 次フレームに回す
 		ch_tail = (uint8_t)((ch_tail + 1) % LOG_CHAR_N);
 	}

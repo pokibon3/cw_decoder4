@@ -1,0 +1,539 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CW Decoder 4 Scope Viewer</title>
+<style>
+  :root {
+    --bg: #0e1116;
+    --panel: #161b22;
+    --line: #2a3140;
+    --tx: #d8dee6;
+    --dim: #8b94a3;
+    --accent: #5adc78;
+    --amber: #fac775;
+    --red: #eb5a50;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 16px;
+    background: var(--bg); color: var(--tx);
+    font: 13px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", "Hiragino Sans", "Noto Sans JP", sans-serif;
+  }
+  h1 { font-size: 16px; margin: 0 0 12px; font-weight: 600; }
+  h1 small { color: var(--dim); font-weight: 400; margin-left: 8px; }
+  .bar {
+    display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+    padding: 10px 12px; margin-bottom: 12px;
+  }
+  .bar + .bar { margin-top: -4px; }
+  button, select, label.chk {
+    font: inherit; color: var(--tx); background: #1d232d;
+    border: 1px solid var(--line); border-radius: 6px; padding: 5px 12px; cursor: pointer;
+  }
+  button:hover:not(:disabled), select:hover { border-color: #47536a; }
+  button:disabled { opacity: .45; cursor: default; }
+  button.primary { background: #16324a; border-color: #2f6592; }
+  button.danger  { background: #3a1f1f; border-color: #6d3535; }
+  label.chk { display: inline-flex; align-items: center; gap: 6px; user-select: none; }
+  .sep { flex: 1; }
+  .stat { display: flex; flex-wrap: wrap; gap: 6px 18px; }
+  .stat div { white-space: nowrap; }
+  .stat b { color: var(--dim); font-weight: 400; margin-right: 6px; }
+  .warn { color: var(--red); }
+  canvas { display: block; border-radius: 6px; image-rendering: pixelated; }
+  #wrap { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px; margin-bottom: 12px; overflow-x: auto; }
+  #scrub { width: 100%; margin-top: 10px; accent-color: #2f6592; }
+  #text {
+    background: #05080d; border: 1px solid var(--line); border-radius: 8px;
+    padding: 12px; min-height: 76px; max-height: 160px; overflow-y: auto;
+    font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 15px;
+    letter-spacing: .08em; color: #adff2f; word-break: break-all;
+  }
+  details { margin-top: 12px; color: var(--dim); }
+  details summary { cursor: pointer; }
+  details pre { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 10px; overflow-x: auto; color: var(--tx); }
+  .err { color: var(--red); }
+</style>
+</head>
+<body>
+
+<h1>CW Decoder 4 &mdash; Scope Viewer <small>SETUP の「スコープログ」を ON にして接続してください</small></h1>
+
+<div class="bar">
+  <button id="connect" class="primary">シリアル接続</button>
+  <button id="disconnect" class="danger" disabled>切断</button>
+  <button id="loadFile">ログを開く</button>
+  <button id="saveFile" disabled>ログを保存</button>
+  <button id="clear">クリア</button>
+  <input type="file" id="file" accept=".log,.txt" hidden>
+  <div class="sep"></div>
+  <label class="chk"><input type="checkbox" id="follow" checked> 最新を追う</label>
+  <label>表示列
+    <select id="cols">
+      <option value="150" selected>150 (実機と同じ)</option>
+      <option value="300">300</option>
+      <option value="600">600</option>
+      <option value="1200">1200</option>
+    </select>
+  </label>
+  <label>拡大
+    <select id="zoom">
+      <option value="fit" selected>自動 (幅に合わせる)</option>
+      <option value="3">3x</option>
+      <option value="4">4x</option>
+      <option value="5">5x</option>
+      <option value="6">6x</option>
+    </select>
+  </label>
+</div>
+
+<div class="bar stat" id="stat">
+  <div><b>状態</b><span id="conn">未接続</span></div>
+  <div><b>SPEED</b><span id="wpm">--</span> WPM</div>
+  <div><b>TONE</b><span id="tone">--</span></div>
+  <div><b>掃引</b><span id="sweep">--</span> ms/列</div>
+  <div><b>入力</b><span id="level">--</span> dBFS</div>
+  <div><b>列数</b><span id="count">0</span></div>
+  <div><b>欠落</b><span id="drop">0</span></div>
+  <div><b>CLIP</b><span id="clip">0</span></div>
+</div>
+
+<div id="wrap">
+  <canvas id="cv" width="800" height="335"></canvas>
+  <input type="range" id="scrub" min="0" max="0" value="0" disabled>
+</div>
+
+<div id="text"></div>
+
+<details>
+  <summary>ログ形式 (src/scopelog.h)</summary>
+<pre>H rate=8000 hop=59 cols=150 ver=2.1      開始時と 5 秒ごと
+T &lt;col&gt; wpm=&lt;n&gt; tone=&lt;hz&gt; auto=&lt;0/1&gt; hopq8=&lt;q8&gt;   状態変化時
+S &lt;col&gt; &lt;t_ms&gt; &lt;min&gt; &lt;max&gt; &lt;env&gt; &lt;gate&gt;   スコープ列ごと
+C &lt;col&gt; &lt;文字&gt;                           デコード文字 (符号区間中央の列)
+W &lt;col&gt;                                  語間 (スペース)
+L &lt;peak&gt; &lt;clip&gt;                          入力ピーク (カウント) と累積クリップ数
+X dropped=&lt;n&gt;                            欠落列数</pre>
+  <p>Web Serial API を使うため <b>Chrome / Edge</b> で、<code>file://</code> か <code>http://localhost</code> から開いてください
+  (Safari / Firefox では「ログを開く」での再生のみ利用できます)。</p>
+</details>
+
+<script>
+'use strict';
+
+//====================================================================
+//  実機 (src/display.cpp draw_scope_panel) と同じ配色・レイアウト
+//====================================================================
+const C = {
+  bg:    '#020810',   // C_PANEL_BG
+  frame: '#283c55',   // C_FRAME
+  raw:   '#0082af',   // C_RAW
+  env:   '#fac775',   // C_ENV
+  gate:  '#5adc78',   // C_GATE
+  text:  '#adff2f',   // C_TEXT_NEW
+  mid:   '#142837',   // 中心線
+  btnOn:  { bg: '#122d50', bd: '#5a96d2', tx: '#c8e6ff' },
+  btnOff: { bg: '#08121e', bd: '#2d415a', tx: '#5a6e82' },
+};
+const LAYOUT = {
+  x0: 4, panelH: 67,
+  textH: 16, plotTop: 17, waveTop: 25, plotBot: 46,
+  btnY: 48, btnH: 17, btnW: 46, btnX: [4, 57, 110],
+};
+LAYOUT.midY  = Math.floor((LAYOUT.waveTop + LAYOUT.plotBot) / 2);   // 35
+LAYOUT.halfH = Math.floor((LAYOUT.plotBot - LAYOUT.waveTop) / 2);   // 10
+LAYOUT.envH  = LAYOUT.plotBot - LAYOUT.waveTop;                     // 21
+
+const HOP_MS_DEFAULT = 7.375;   // DSP_HOP 59 / 8kHz
+
+//====================================================================
+//  受信データ
+//====================================================================
+const MAX_COLS = 200000;
+const cols = new Map();          // col index -> {t, mn, mx, env, gate}
+const chars = [];                // {col, ch}
+let minCol = null, maxCol = null;
+const state = {
+  rate: 8000, hop: 59, ver: '?',
+  wpm: null, tone: null, auto: 1, hopq8: 768,
+  peak: null, clip: 0, dropped: 0,
+};
+let rawLog = [];                 // 保存用の生テキスト
+let showKey = true, showEnv = true, showRaw = true;
+// AGC (実機と同じ平滑化。スクラブ中は瞬時値を使う)
+let rawMax = 100, envMax = 500;
+
+function resetData() {
+  cols.clear(); chars.length = 0; rawLog = [];
+  minCol = maxCol = null;
+  state.wpm = state.tone = state.peak = null;
+  state.clip = state.dropped = 0;
+  rawMax = 100; envMax = 500;
+  scrub.disabled = true; scrub.max = 0; scrub.value = 0;
+  saveBtn.disabled = true;
+  textEl.textContent = '';
+  updateStat();
+}
+
+function trim() {
+  if (cols.size <= MAX_COLS) return;
+  const drop = cols.size - MAX_COLS;
+  for (let i = 0; i < drop; i++) cols.delete(minCol + i);
+  minCol += drop;
+  while (chars.length && chars[0].col < minCol) chars.shift();
+}
+
+//====================================================================
+//  行の解析
+//====================================================================
+function feedLine(line) {
+  line = line.trim();
+  if (!line) return;
+  const f = line.split(/\s+/);
+  switch (f[0]) {
+    case 'S': {
+      if (f.length < 7) return;
+      const idx = +f[1];
+      if (!Number.isFinite(idx)) return;
+      cols.set(idx, { t: +f[2], mn: +f[3], mx: +f[4], env: +f[5], gate: +f[6] });
+      if (minCol === null || idx < minCol) minCol = idx;
+      if (maxCol === null || idx > maxCol) maxCol = idx;
+      trim();
+      break;
+    }
+    case 'C':
+      if (f.length >= 3) chars.push({ col: +f[1], ch: f.slice(2).join(' ') });
+      break;
+    case 'W':
+      if (f.length >= 2) chars.push({ col: +f[1], ch: ' ' });
+      break;
+    case 'T':
+      for (const kv of f.slice(2)) {
+        const [k, v] = kv.split('=');
+        if (k === 'wpm') state.wpm = +v;
+        else if (k === 'tone') state.tone = +v;
+        else if (k === 'auto') state.auto = +v;
+        else if (k === 'hopq8') state.hopq8 = +v;
+      }
+      break;
+    case 'H':
+      for (const kv of f.slice(1)) {
+        const [k, v] = kv.split('=');
+        if (k === 'rate') state.rate = +v;
+        else if (k === 'hop') state.hop = +v;
+        else if (k === 'ver') state.ver = v;
+      }
+      break;
+    case 'L':
+      if (f.length >= 3) { state.peak = +f[1]; state.clip = +f[2]; }
+      break;
+    case 'X': {
+      const m = /dropped=(\d+)/.exec(line);
+      if (m) state.dropped += +m[1];
+      break;
+    }
+    default:
+      break;   // [dsp] / [sync] など本体の他のログ行は無視
+  }
+  rawLog.push(line);
+  if (rawLog.length > 400000) rawLog.splice(0, 100000);
+  saveBtn.disabled = rawLog.length === 0;
+}
+
+function feedChunk(text) {
+  for (const line of text.split('\n')) feedLine(line);
+}
+
+//====================================================================
+//  描画 (実機の draw_scope_panel と同じ手順)
+//====================================================================
+const cv = document.getElementById('cv');
+const ctx = cv.getContext('2d');
+
+function visibleRange(nCols) {
+  if (maxCol === null) return null;
+  let end;                                     // 表示する最新列 (この列を含む)
+  if (follow.checked) {
+    end = maxCol;
+  } else {
+    end = Math.min(maxCol, minCol + (+scrub.value));
+  }
+  return { start: end - nCols + 1, end };
+}
+
+function currentZoom(panelW) {
+  if (zoomSel.value !== 'fit') return +zoomSel.value;
+  const avail = document.getElementById('wrap').clientWidth - 24;   // padding 分
+  return Math.max(1, Math.min(8, Math.floor(avail / panelW)));
+}
+
+function draw() {
+  const nCols = +colsSel.value;
+  const panelW = nCols + 10;
+  const s = currentZoom(panelW);
+  if (cv.width !== panelW * s || cv.height !== LAYOUT.panelH * s) {
+    cv.width = panelW * s; cv.height = LAYOUT.panelH * s;
+  }
+  ctx.setTransform(s, 0, 0, s, 0, 0);
+  ctx.imageSmoothingEnabled = false;
+
+  // 背景と枠
+  ctx.fillStyle = C.bg;
+  ctx.fillRect(0, 0, panelW, LAYOUT.panelH);
+  ctx.fillStyle = C.frame;
+  rect(0, 0, panelW, 1); rect(0, LAYOUT.panelH - 1, panelW, 1);
+  rect(0, 0, 1, LAYOUT.panelH); rect(panelW - 1, 0, 1, LAYOUT.panelH);
+
+  const range = visibleRange(nCols);
+  if (range) {
+    // AGC: 表示範囲の最大値に追従 (実機と同じ係数)
+    let rmax = 0, emax = 0;
+    for (let i = range.start; i <= range.end; i++) {
+      const c = cols.get(i);
+      if (!c) continue;
+      const a = c.mx > -c.mn ? c.mx : -c.mn;
+      if (a > rmax) rmax = a;
+      if (c.env > emax) emax = c.env;
+    }
+    if (follow.checked) {
+      rawMax += (rmax * 1.1 - rawMax) * 0.1;
+      envMax += (emax * 1.1 - envMax) * 0.1;
+    } else {
+      rawMax = rmax * 1.1; envMax = emax * 1.1;
+    }
+    if (rawMax < 60) rawMax = 60;
+    if (envMax < 400) envMax = 400;
+
+    if (showRaw) { ctx.fillStyle = C.mid; rect(LAYOUT.x0, LAYOUT.midY, nCols, 1); }
+
+    let prevEy = -1;
+    ctx.lineWidth = 1;
+    for (let i = 0; i < nCols; i++) {
+      const c = cols.get(range.start + i);
+      if (!c) { prevEy = -1; continue; }
+      const x = LAYOUT.x0 + i;
+
+      if (showRaw) {                                  // 生波形 min/max バンド
+        let y1 = LAYOUT.midY - Math.trunc(c.mx / rawMax * LAYOUT.halfH);
+        let y2 = LAYOUT.midY - Math.trunc(c.mn / rawMax * LAYOUT.halfH);
+        if (y1 < LAYOUT.waveTop) y1 = LAYOUT.waveTop;
+        if (y2 > LAYOUT.plotBot) y2 = LAYOUT.plotBot;
+        if (y2 < y1) { const t = y1; y1 = y2; y2 = t; }
+        ctx.fillStyle = C.raw;
+        rect(x, y1, 1, y2 - y1 + 1);
+      }
+
+      if (showEnv) {                                  // エンベロープ
+        let eh = Math.trunc(c.env / envMax * LAYOUT.envH);
+        if (eh > LAYOUT.envH) eh = LAYOUT.envH;
+        const ey = LAYOUT.plotBot - eh;
+        if (prevEy >= 0) {
+          ctx.strokeStyle = C.env;
+          ctx.beginPath();
+          ctx.moveTo(x - 0.5, prevEy + 0.5);
+          ctx.lineTo(x + 0.5, ey + 0.5);
+          ctx.stroke();
+        }
+        prevEy = ey;
+      }
+
+      if (showKey && c.gate) {                        // キー判定バー
+        ctx.fillStyle = C.gate;
+        rect(x, LAYOUT.plotTop + 1, 1, 3);
+      }
+    }
+
+    if (showKey) {                                    // デコード文字
+      ctx.fillStyle = C.text;
+      ctx.font = '16px "Hiragino Sans", "Noto Sans JP", sans-serif';
+      ctx.textBaseline = 'top';
+      ctx.textAlign = 'center';
+      for (const ch of chars) {
+        if (ch.ch === ' ') continue;                 // 語間は描かない
+        if (ch.col < range.start - 4 || ch.col > range.end + 4) continue;
+        const x = LAYOUT.x0 + (ch.col - range.start);
+        ctx.fillText(ch.ch, x, 0);
+      }
+      ctx.textAlign = 'left';
+    }
+  }
+
+  // KEY / ENV / RAW ボタン
+  drawButton(0, 'KEY', showKey);
+  drawButton(1, 'ENV', showEnv);
+  drawButton(2, 'RAW', showRaw);
+}
+
+function rect(x, y, w, h) { ctx.fillRect(x, y, w, h); }
+
+function drawButton(i, label, on) {
+  const st = on ? C.btnOn : C.btnOff;
+  const x = LAYOUT.btnX[i], y = LAYOUT.btnY, w = LAYOUT.btnW, h = LAYOUT.btnH;
+  ctx.fillStyle = st.bg; ctx.fillRect(x, y, w, h);
+  ctx.fillStyle = st.bd;
+  rect(x, y, w, 1); rect(x, y + h - 1, w, 1);
+  rect(x, y, 1, h); rect(x + w - 1, y, 1, h);
+  ctx.fillStyle = st.tx;
+  ctx.font = 'bold 11px "SF Mono", Menlo, Consolas, monospace';
+  ctx.textBaseline = 'middle'; ctx.textAlign = 'center';
+  ctx.fillText(label, x + w / 2, y + h / 2 + 1);
+  ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
+}
+
+cv.addEventListener('click', ev => {
+  const s = currentZoom(+colsSel.value + 10);
+  const r = cv.getBoundingClientRect();
+  const x = (ev.clientX - r.left) * (cv.width / r.width) / s;
+  const y = (ev.clientY - r.top) * (cv.height / r.height) / s;
+  if (y < LAYOUT.btnY || y > LAYOUT.btnY + LAYOUT.btnH) return;
+  for (let i = 0; i < 3; i++) {
+    if (x >= LAYOUT.btnX[i] && x < LAYOUT.btnX[i] + LAYOUT.btnW) {
+      if (i === 0) showKey = !showKey;
+      else if (i === 1) showEnv = !showEnv;
+      else showRaw = !showRaw;
+    }
+  }
+});
+
+//====================================================================
+//  ステータスとデコード文字列
+//====================================================================
+function updateStat() {
+  document.getElementById('wpm').textContent = state.wpm ?? '--';
+  document.getElementById('tone').textContent =
+    state.tone === null ? '--' : (state.auto ? `AUTO ${state.tone}Hz` : `${state.tone}Hz`);
+  const msPerCol = state.hopq8 / 256 * (state.hop / state.rate * 1000);
+  document.getElementById('sweep').textContent = msPerCol ? msPerCol.toFixed(1) : '--';
+  document.getElementById('level').textContent =
+    state.peak ? (20 * Math.log10(state.peak / 2048)).toFixed(1) : '--';
+  document.getElementById('count').textContent = cols.size;
+  const d = document.getElementById('drop');
+  d.textContent = state.dropped;
+  d.className = state.dropped ? 'warn' : '';
+  const cl = document.getElementById('clip');
+  cl.textContent = state.clip;
+  cl.className = state.clip ? 'warn' : '';
+
+  if (maxCol !== null) {
+    scrub.disabled = follow.checked;
+    scrub.max = maxCol - minCol;
+    if (follow.checked) scrub.value = scrub.max;
+  }
+}
+
+function updateText() {
+  // 語間は本体が W レコードで出すので、そのまま連結するだけ
+  let out = '';
+  for (const c of chars.slice(-300)) out += c.ch;
+  if (textEl.textContent !== out) {
+    const atEnd = textEl.scrollTop + textEl.clientHeight >= textEl.scrollHeight - 4;
+    textEl.textContent = out;
+    if (atEnd) textEl.scrollTop = textEl.scrollHeight;
+  }
+}
+
+//====================================================================
+//  シリアル / ファイル
+//====================================================================
+const connBtn = document.getElementById('connect');
+const discBtn = document.getElementById('disconnect');
+const saveBtn = document.getElementById('saveFile');
+const scrub   = document.getElementById('scrub');
+const follow  = document.getElementById('follow');
+const colsSel = document.getElementById('cols');
+const zoomSel = document.getElementById('zoom');
+const textEl  = document.getElementById('text');
+const connEl  = document.getElementById('conn');
+
+let port = null, reader = null, keepReading = false;
+
+async function connect() {
+  if (!('serial' in navigator)) {
+    connEl.innerHTML = '<span class="err">この環境では Web Serial が使えません (Chrome / Edge を使うか、ログを開いてください)</span>';
+    return;
+  }
+  try {
+    port = await navigator.serial.requestPort();
+    await port.open({ baudRate: 115200, bufferSize: 16384 });
+  } catch (e) {
+    connEl.innerHTML = `<span class="err">接続できません: ${e.message}</span>`;
+    return;
+  }
+  connEl.textContent = '接続中';
+  connBtn.disabled = true; discBtn.disabled = false;
+  keepReading = true;
+  readLoop();
+}
+
+async function readLoop() {
+  const dec = new TextDecoder();
+  let buf = '';
+  reader = port.readable.getReader();
+  try {
+    while (keepReading) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      const idx = buf.lastIndexOf('\n');
+      if (idx >= 0) {
+        feedChunk(buf.slice(0, idx));
+        buf = buf.slice(idx + 1);
+      }
+    }
+  } catch (e) {
+    connEl.innerHTML = `<span class="err">受信が止まりました: ${e.message}</span>`;
+  } finally {
+    try { reader.releaseLock(); } catch (_) {}
+  }
+}
+
+async function disconnect() {
+  keepReading = false;
+  try { if (reader) await reader.cancel(); } catch (_) {}
+  try { if (port) await port.close(); } catch (_) {}
+  port = null; reader = null;
+  connEl.textContent = '切断';
+  connBtn.disabled = false; discBtn.disabled = true;
+}
+
+connBtn.onclick = connect;
+discBtn.onclick = disconnect;
+document.getElementById('clear').onclick = resetData;
+document.getElementById('loadFile').onclick = () => document.getElementById('file').click();
+document.getElementById('file').onchange = async ev => {
+  const f = ev.target.files[0];
+  if (!f) return;
+  resetData();
+  feedChunk(await f.text());
+  follow.checked = false;
+  connEl.textContent = `ファイル: ${f.name}`;
+  ev.target.value = '';
+};
+saveBtn.onclick = () => {
+  const blob = new Blob([rawLog.join('\n') + '\n'], { type: 'text/plain' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `cwdec_scope_${new Date().toISOString().replace(/[:.]/g, '-')}.log`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+};
+follow.onchange = () => { scrub.disabled = follow.checked; };
+scrub.oninput = () => { follow.checked = false; scrub.disabled = false; };
+
+//====================================================================
+//  描画ループ (実機と同じ ~30fps)
+//====================================================================
+let lastStat = 0;
+function frame(now) {
+  draw();
+  if (now - lastStat > 200) { lastStat = now; updateStat(); updateText(); }
+  requestAnimationFrame(frame);
+}
+resetData();
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

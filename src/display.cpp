@@ -845,6 +845,9 @@ void display_enqueue(uint8_t ch)
 		ticker[h].col = (st + en) / 2;              // 符号区間の中央
 		ticker_head = (uint8_t)((h + 1) % TICKER_N);
 		scopelog_char(ch, ticker[h].col);
+	} else {
+		// 語間はスコープには描かないが、ログには残す (文字列の復元用)
+		scopelog_char(' ', dsp_scope_col_index());
 	}
 }
 
