@@ -157,6 +157,67 @@ static uint32_t snap_candidate(uint32_t a, uint32_t b)
 	return 0;
 }
 
+// 直近のマーク長を覚えておき、推定が実際から大きく外れたら引き戻す。
+//
+// 推定が高すぎると、本物の短点は 0.6 単位未満で「短すぎ」として捨てられ、
+// 本物の長点は 0.6〜2 単位に入って「短点」と扱われ unit をさらに押し上げる
+// (正帰還)。しかも短点が捨てられるので 1:3 のスナップに使うペアも作れず、
+// いったん遅い方へ振れると速い CW に戻れなくなる。
+// そこで現在の推定に依存しない再同期を用意する: 直近 8 個のマーク長に
+// 1:3 の構造 (最短群と最長群の比が 3 前後) があれば、そこから unit を直接
+// 求め、現在値と 35% 以上ずれていたら引き戻す。外れ値 1 個に強くするため
+// 最小/最大ではなく 2 番目の値を使う。
+static uint32_t pending_snap;       // 下で定義 (大きなスナップの保留値)
+#define MARK_HIST_N 8
+#define REANCHOR_PCT 35
+static uint16_t mark_hist[MARK_HIST_N];
+static uint8_t mark_hist_pos = 0;
+static uint8_t mark_hist_cnt = 0;
+
+static void mark_hist_push(uint32_t ms)
+{
+	mark_hist[mark_hist_pos] = (uint16_t)((ms > 65535) ? 65535 : ms);
+	mark_hist_pos = (uint8_t)((mark_hist_pos + 1) % MARK_HIST_N);
+	if (mark_hist_cnt < MARK_HIST_N) mark_hist_cnt++;
+}
+
+static void unit_clamp(void);
+
+static void unit_reanchor(void)
+{
+	if (mark_hist_cnt < MARK_HIST_N) {
+		return;
+	}
+	uint16_t min1 = 65535, min2 = 65535, max1 = 0, max2 = 0;
+	for (uint8_t i = 0; i < MARK_HIST_N; i++) {
+		uint16_t v = mark_hist[i];
+		if (v < min1) { min2 = min1; min1 = v; } else if (v < min2) { min2 = v; }
+		if (v > max1) { max2 = max1; max1 = v; } else if (v > max2) { max2 = v; }
+	}
+	if (min2 == 0) {
+		return;
+	}
+	// 最短群と最長群が 1:3 になっているときだけ信用する
+	if ((uint32_t)max2 * 10 < (uint32_t)min2 * 24 ||
+	    (uint32_t)max2 * 10 > (uint32_t)min2 * 36) {
+		return;
+	}
+	uint32_t cu = ((uint32_t)min2 + (uint32_t)max2 / 3) / 2;
+	if (cu < 18 || cu > 400) {
+		return;                     // 明らかに符号ではない
+	}
+	uint32_t diff = (cu > hightimesavg) ? (cu - hightimesavg) : (hightimesavg - cu);
+	if (diff * 100 <= (uint32_t)hightimesavg * REANCHOR_PCT) {
+		return;
+	}
+	hightimesavg = cu;
+	unit_clamp();                   // 上限50WPM/下限4WPM に収める
+	wpm = (uint16_t)((1200 + hightimesavg / 2) / hightimesavg);
+	if (wpm > 50) wpm = 50;
+	mark_hist_cnt = 0;              // 引き戻したら通常の追従に任せる
+	pending_snap = 0;
+}
+
 static void unit_clamp(void)
 {
 	if (hightimesavg < 24) {
@@ -171,7 +232,6 @@ static void unit_clamp(void)
 // 適用する。本物の速度変化なら整合ペアが続けて出るが、ノイズで分断された
 // マーク/ギャップの断片が偶然 1:3 に見えるのは単発 (実機ログ: ギャップ30 +
 // マーク96 で unit 61→31 に飛んだ)
-static uint32_t pending_snap = 0;
 #define SNAP_BIG_PCT 35
 
 static void unit_apply_snap(uint32_t snap)
@@ -292,6 +352,8 @@ void decoder_init(void)
 	prev_short_mark_ms = 0;
 	short_mark_run = 0;
 	pending_snap = 0;
+	mark_hist_pos = 0;
+	mark_hist_cnt = 0;
 	wpm = 20;                       // 起動時の表示/窓選択の既定 (hightimesavg=60ms と一致)
 	code[0] = '\0';
 	lastChar = 0;
@@ -532,6 +594,11 @@ void decoder_process_block(int32_t magnitude, int32_t side_mag, int32_t side_mag
 			} else {
 				prev_short_mark_ms = 0;
 				short_mark_run = 0;
+			}
+			// 推定に依存しない再同期のため、判定フィルタを通す前に記録する
+			if (highduration >= 20 && !mark_isolated) {
+				mark_hist_push(highduration);
+				unit_reanchor();
 			}
 			if (highduration >= 20 && !mark_isolated && (!mark_short || short_consistent)) {
 				uint32_t snap = 0;
