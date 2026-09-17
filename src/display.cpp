@@ -1,6 +1,6 @@
 //
 //	画面構成 (320x240 横):
-//	  y   0..26  ステータス行 (US/JPボタン / TONEボタン / SPEED:xxWPM / 時計 HH:MM:SS)
+//	  y   0..26  ステータス行 (US/JP / TONE / SETUP ボタン / xxWPM / 時計 HH:MM:SS)
 //	  y  28..171 デコード文字エリア 16列 x 6行 (24x24 全角フォント、ピッチ20px)
 //	  y 173..239 左: FFTスペクトラム(PK表示) / 右: オシロスコープ(波形ON/OFFボタン)
 //	オシロは生波形(min/maxバンド)・トーンエンベロープ・キー判定を
@@ -90,6 +90,7 @@ static volatile uint8_t ticker_head = 0;
 static uint8_t visible = 1;             // 0=他画面表示中 (描画抑止)
 static uint8_t status_dirty = 1;        // 1=ステータス行を強制描画
 static void (*center_tap_fn)(void) = NULL;
+static void (*setup_tap_fn)(void) = NULL;
 
 static uint16_t grid[TEXT_ROWS][TEXT_COLS];
 static uint8_t cur_row = 0;
@@ -321,12 +322,13 @@ static void draw_panel_button(LGFX_Sprite *spr, int x, int y, int w, int h,
 	                on ? C_BTN_TX : C_BTN_OFF_TX);
 }
 
-// ステータス行のレイアウト: [US/JP] [TONE] SPEED:xxWPM ...... HH:MM:SS
+// ステータス行のレイアウト: [US/JP] [TONE] [SETUP] xxWPM ... HH:MM:SS
 #define ST_BTN_W 64
 #define ST_BTN_H 23
 #define ST_MODE_X 2
 #define ST_TONE_X 68
-#define ST_WPM_X 138
+#define ST_SETUP_X 134
+#define ST_WPM_X 204
 #define ST_CLOCK_RIGHT 318        // 時計の右端
 
 static void draw_status(void)
@@ -371,11 +373,14 @@ static void draw_status(void)
 		draw_panel_button(&status_spr, ST_TONE_X, 2, ST_BTN_W, ST_BTN_H, buf, 1);
 	}
 
+	// SETUP ボタン (時刻合わせ / OTA / WiFi設定 / スコープログ)
+	draw_panel_button(&status_spr, ST_SETUP_X, 2, ST_BTN_W, ST_BTN_H, "SETUP", 1);
+
 	// 速度表示
 	status_spr.setFont(&fonts::AsciiFont8x16);
 	status_spr.setTextColor(C_WPM);
 	status_spr.setCursor(ST_WPM_X, 6);
-	snprintf(buf, sizeof(buf), "SPEED:%2dWPM", wpm);
+	snprintf(buf, sizeof(buf), "%2dWPM", wpm);
 	status_spr.print(buf);
 
 	// 時計 HH:MM:SS (右端、SPEED と同じ AsciiFont8x16)
@@ -801,6 +806,11 @@ void display_set_center_tap(void (*fn)(void))
 	center_tap_fn = fn;
 }
 
+void display_set_setup_tap(void (*fn)(void))
+{
+	setup_tap_fn = fn;
+}
+
 //	共有バッファは起動時に一度だけ DMA 対応メモリから確保し、以後解放しない。
 //	LovyanGFX のスプライトは DMA 対応内部メモリから取るため、WiFi を使った
 //	あとは断片化で 21KB の連続領域が取れず作り直しに失敗する (実機で発生)。
@@ -900,6 +910,11 @@ static void poll_touch(void)
 					// TONE ボタン: AUTO → 600 → ... → 1000 → AUTO
 					dsp_set_tone((uint8_t)((dsp_tone_index() + 1) % (DSP_TONE_COUNT + 1)));
 					last_act_ms = t;
+				} else if (x >= ST_SETUP_X - 2 && x < ST_SETUP_X + ST_BTN_W + 4) {
+					if (setup_tap_fn) {
+						setup_tap_fn();
+						last_act_ms = t;
+					}
 				}
 			} else if (y >= CENTER_Y0 && y < CENTER_Y1 &&
 			           x >= CENTER_X0 && x < CENTER_X1) {

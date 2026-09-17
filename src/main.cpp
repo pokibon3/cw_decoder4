@@ -15,17 +15,19 @@
 //	    ステータス行の TONE ボタン     = AUTO→600→700→800→900→1000 の順送り
 //	      (AUTO = 550〜1000Hz の最強信号へ自動同調。デフォルト)
 //	    FFT パネル内タップ             = タップ位置に最も近いトーンを手動選択
+//	    ステータス行の SETUP ボタン    = SETUP 画面へ
 //	    文字エリア中央付近タップ       = 時計画面へ (時計中央タップで戻る)
 //	  BOOTボタン(GPIO0) でも操作可: 短押し=トーン切替 / 長押し=モード切替
 //
 //	画面遷移 (デコーダの動作に影響を与えないことを最優先):
 //	  デコーダ画面 (既定)
-//	    └ 時計画面 ...... DSP/デコーダは裏で動き続け、受信文字は溜まる。
-//	       │            WiFi による NTP 同期はこの画面でしか行わず、
-//	       │            同期中は DSP を一時停止して無線ノイズを遮断する
-//	       └ SETUP .... 時刻合わせ / ファームウェアアップデート (OTA) /
-//	                    WiFi設定 / WiFi初期化。OTA・WiFi設定は受信を止めて
-//	                    AP を立て、[キャンセル] または保存/更新完了で戻る
+//	    ├ SETUP ...... 時刻合わせ / ファームウェアアップデート (OTA) /
+//	    │              WiFi設定 / WiFi初期化 / スコープログ。OTA・WiFi設定は
+//	    │              受信を止めて AP を立て、[キャンセル] または
+//	    │              保存/更新完了で戻る
+//	    └ 時計画面 ... DSP/デコーダは裏で動き続け、受信文字は溜まる。
+//	                   WiFi による NTP 同期はこの画面でしか行わず、
+//	                   同期中は DSP を一時停止して無線ノイズを遮断する
 //	  デコーダ画面では WiFi を一切起動しない。
 //
 //	原作: Hjalmar Skovholm Hansen OZ1JHM (GPL)
@@ -83,17 +85,11 @@ static void probe_i2c_touch(void)
 enum { SCR_DECODER = 0, SCR_CLOCK };
 static uint8_t screen = SCR_DECODER;
 static uint8_t clock_requested = 0;     // デコーダ画面の中央タップで立つ
+static uint8_t setup_requested = 0;     // ステータス行の SETUP ボタンで立つ
 
-// 時計画面: 右下 [SETUP] ボタンと左下のバージョン表示
+// 時計画面: 左下のバージョン表示のみ
 #define C_CLK_BG      lgfx::color565(10, 11, 13)      // clock.cpp の C_BG と同色
-#define C_CLK_BTN_BG  lgfx::color565(26, 34, 46)
-#define C_CLK_BTN_BD  lgfx::color565(70, 92, 120)
-#define C_CLK_BTN_TX  lgfx::color565(190, 206, 226)
 #define C_CLK_FOOT    lgfx::color565(110, 114, 122)
-#define SET_BTN_Y 198
-#define SET_BTN_H 34
-static int set_btn_x = 222;
-static int set_btn_w = 92;
 
 // 時計中央のタップでデコーダ画面へ戻る判定矩形 (カード列の中ほど)
 #define CLK_CENTER_X0 80
@@ -114,22 +110,12 @@ static void wait_release(void)
 	}
 }
 
-//	clock_redraw() から呼ばれる (時計側が画面を消したあとにボタンを描き直す)
+//	clock_redraw() から呼ばれる (時計側が画面を消したあとに描き直す)。
+//	SETUP はデコーダ画面のステータス行へ移したので、ここには置かない
 static void draw_clock_ui(void)
 {
 	LGFX *lcd = display_lcd();
 	lcd->setFont(&fonts::FreeSans9pt7b);
-	set_btn_w = lcd->textWidth("SETUP") + 22;
-	set_btn_x = 320 - set_btn_w - 6;
-
-	const int x = set_btn_x, y = SET_BTN_Y, w = set_btn_w, h = SET_BTN_H;
-	lcd->fillRoundRect(x, y, w, h, 5, C_CLK_BTN_BG);
-	lcd->drawRoundRect(x, y, w, h, 5, C_CLK_BTN_BD);
-	lcd->setTextColor(C_CLK_BTN_TX, C_CLK_BTN_BG);
-	lcd->setTextDatum(lgfx::textdatum_t::middle_center);
-	lcd->drawString("SETUP", x + w / 2, y + h / 2);
-	lcd->setTextDatum(lgfx::textdatum_t::top_left);
-
 	lcd->setTextColor(C_CLK_FOOT, C_CLK_BG);
 	lcd->drawString("CW Decoder 4  v" FW_VERSION, 8, 196);
 	lcd->drawString(FW_BUILD, 8, 216);
@@ -138,6 +124,20 @@ static void draw_clock_ui(void)
 static void on_center_tap(void)
 {
 	clock_requested = 1;
+}
+
+static void on_setup_tap(void)
+{
+	setup_requested = 1;
+}
+
+//	SETUP 画面 (デコーダ画面から開く)。DSP は動いたままで、受信文字は溜まる
+static void enter_setup(void)
+{
+	display_set_visible(0);
+	setup_run(display_lcd());
+	display_redraw();
+	wait_release();
 }
 
 static void enter_clock(void)
@@ -166,17 +166,12 @@ static void clock_screen_loop(void)
 	display_update();               // 非表示中は文字の取り込みのみ
 
 	if (display_lcd()->getTouch(&tx, &ty)) {
-		if (hit(tx, ty, set_btn_x, SET_BTN_Y, set_btn_w, SET_BTN_H)) {
-			setup_run(display_lcd());
-			clock_alloc();
-			clock_redraw();
-		} else if (hit(tx, ty, CLK_CENTER_X0, CLK_CENTER_Y0,
-		               CLK_CENTER_X1 - CLK_CENTER_X0, CLK_CENTER_Y1 - CLK_CENTER_Y0)) {
+		if (hit(tx, ty, CLK_CENTER_X0, CLK_CENTER_Y0,
+		        CLK_CENTER_X1 - CLK_CENTER_X0, CLK_CENTER_Y1 - CLK_CENTER_Y0)) {
 			leave_clock();
 			return;
-		} else {
-			wait_release();
 		}
+		wait_release();
 	}
 	delay(20);
 }
@@ -228,6 +223,7 @@ void setup()
 	}
 	display_splash();
 	display_set_center_tap(on_center_tap);
+	display_set_setup_tap(on_setup_tap);
 
 	// 時計 / NTP 設定の読み込み (WiFi はここでは起動しない)
 	netsync_init();
@@ -256,6 +252,11 @@ void loop()
 	uint32_t t0 = millis();
 	poll_button();
 	display_update();
+	if (setup_requested) {
+		setup_requested = 0;
+		enter_setup();
+		return;
+	}
 	if (clock_requested) {
 		clock_requested = 0;
 		enter_clock();
