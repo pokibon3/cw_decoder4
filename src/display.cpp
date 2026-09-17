@@ -729,6 +729,9 @@ void display_set_center_tap(void (*fn)(void))
 	center_tap_fn = fn;
 }
 
+//	スプライトは起動時に一度だけ確保し、以後は解放しない。
+//	LovyanGFX のスプライトは DMA 対応内部メモリから取るため、WiFi を使った
+//	あとは断片化で 21KB の連続領域が取れず作り直しに失敗する (実機で発生)
 static void alloc_sprites(void)
 {
 	status_spr.setColorDepth(16);
@@ -739,18 +742,6 @@ static void alloc_sprites(void)
 	scope_spr.createSprite(PANEL_W, PANEL_H);
 }
 
-void display_release(void)
-{
-	status_spr.deleteSprite();
-	fft_spr.deleteSprite();
-	scope_spr.deleteSprite();
-}
-
-void display_restore(void)
-{
-	alloc_sprites();
-	status_dirty = 1;
-}
 
 void display_enqueue(uint8_t ch)
 {

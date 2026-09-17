@@ -624,10 +624,13 @@ void dsp_set_paused(uint8_t paused)
 			delay(10);                  // 進行中の audio_read (最大6ms) を待つ
 		}
 		audio_stop();
+		Serial.printf("[dsp] paused (idle=%d) heap=%u\n", (int)dsp_idle,
+		              (unsigned)ESP.getFreeHeap());
 	} else {
 		if (!dsp_paused) return;
 		audio_init();
 		dsp_paused = 0;
+		Serial.printf("[dsp] resumed heap=%u\n", (unsigned)ESP.getFreeHeap());
 	}
 }
 

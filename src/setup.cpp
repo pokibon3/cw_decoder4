@@ -17,7 +17,6 @@
 #include "netsync.h"
 #include "ota.h"
 #include "dsp.h"
-#include "display.h"
 #include "version.h"
 
 #define C_BG      lgfx::color565(14, 17, 22)
@@ -199,20 +198,16 @@ static bool confirm(const char *title, const char *line1, const char *line2,
 	}
 }
 
-//	AP (WiFi) を使うモードの前後処理。
-//	  - ADC DMA を止めて DSP を待機させる (WiFi と同時に動かすと WDT リセット)
-//	  - デコーダ画面のスプライト (約60KB) を返してヒープを空ける。
-//	    時計スプライトは起動時に確保したまま触らない (WiFi 後のヒープ断片化で
-//	    大きなスプライトを作り直せなくなるのを避ける)
+//	AP (WiFi) を使うモードの前後処理: ADC DMA を止めて DSP を待機させる
+//	(WiFi と同時に動かすと WDT リセット)。スプライト類は解放しない —
+//	DMA 対応メモリが WiFi 使用後に断片化し、作り直しに失敗するため
 static void ap_mode_enter(void)
 {
 	dsp_set_paused(1);
-	display_release();
 }
 
 static void ap_mode_leave(void)
 {
-	display_restore();
 	dsp_set_paused(0);
 }
 
