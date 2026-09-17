@@ -90,9 +90,11 @@
   <label>縦
     <select id="zoomY">
       <option value="1">1x</option>
-      <option value="2" selected>2x</option>
+      <option value="2">2x</option>
       <option value="3">3x</option>
-      <option value="4">4x</option>
+      <option value="4" selected>4x</option>
+      <option value="6">6x</option>
+      <option value="8">8x</option>
     </select>
   </label>
 </div>
@@ -145,7 +147,8 @@ const C = {
   text:  '#adff2f',   // C_TEXT_NEW
   mid:   '#142837',   // 中心線
 };
-// 実機の縦方向の内訳 (縦 1x のとき): 文字 16 / KEYバー 3 / 隙間 5 / 波形 21
+// 実機の縦方向の内訳 (縦 1x のとき): 文字 16 / KEYバー 3 / 隙間 5 / 波形 21。
+// 既定は 4x (波形 84px) — 実機そのままでは画面上で小さすぎて読めないため
 const DEV = { textH: 16, keyH: 3, gapH: 5, waveH: 21 };
 
 //====================================================================
