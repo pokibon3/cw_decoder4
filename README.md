@@ -14,6 +14,7 @@ CH32V003 / CH32V006 (UIAPduino) 版は
 - LCD: 2.8inch 240x320 (SPI 40MHz)。コントローラは **ST7789 / ILI9341** の両対応
 - タッチ: XPT2046 (抵抗膜、ソフトSPI)
 - オーディオ入力: GPIO35 (ADC1_CH7) をADC continuous DMAで32kHz取得し、4点平均で8kHz化
+  (ESP32 の ADC continuous は `sample_freq_hz` の 9/11 倍でしか変換しないため、要求値は 11/9 倍の 39111Hz にしています)
 
 ### LCD コントローラの選択
 
@@ -156,6 +157,8 @@ environment は `esp32dev` のみです。
   - NTP 時刻同期（時計画面表示中のみ、同期中は DSP 一時停止。デコーダ画面では WiFi を起動しない）
   - スプラッシュにバージョンとビルド日時を表示
   - パーティションを `min_spiffs.csv` に変更（初回のみ USB 書き込みが必要）
+  - ADC 実効サンプルレートの修正: v2.0 の ADC DMA 化以降、実効 26.2kHz (→8kHz 換算 6.5kHz) で動いていたため
+    表示周波数と WPM が約 22% 高く出ていた。要求値を 11/9 倍して実効 32kHz に補正
 
 ## 参考
 

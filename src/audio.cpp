@@ -11,11 +11,16 @@
 
 #define AUDIO_OVERSAMPLE 4
 #define AUDIO_ADC_SAMPLE_RATE (DSP_SAMPLE_RATE * AUDIO_OVERSAMPLE)
+// ESP32 の ADC continuous (I2S 経由) は sample_freq_hz に対して実効レートが
+// 9/11 倍になる (実測: 要求 20k/32k/40k/64k → 16.36k/26.18k/32.72k/52.36k、
+// audio_rate_sweep() で再測定可)。要求値を 11/9 倍して実効 32kHz に合わせる。
+#define AUDIO_ADC_RATE_REQ ((uint32_t)AUDIO_ADC_SAMPLE_RATE * 11 / 9)
 #define AUDIO_FRAME_SAMPLES (DSP_HOP * AUDIO_OVERSAMPLE)
 #define AUDIO_FRAME_BYTES (AUDIO_FRAME_SAMPLES * SOC_ADC_DIGI_RESULT_BYTES)
 #define AUDIO_POOL_BYTES (AUDIO_FRAME_BYTES * 8)
 
 static adc_continuous_handle_t adc_handle = nullptr;
+static uint32_t audio_req_rate = AUDIO_ADC_RATE_REQ;      // 診断掃引で差し替える
 
 void audio_init(void)
 {
@@ -34,7 +39,7 @@ void audio_init(void)
 	adc_continuous_config_t cfg = {};
 	cfg.pattern_num = 1;
 	cfg.adc_pattern = &pattern;
-	cfg.sample_freq_hz = AUDIO_ADC_SAMPLE_RATE;
+	cfg.sample_freq_hz = audio_req_rate;
 	cfg.conv_mode = ADC_CONV_SINGLE_UNIT_1;
 	cfg.format = ADC_DIGI_OUTPUT_FORMAT_TYPE1;
 	ESP_ERROR_CHECK(adc_continuous_config(adc_handle, &cfg));
@@ -81,3 +86,36 @@ size_t audio_read(uint16_t *dst, size_t n)
 	}
 	return produced;
 }
+
+#if AUDIO_RATE_DIAG
+//	診断: 要求レートを変えながら実効変換レートを測る。
+//	main の setup() で audio_init() の前に呼ぶ (3秒 x 9レート)。
+//	結果は要求 x 9/11 が実効レート (AUDIO_ADC_RATE_REQ の根拠)
+void audio_rate_sweep(void)
+{
+	static const uint32_t rates[] = { 20000, 24000, 32000, 36000, 38930, 40000, 44100, 48000, 64000 };
+	static uint8_t frame[AUDIO_FRAME_BYTES];
+	for (unsigned i = 0; i < sizeof(rates) / sizeof(rates[0]); i++) {
+		audio_req_rate = rates[i];
+		audio_init();
+		uint32_t conv = 0;
+		uint32_t t0 = millis();
+		// 最初の1フレームは捨てて起動遅れを除く
+		uint32_t br = 0;
+		adc_continuous_read(adc_handle, frame, sizeof(frame), &br, 1000);
+		t0 = millis();
+		while (millis() - t0 < 3000) {
+			br = 0;
+			if (adc_continuous_read(adc_handle, frame, sizeof(frame), &br, 1000) == ESP_OK) {
+				conv += br / SOC_ADC_DIGI_RESULT_BYTES;
+			}
+		}
+		uint32_t dt = millis() - t0;
+		Serial.printf("[adc] req=%u -> actual=%u Hz (conv=%u in %u ms)\n",
+		              (unsigned)rates[i], (unsigned)(conv * 1000ULL / dt),
+		              (unsigned)conv, (unsigned)dt);
+		audio_stop();
+	}
+	audio_req_rate = AUDIO_ADC_RATE_REQ;
+}
+#endif
