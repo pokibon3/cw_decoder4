@@ -2,7 +2,7 @@
 
 ESP32 ボード (2.8inch CYD 系: ST7789 / ILI9341 240x320 + XPT2046 タッチ) で動作する CW Decoder です。  
 VS Code + PlatformIO + Arduino + LovyanGFX でビルドできます。  
-現在のバージョンは `v2.3` です (`src/version.h` の `FW_VERSION`)。
+現在のバージョンは `v2.4` です (`src/version.h` の `FW_VERSION`)。
 
 CH32V003 / CH32V006 (UIAPduino) 版は
 [UIAP_CWDecoder2](https://github.com/pokibon3/UIAP_CWDecoder2) を参照してください
@@ -270,7 +270,7 @@ environment は `esp32dev` のみです。
   - LCD コントローラ ST7789 / ILI9341 両対応（自動判定 + ビルドフラグ）
   - 音声入力を I2S ADC から ADC continuous DMA (32kHz 取得 → 4 点平均で 8kHz) に変更
   - ±167Hz 近サイドビンによる広帯域ノイズ棄却、入力レベルメータ、Peak 表示の安定化
-- V2.3 以降 (未リリース)
+- V2.4
   - AUTO 同調の無条件追従範囲 `DSP_AUTO_NEAR_HZ` を 70 → 35Hz (ゲートの半値幅)
     に修正。70Hz は検出帯域の半値幅 (±33Hz) の 2 倍以上あり、符号の隙間に
     立ったノイズのピークへ乗り換えてゲートが信号から外れることがあった
