@@ -598,7 +598,7 @@ function onWorkletMessage(e) {
 	const first = m.colFirst;
 	const dv = new DataView(m.cols.buffer);
 	for (let i = 0; i < n; i++) {
-		const o = i * 8, k = (first + i) % SR;
+		const o = i * m.stride, k = (first + i) % SR;
 		sMn[k] = dv.getInt16(o, true);
 		sMx[k] = dv.getInt16(o + 2, true);
 		sMag[k] = dv.getUint16(o + 4, true);

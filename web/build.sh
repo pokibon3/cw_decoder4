@@ -49,6 +49,7 @@ done
 EXPORTS="cw_init cw_push cw_run cw_poll cw_reset \
 	cw_in_ptr cw_in_cap cw_status_ptr cw_spec_ptr cw_scope_ptr cw_chars_ptr \
 	cw_scope_stride cw_spec_bins cw_sample_rate \
+	cw_elem_ptr cw_elem_stride cw_elem_count cw_elem_lost cw_elem_clear \
 	cw_set_tone cw_set_tone_hz cw_cycle_tone cw_toggle_mode"
 
 EXPORT_FLAGS=""

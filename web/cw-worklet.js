@@ -144,6 +144,7 @@ class CWProcessor extends AudioWorkletProcessor {
 			status: new Uint32Array(st),      // WASM メモリからのコピー
 			spec, cols, chars,
 			colFirst: st[1],
+			stride: this.stride,
 			pushed: this.pushed,      // 累積サンプル数 (メイン側で区間レートにする)
 			t: currentTime,
 		}, [cols.buffer, chars.buffer, spec.buffer]);

@@ -40,11 +40,31 @@ extern "C" void delay(unsigned long ms)
 	(void)ms;                           // ブロックできないので何もしない
 }
 
-//	decoder.cpp が呼ぶスコープログ。Web 版ではログ機能を持たないので捨てる
-//	(scopelog.h の宣言と同じ C++ リンケージで定義すること)
+//	要素ログ: decoder.cpp が要素 (マーク/スペース) を確定するたびに呼ぶ。
+//	実測長と、そのときの短点長推定を記録する。スコープ列は数 hop の多数決で
+//	量子化されるので、タイミングの検証にはこちらを使う (scopelog.h 参照)。
+//	誤認識が「長さの測り違い」なのか「そもそも検出できていない」のかは
+//	これを見ないと分からない
+#define ELEM_MAX 512
+typedef struct {
+	uint32_t ms;                        // 実測長
+	uint32_t unit;                      // そのときの短点長推定
+	uint32_t t_ms;                      // 記録時刻 (サンプル数由来)
+	uint8_t mark;                       // 1=マーク 0=スペース
+	uint8_t pad[3];
+} elem_t;
+static elem_t elems[ELEM_MAX];
+static uint32_t elem_n = 0;
+static uint32_t elem_lost = 0;
+
 void scopelog_element(uint8_t mark, uint32_t ms, uint32_t unit)
 {
-	(void)mark; (void)ms; (void)unit;
+	if (elem_n >= ELEM_MAX) { elem_lost++; return; }
+	elems[elem_n].mark = mark;
+	elems[elem_n].ms = ms;
+	elems[elem_n].unit = unit;
+	elems[elem_n].t_ms = (uint32_t)(g_samples * 1000ULL / DSP_SAMPLE_RATE);
+	elem_n++;
 }
 
 //==================================================================
@@ -144,10 +164,13 @@ static cw_status_t status;
 //	スペクトラム (bin 0..64、31.25Hz/bin)
 static uint16_t spec_out[DSP_SPEC_BINS + 1];
 
-//	スコープ列。JS が読みやすいよう 1 列 8 バイトの平坦な形に詰め直す:
+//	スコープ列。JS が読みやすいよう 1 列 16 バイトの平坦な形に詰め直す:
 //	  +0 i16 mn / +2 i16 mx / +4 u16 mag / +6 u8 gate / +7 u8 hops
+//	  +8 u16 limit / +10 u16 nf / +12 u16 side / +14 u16 near
+//	後半 8 バイトはトーン判定に実際に使われた値。描画には要らないが、
+//	誤認識の原因を追うとき (しきい値割れか、サイドビンの持ち上がりか) に要る
 #define SCOPE_STAGE_MAX 512
-#define SCOPE_STAGE_STRIDE 8
+#define SCOPE_STAGE_STRIDE 16
 static uint8_t scope_out[SCOPE_STAGE_MAX * SCOPE_STAGE_STRIDE];
 static scope_col_t scope_tmp[SCOPE_STAGE_MAX];
 
@@ -222,6 +245,10 @@ WASM_EXPORT void cw_poll(uint32_t from_idx, int max_cols)
 		memcpy(p + 4, &mg, 2);
 		p[6] = scope_tmp[i].gate;
 		p[7] = scope_tmp[i].hops;
+		memcpy(p + 8, &scope_tmp[i].limit, 2);
+		memcpy(p + 10, &scope_tmp[i].nf, 2);
+		memcpy(p + 12, &scope_tmp[i].side, 2);
+		memcpy(p + 14, &scope_tmp[i].near, 2);
 	}
 
 	dsp_get_spectrum(spec_out);
@@ -247,6 +274,13 @@ WASM_EXPORT void cw_poll(uint32_t from_idx, int max_cols)
 
 	chev_n = 0;                         // 読み出したので次のフレームへ
 }
+
+//	要素ログの取り出し (診断用)。読んだら消す
+WASM_EXPORT void *cw_elem_ptr(void)     { return elems; }
+WASM_EXPORT int cw_elem_stride(void)    { return (int)sizeof(elem_t); }
+WASM_EXPORT int cw_elem_count(void)     { return (int)elem_n; }
+WASM_EXPORT int cw_elem_lost(void)      { return (int)elem_lost; }
+WASM_EXPORT void cw_elem_clear(void)    { elem_n = 0; elem_lost = 0; }
 
 WASM_EXPORT void cw_set_tone(int idx)
 {
@@ -284,6 +318,8 @@ WASM_EXPORT void cw_reset(void)
 	in_r = in_w;
 	chev_n = 0;
 	clip_count = 0;
+	elem_n = 0;
+	elem_lost = 0;
 	decoder_init();
 	decoder_set_emit(on_emit);
 }
