@@ -537,24 +537,29 @@ static void process_spectrum(void)
 //==================================================================
 //	DSPタスク本体
 //==================================================================
-static void dsp_task(void *arg)
+//	ブロック 1 回ぶん (DSP_HOP サンプル) の処理。
+//	ESP32 では dsp_task() が無限ループで回し、Web (WASM) ビルドでは
+//	AudioWorklet が供給できたぶんだけ外から dsp_step() を呼ぶ。
+//	状態はステップ間で持ち越すので、元は dsp_task のローカルだったものを
+//	すべて static にしてある。本体を do { ... } while (0) で囲ってあるので、
+//	中の continue は「このステップを打ち切る」の意味のまま変わらない。
+void dsp_step(void)
 {
 	static uint16_t raw[DSP_HOP];
-	uint8_t spec_div = 0;
-	uint16_t col_acc_q8 = 0;
-	int16_t col_mn = 32767, col_mx = -32768;
-	uint16_t col_m1 = 0, col_m2 = 0;
-	uint16_t col_mmin = 65535;
-	uint8_t col_gate_cnt = 0;
-	uint8_t col_on = 0, col_off = 0, col_real = 0;
-	uint8_t col_hops = 0;
+	static uint8_t spec_div = 0;
+	static uint16_t col_acc_q8 = 0;
+	static int16_t col_mn = 32767, col_mx = -32768;
+	static uint16_t col_m1 = 0, col_m2 = 0;
+	static uint16_t col_mmin = 65535;
+	static uint8_t col_gate_cnt = 0;
+	static uint8_t col_on = 0, col_off = 0, col_real = 0;
+	static uint8_t col_hops = 0;
 #if DSP_DIAG
-	uint32_t diag_last_ms = millis();
+	static uint32_t diag_last_ms = 0;
 #endif
-
 	static uint64_t samples_total = 0;      // 取り込んだサンプル数 (ログの時間軸)
-	dsp_alive = 1;
-	for (;;) {
+
+	do {
 		if (dsp_paused) {
 			// 一時停止中は ADC に触らない (呼び出し側が DMA を止めている)
 			dsp_idle = 1;
@@ -746,6 +751,14 @@ static void dsp_task(void *arg)
 			}
 		}
 #endif
+	} while (0);
+}
+
+static void dsp_task(void *arg)
+{
+	dsp_alive = 1;
+	for (;;) {
+		dsp_step();
 	}
 }
 

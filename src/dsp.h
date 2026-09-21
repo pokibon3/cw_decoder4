@@ -44,6 +44,9 @@ typedef struct {
 #define DSP_GATE_WIN DSP_GATE_WIN_LONG      // バッファ確保用 (最大値)
 
 void dsp_start(void);
+// ブロック 1 回ぶん (DSP_HOP サンプル) を処理する。ESP32 では内部の DSP
+// タスクが回すので呼ぶ必要はない。Web (WASM) ビルドが外から駆動するために公開。
+void dsp_step(void);
 // 一時停止: DSPタスクを待機させ ADC DMA を止める (再開時に初期化し直す)。
 // WiFi を使う間 (NTP同期 / WiFi設定) は必ず止めること: DMA を動かしたまま
 // WiFi を起動すると割り込みウォッチドッグでリセットされる。
