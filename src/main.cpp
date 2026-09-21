@@ -18,13 +18,15 @@
 //	    ステータス行の SETUP ボタン    = SETUP 画面へ
 //	    文字エリア中央付近タップ       = 時計画面へ (時計中央タップで戻る)
 //	  BOOTボタン(GPIO0) でも操作可: 短押し=トーン切替 / 長押し=モード切替
+//	  BOOTボタンを押したまま電源投入 = タッチ調整を消して既定値へ戻す
+//	  (SETUP のタッチ調整でズレて操作不能になったときの逃げ道)
 //
 //	画面遷移 (デコーダの動作に影響を与えないことを最優先):
 //	  デコーダ画面 (既定)
 //	    ├ SETUP ...... 時刻合わせ / ファームウェアアップデート (OTA) /
-//	    │              WiFi設定 / WiFi初期化 / スコープログ。OTA・WiFi設定は
-//	    │              受信を止めて AP を立て、[キャンセル] または
-//	    │              保存/更新完了で戻る
+//	    │              WiFi設定 / WiFi初期化 / スコープログ / タッチ調整。
+//	    │              OTA・WiFi設定は受信を止めて AP を立て、
+//	    │              [キャンセル] または保存/更新完了で戻る
 //	    └ 時計画面 ... 世界時計 (下段の国コードを押すとその国の時刻になる。
 //	                   パタパタ部分をタップするとデコーダ画面へ戻る)。
 //	                   DSP/デコーダは裏で動き続け、受信文字は溜まる。
@@ -48,6 +50,7 @@
 #include "setup.h"
 #include "netsync.h"
 #include "scopelog.h"
+#include "touchcal.h"
 
 const char FW_BUILD[] = __DATE__ " " __TIME__;
 
@@ -190,6 +193,43 @@ static void poll_button(void)
 	}
 }
 
+//	タッチ調整でズレて画面が操作できなくなったときの逃げ道。
+//	BOOT ボタンを押したまま電源を入れ、そのまま押し続けると校正値を消す
+#define ESCAPE_HOLD_MS 2000
+
+static void touchcal_escape(void)
+{
+	if (digitalRead(PIN_BUTTON) != LOW) {
+		return;
+	}
+	LGFX *lcd = display_lcd();
+	lcd->fillScreen(TFT_BLACK);
+	lcd->setFont(&fonts::lgfxJapanGothicP_16);
+	lcd->setTextDatum(lgfx::textdatum_t::middle_center);
+	lcd->setTextColor(TFT_WHITE, TFT_BLACK);
+	lcd->drawString("そのまま押し続けると", 160, 100);
+	lcd->drawString("タッチ調整を消去します", 160, 124);
+
+	uint32_t t0 = millis();
+	while ((millis() - t0) < ESCAPE_HOLD_MS) {
+		if (digitalRead(PIN_BUTTON) != LOW) {   // 離したら何もしない
+			lcd->setTextDatum(lgfx::textdatum_t::top_left);
+			return;
+		}
+		delay(20);
+	}
+	touchcal_reset(lcd);
+	lcd->fillScreen(TFT_BLACK);
+	lcd->drawString("タッチ調整を消去しました", 160, 112);
+	lcd->drawString("(既定値に戻しました)", 160, 136);
+	lcd->setTextDatum(lgfx::textdatum_t::top_left);
+	Serial.println("[touch] calibration cleared by BOOT button");
+	while (digitalRead(PIN_BUTTON) == LOW) {
+		delay(20);
+	}
+	delay(600);
+}
+
 void setup()
 {
 	Serial.setTxBufferSize(4096);   // スコープログ用 (送出側は非ブロッキング)
@@ -202,6 +242,7 @@ void setup()
 #endif
 
 	display_init();
+	touchcal_escape();              // BOOT 押しっぱなし起動 = 校正値の消去
 	{
 		const esp_partition_t *run = esp_ota_get_running_partition();
 		Serial.printf("[boot] v%s build %s  running=%s @0x%06X  heap=%u\n",

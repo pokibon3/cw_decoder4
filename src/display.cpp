@@ -20,6 +20,7 @@
 #include "version.h"
 #include "clock.h"
 #include "scopelog.h"
+#include "touchcal.h"
 
 #define STATUS_H 27
 #define TEXT_TOP 28
@@ -707,6 +708,7 @@ void display_init(void)
 	lcd.init_auto();              // ST7789 / ILI9341 (自動判定 or ビルドフラグ)
 	Serial.printf("[lcd] panel = %s\n", lcd.panel_name());
 	lcd.setRotation(1);           // 320x240 横
+	touchcal_load(&lcd);          // SETUP で校正済みならその値を使う
 	lcd.setColorDepth(16);
 	lcd.fillScreen(TFT_BLACK);
 	lcd.setBrightness(200);
@@ -775,7 +777,15 @@ void display_splash(void)
 		snprintf(sub, sizeof(sub), "%s / LovyanGFX  -  Version " FW_VERSION, lcd.panel_name());
 		lcd.drawString(sub, 160, 196);
 		snprintf(sub, sizeof(sub), "Build %s", FW_BUILD);
-		lcd.drawString(sub, 160, 216);
+		lcd.drawString(sub, 160, 214);
+	}
+
+	// タッチ調整を入れているときだけ、触らずに戻す方法を出しておく
+	// (ズレた値を保存してしまっても BOOT ボタンだけで復帰できる)
+	if (touchcal_saved()) {
+		lcd.setFont(&fonts::lgfxJapanGothicP_16);
+		lcd.setTextColor(C_LABEL);
+		lcd.drawString("BOOT を押しながら電源投入 = タッチ調整を消去", 160, 232);
 	}
 
 	lcd.setTextDatum(lgfx::textdatum_t::top_left);

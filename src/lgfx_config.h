@@ -8,6 +8,14 @@
 //	MISO未結線の個体などで判定できない場合はビルドフラグで強制指定:
 //	  -DPANEL_ST7789  または  -DPANEL_ILI9341
 //
+//	タッチの向き:
+//	  LovyanGFX はタッチ座標を「パネルの offset_rotation + タッチの
+//	  offset_rotation」で回す (Panel_Device::convertRawXY)。ILI9341 は
+//	  パネル側に 2 を入れているので、タッチ側も同じ 2 のままだと
+//	  ST7789 に対して 180°ずれる (時計の下段ボタンが押せない等)。
+//	  そこで TOUCH_ROT_BASE から パネルの offset_rotation を引いた値を
+//	  タッチへ与え、どちらのパネルでも合成後の回転が同じになるようにする。
+//
 #pragma once
 #define LGFX_USE_V1
 #include <LovyanGFX.hpp>
@@ -19,6 +27,21 @@ class LGFX : public lgfx::LGFX_Device {
 	lgfx::Light_PWM     _light_instance;
 	lgfx::Touch_XPT2046 _touch_instance;
 	const char*         _panel_name = "ST7789";
+
+	// パネルの回転オフセットを打ち消した後のタッチの向き (ST7789 実機基準)
+	static constexpr uint8_t TOUCH_ROT_BASE = 2;
+
+	// 使うパネルを決めて初期化する。パネルの offset_rotation を打ち消す値を
+	// タッチへ入れてから init() するので、どちらのパネルでもタッチの向きは同じ
+	bool use_panel(lgfx::Panel_LCD* p, const char* name) {
+		auto cfg = _touch_instance.config();
+		cfg.offset_rotation =
+			(uint8_t)((TOUCH_ROT_BASE + 4 - p->config().offset_rotation) & 3);
+		_touch_instance.config(cfg);
+		_panel_name = name;
+		setPanel(p);
+		return init();
+	}
 
 	// 両コントローラ共通のパネル設定 (解像度は同一)。
 	// offset_rotation は基準面の差を吸収する: ILI9341 は ST7789 に対して
@@ -79,7 +102,9 @@ public:
 			cfg.y_max = 200;
 			cfg.pin_int = -1;   // INT配線の個体差に依存しないようSPIポーリングで検出
 			cfg.bus_shared = false;
-			cfg.offset_rotation = 2;  // 実機で座標が180度ズレるため補正
+			// offset_rotation は init_auto() がパネルに合わせて入れ直す
+			// (config_touch_rotation)。ここは ST7789 のときの値
+			cfg.offset_rotation = TOUCH_ROT_BASE;
 			cfg.spi_host = -1;  // ソフトSPI (CYD系はハードSPI割当だと動かない個体あり)
 			cfg.freq = 1000000;
 			cfg.pin_sclk = 25;
@@ -97,17 +122,12 @@ public:
 	// 強制指定するビルドフラグがあればそれを優先。
 	bool init_auto(void) {
 #if defined(PANEL_ILI9341)
-		_panel_name = "ILI9341";
-		setPanel(&_panel_ili9341);
-		return init();
+		return use_panel(&_panel_ili9341, "ILI9341");
 #elif defined(PANEL_ST7789)
-		_panel_name = "ST7789";
-		setPanel(&_panel_st7789);
-		return init();
+		return use_panel(&_panel_st7789, "ST7789");
 #else
 		// まず ST7789 として初期化 (SLPOUT/COLMOD/DISPON 等は両者共通)
-		setPanel(&_panel_st7789);
-		if (!init()) {
+		if (!use_panel(&_panel_st7789, "ST7789")) {
 			return false;
 		}
 		// ID4(0xD3) を読む。dummy_read_bits=1 は両パネル共通なので
@@ -117,11 +137,8 @@ public:
 		// 判定できないので -DPANEL_ILI9341 で明示指定すること。
 		uint32_t id = _panel_st7789.readCommand(0xD3, 0, 3);
 		if (((id >> 8) & 0xFFFF) == 0x4193) {
-			_panel_name = "ILI9341";
-			setPanel(&_panel_ili9341);
-			return init();
+			return use_panel(&_panel_ili9341, "ILI9341");
 		}
-		_panel_name = "ST7789";
 		return true;
 #endif
 	}

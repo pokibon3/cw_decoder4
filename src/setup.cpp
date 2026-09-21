@@ -6,6 +6,7 @@
 //	│      [ 時刻合わせ ]                        │
 //	│      [ Summer Time: OFF/ON ]               │
 //	│      [ スコープログ: OFF/ON ]              │
+//	│      [ タッチ調整 ]  → touchcal            │
 //	│      [ ファームウェアアップデート ]        │
 //	│      [ 初期化 (WiFi設定等) ]               │
 //	│      [ CW Decoder について ]  → About      │
@@ -21,6 +22,7 @@
 #include "dsp.h"
 #include "version.h"
 #include "scopelog.h"
+#include "touchcal.h"
 #include "display.h"
 #include <esp_ota_ops.h>
 
@@ -45,11 +47,11 @@
 
 #define ITEM_X 20
 #define ITEM_W 280
-#define ITEM_H 24
-#define ITEM_Y0 42
-#define ITEM_PITCH 28
+#define ITEM_H 22
+#define ITEM_Y0 40
+#define ITEM_PITCH 25
 #define ITEM_Y(i) (ITEM_Y0 + ITEM_PITCH * (i))
-#define ITEM_N 7
+#define ITEM_N 8
 
 // About 画面 (スプラッシュと同じ体裁)
 #define ABOUT_BACK_X 214
@@ -151,15 +153,18 @@ static void draw_screen(void)
 	draw_button(BACK_X, BACK_Y, BACK_W, BACK_H, "戻る", C_BTN_BG, C_BTN_BD, C_BTN_TX,
 	            &fonts::lgfxJapanGothicP_16);
 
-	char summer[40], scope[40];
+	char summer[40], scope[40], touch[40];
 	snprintf(summer, sizeof(summer), "Summer Time: %s", clock_summer_time() ? "ON" : "OFF");
 	snprintf(scope, sizeof(scope), "スコープログ: %s",
 	         scopelog_enabled() ? "ON (シリアル)" : "OFF");
+	snprintf(touch, sizeof(touch), "タッチ調整: %s",
+	         touchcal_saved() ? "調整済み" : "既定値");
 	const struct { const char *label; bool on; } items[ITEM_N] = {
 		{ "WiFi設定 (NTP時刻同期用)", false },
 		{ "時刻合わせ", false },
 		{ summer, clock_summer_time() != 0 },
 		{ scope, scopelog_enabled() != 0 },
+		{ touch, touchcal_saved() },
 		{ "ファームウェアアップデート", false },
 		{ "初期化 (WiFi設定等)", false },
 		{ "CW Decoder について", false },
@@ -266,6 +271,9 @@ void setup_run(LGFX *lcd_)
 			scopelog_set_enabled(!scopelog_enabled());
 			break;
 		case 4:
+			touchcal_run(lcd);      // タッチの四隅校正 (DSP は動いたまま)
+			break;
+		case 5:
 			if (confirm("OTAモードに入ります",
 			            "受信を止めて WiFi を起動します",
 			            "更新が成功すると再起動します", "開始")) {
@@ -274,7 +282,7 @@ void setup_run(LGFX *lcd_)
 				ap_mode_leave();
 			}
 			break;
-		case 5:
+		case 6:
 			if (confirm("設定を初期化します",
 			            "WiFi の SSID / パスワードを消し",
 			            "NTP 時刻同期を止めます", "初期化")) {
