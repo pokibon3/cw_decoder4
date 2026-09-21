@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CW Decoder</title>
+<style>
+:root {
+  --bg: #0b0f14;
+  --panel: #111823;
+  --panel2: #0a1018;
+  --line: #28374b;
+  --tx: #d8dee6;
+  --dim: #8b94a3;
+  --accent: #5a96d2;
+  --amber: #fac775;
+  --green: #5adc78;
+  --scope-bg: #020810;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0; padding: 12px;
+  background: var(--bg); color: var(--tx);
+  font: 13px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", "Hiragino Sans", "Noto Sans JP", sans-serif;
+  display: flex; flex-direction: column; gap: 10px; min-height: 100%;
+}
+h1 { font-size: 15px; margin: 0; font-weight: 600; letter-spacing: .04em; }
+h1 small { color: var(--dim); font-weight: 400; margin-left: 8px; font-size: 12px; }
+
+.card {
+  background: var(--panel); border: 1px solid var(--line);
+  border-radius: 8px; padding: 10px 12px;
+}
+.row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.row + .row { margin-top: 8px; }
+.grow { flex: 1 1 auto; }
+.sep { width: 1px; align-self: stretch; background: var(--line); margin: 0 4px; }
+
+button, select, input[type=file]::file-selector-button {
+  font: inherit; color: var(--tx); background: #1a2331;
+  border: 1px solid var(--line); border-radius: 6px;
+  padding: 6px 12px; cursor: pointer;
+}
+button:hover:not(:disabled), select:hover { border-color: #47607f; }
+button:disabled { opacity: .4; cursor: default; }
+button.primary { background: #16324a; border-color: #2f6592; color: #cfe7ff; }
+button.on { background: #122d50; border-color: var(--accent); color: #c8e6ff; }
+button.off { background: #0a121c; border-color: #2a3a4d; color: #62727f; }
+button.jp { background: #6e4610; border-color: var(--amber); color: #ffe8be; }
+button.danger { background: #3a1f1f; border-color: #6d3535; }
+select { padding: 6px 8px; max-width: 320px; }
+label.chk { display: inline-flex; align-items: center; gap: 5px; color: var(--dim); cursor: pointer; }
+
+/* 入力元のタブ */
+.tabs { display: flex; gap: 4px; }
+.tabs button { border-radius: 6px 6px 0 0; border-bottom-color: transparent; }
+.tabs button[aria-selected=true] { background: #16324a; border-color: #2f6592; border-bottom-color: #2f6592; color: #cfe7ff; }
+.srcpane { display: none; padding-top: 10px; border-top: 1px solid var(--line); margin-top: -1px; }
+.srcpane.active { display: block; }
+
+/* ステータス行 */
+.status { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.status .metric { font: 600 13px/1 ui-monospace, "SF Mono", Menlo, monospace; color: var(--amber); }
+.status .metric b { font-size: 17px; }
+.status .hz { color: var(--accent); }
+#lvlWrap { display: flex; align-items: center; gap: 6px; }
+#lvl { width: 130px; height: 10px; border: 1px solid var(--line); border-radius: 2px; overflow: hidden; position: relative; background: #060a10; }
+#lvlBar { height: 100%; width: 0; background: #2dc878; transition: width .08s linear; }
+#lvlMark { position: absolute; top: 0; bottom: 0; width: 1px; background: #e6b43c; left: 90%; }
+#lvlTx { font: 11px/1 ui-monospace, monospace; color: var(--dim); min-width: 62px; }
+#clip { color: #fff; background: #eb4638; border-radius: 3px; padding: 1px 5px; font-size: 11px; visibility: hidden; }
+
+/* デコード文字エリア */
+#text {
+  margin: 0; flex: 1 1 auto; min-height: 140px;
+  background: var(--panel2); border: 1px solid var(--line); border-radius: 8px;
+  padding: 12px 14px; overflow-y: auto;
+  font-family: "Hiragino Sans", "Noto Sans JP", "Yu Gothic", monospace;
+  font-size: 22px; line-height: 1.45; letter-spacing: .06em;
+  white-space: pre-wrap; word-break: break-all;
+  color: #e1e6dc; user-select: text;
+}
+#text .new { color: #adff2f; }
+
+/* 下段パネル */
+.panels { display: flex; gap: 10px; flex-wrap: wrap; }
+.panels .card { flex: 1 1 380px; padding: 8px; }
+canvas { display: block; width: 100%; height: 220px; background: var(--scope-bg); border-radius: 4px; cursor: crosshair; }
+.cap { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; color: var(--dim); font-size: 11px; }
+.cap .grow { text-align: right; color: var(--green); font-family: ui-monospace, monospace; }
+.trace { font: 600 11px/1 ui-monospace, monospace; padding: 4px 10px; }
+
+.hint { color: var(--dim); font-size: 11.5px; line-height: 1.6; }
+.hint code { background: #0a121c; padding: 1px 5px; border-radius: 3px; border: 1px solid var(--line); }
+.err { color: #ff9a8f; }
+</style>
+</head>
+<body>
+
+<h1>CW Decoder <small>ESP32 版と同一の DSP / デコーダを WebAssembly で実行</small></h1>
+
+<!-- ============ 入力元 ============ -->
+<div class="card">
+  <div class="tabs" role="tablist">
+    <button role="tab" data-src="mic"  aria-selected="true">マイク / ライン入力</button>
+    <button role="tab" data-src="tab"  aria-selected="false">タブ音声</button>
+    <button role="tab" data-src="file" aria-selected="false">音声ファイル</button>
+    <button role="tab" data-src="test" aria-selected="false">テスト信号</button>
+  </div>
+
+  <div class="srcpane active" id="pane-mic">
+    <div class="row">
+      <select id="micDev"><option value="">既定の入力 (許可すると一覧が出ます)</option></select>
+      <button id="micStart" class="primary">開始</button>
+      <button id="micRescan">再検索</button>
+      <span class="grow"></span>
+      <label class="chk"><input type="checkbox" id="micMonitor"> モニター音</label>
+    </div>
+    <div class="row hint">
+      無線機の AF 出力 → USB オーディオ I/F が最も確実です (FT8 と同じ配線)。
+      PC 内部の音は仮想ループバック (macOS: BlackHole / Windows: VB-CABLE) 経由で拾えます。<br>
+      エコーキャンセル・ノイズ抑制・AGC は自動で無効化し、実際に無効化できたかを下の行に表示します。<br>
+      ステレオ I/F に片チャンネルだけ繋いでいるときは <code>L+R</code> にしないでください (空き側のノイズで S/N が約 3dB 落ちます)。
+    </div>
+  </div>
+
+  <div class="srcpane" id="pane-tab">
+    <div class="row">
+      <button id="tabStart" class="primary">タブを選んで取り込む</button>
+      <span class="grow"></span>
+      <label class="chk"><input type="checkbox" id="tabMonitor" checked> モニター音</label>
+    </div>
+    <div class="row hint">
+      WebSDR や動画など、ブラウザの別タブで鳴っている音をそのままデコードします。
+      共有ダイアログで <code>タブ</code> を選び、<code>タブの音声も共有する</code> を必ず ON にしてください。
+      (Chrome 系のみ。Safari / Firefox は非対応)
+    </div>
+  </div>
+
+  <div class="srcpane" id="pane-file">
+    <div class="row">
+      <input type="file" id="fileInput" accept="audio/*">
+      <button id="filePlay" class="primary" disabled>再生</button>
+      <button id="fileStop" disabled>停止</button>
+      <span class="grow"></span>
+      <label class="chk"><input type="checkbox" id="fileMonitor" checked> モニター音</label>
+    </div>
+    <div class="row hint">
+      WAV / MP3 などを読み込んでデコードします。同じ音源で何度でも再現できるので、
+      設定の効き具合を比べるのに使えます。
+    </div>
+  </div>
+
+  <div class="srcpane" id="pane-test">
+    <div class="row">
+      <label class="chk">WPM <input type="range" id="tWpm" min="8" max="45" value="20"><span id="tWpmV" class="metric">20</span></label>
+      <label class="chk">トーン <input type="range" id="tHz" min="450" max="1050" step="10" value="700"><span id="tHzV" class="metric">700</span>Hz</label>
+      <label class="chk">S/N <input type="range" id="tSnr" min="-6" max="40" value="15"><span id="tSnrV" class="metric">15</span>dB</label>
+    </div>
+    <div class="row">
+      <input type="text" id="tText" value="CQ CQ DE JA1ABC JA1ABC K" style="flex:1 1 300px;padding:6px 8px;background:#0a121c;border:1px solid var(--line);border-radius:6px;color:var(--tx);font:inherit">
+      <button id="testPlay" class="primary">送出</button>
+      <button id="testStop" disabled>停止</button>
+      <label class="chk"><input type="checkbox" id="testMonitor"> モニター音</label>
+    </div>
+    <div class="row hint">
+      ハード無しで動作確認するための内蔵 CW 発生器です。S/N を振ると、
+      ノイズ下でどこまで読めるかをその場で確かめられます。
+    </div>
+  </div>
+
+  <div class="row" style="margin-top:8px">
+    <span id="state" class="hint">停止中</span>
+    <span class="grow"></span>
+    <label class="chk" title="実機は ADC の手前に多重帰還型 BPF (700Hz / Q=5) が入っている。これが無いと帯域外ノイズでデコード率が落ちる">
+      <input type="checkbox" id="bpfOn" checked> 入力BPF
+    </label>
+    <select id="bpfCenter" title="実機は 700Hz 固定">
+      <option value="700">700Hz 固定 (実機)</option>
+      <option value="track">トーン追従</option>
+    </select>
+    <label class="chk" title="帯域幅 = 700/Q。Q を上げすぎるとフィルタ自身が中心とサイドビンの落差を作り、デコーダの純音判定がノイズに対して誤動作する (Q=5 以上で偽符号が出始める)"> Q <input type="range" id="bpfQ" min="1" max="8" step="0.5" value="3" style="width:80px"><span id="bpfQV" class="metric">3.0</span></label>
+    <label class="chk">ch
+      <select id="chSel" title="ステレオ入力のどの系統をデコードに使うか。片チャンネルだけ繋いでいるときは L か R を選ぶ">
+        <option value="L">L</option>
+        <option value="R">R</option>
+        <option value="MIX">L+R</option>
+      </select>
+    </label>
+    <label class="chk">入力ゲイン <input type="range" id="gain" min="-40" max="40" step="1" value="0"><span id="gainV" class="metric" style="min-width:52px;display:inline-block;text-align:right">0 dB</span></label>
+    <button id="gainReset">0 dB</button>
+    <button id="stopAll" class="danger">入力を止める</button>
+  </div>
+</div>
+
+<!-- ============ ステータス ============ -->
+<div class="card status">
+  <button id="btnMode" class="on">US</button>
+  <button id="btnTone" class="on">AUTO</button>
+  <div class="sep"></div>
+  <span class="metric"><b id="wpm">--</b> WPM</span>
+  <span class="metric hz">TONE <b id="toneHz">---</b> Hz</span>
+  <span class="metric hz" style="color:var(--green)">Peak <b id="peakHz">----</b></span>
+  <div class="sep"></div>
+  <div id="lvlWrap">
+    <span style="color:var(--dim);font-size:11px">LVL</span>
+    <div id="lvl"><div id="lvlBar"></div><div id="lvlMark"></div></div>
+    <span id="lvlTx">-inf dBFS</span>
+    <span id="clip">CLIP</span>
+    <span id="inRate" style="font:11px/1 ui-monospace,monospace;color:var(--dim);min-width:60px"></span>
+  </div>
+  <span class="grow"></span>
+  <button id="btnCopy">コピー</button>
+  <button id="btnClear">クリア</button>
+</div>
+
+<!-- ============ デコード文字 ============ -->
+<pre id="text"></pre>
+
+<!-- ============ FFT / スコープ ============ -->
+<div class="panels">
+  <div class="card">
+    <div class="cap">
+      <span>FFT スペクトラム</span>
+      <span class="grow">クリックでトーン選択</span>
+    </div>
+    <canvas id="fft" width="640" height="220"></canvas>
+  </div>
+  <div class="card">
+    <div class="cap">
+      <span>オシロスコープ</span>
+      <span class="grow" id="scopeSpan"></span>
+      <button class="trace on" id="bKey">KEY</button>
+      <button class="trace on" id="bEnv">ENV</button>
+      <button class="trace on" id="bRaw">RAW</button>
+    </div>
+    <canvas id="scope" width="640" height="220"></canvas>
+  </div>
+</div>
+
+<script>
+// app.js を読み込む。localhost のときだけキャッシュを外す (開発用)。
+// AudioWorklet と wasm 側のキャッシュ外しは app.js の bust() が行う
+(function () {
+  const dev = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
+  const s = document.createElement('script');
+  s.type = 'module';
+  s.src = dev ? `app.js?t=${Date.now()}` : 'app.js';
+  document.body.appendChild(s);
+})();
+</script>
+</body>
+</html>

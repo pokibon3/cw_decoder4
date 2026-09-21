@@ -4,3 +4,9 @@
 .vscode/c_cpp_properties.json
 .vscode/launch.json
 .vscode/ipch
+
+# Web 版のビルド生成物。
+# cwcore.wasm は lld が要るのであえて追跡する (これだけで動かせるように)。
+# cw-decoder.html は python3 だけで作り直せるので追跡しない
+# (72KB の全文が毎回差分に出て邪魔なため)。再生成: python3 web/bundle.py
+web/cw-decoder.html
