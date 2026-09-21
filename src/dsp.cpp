@@ -401,7 +401,7 @@ static void process_spectrum(void)
 		}
 	}
 
-	// AUTOモード: 550〜1000Hz (±1ビン強の探索マージン付き) の最強ピークへ
+	// AUTOモード: 500〜1000Hz (±1ビン強の探索マージン付き) の最強ピークへ
 	// ゲート中心を自動同調する (手動TONEは600〜1000のまま)。
 	// 注意: 500Hz台へロックすると下側サイドが230Hz付近に落ちるため、
 	// 低域ノイズ環境ではスケルチが締まり感度が下がる場合がある。
@@ -416,12 +416,12 @@ static void process_spectrum(void)
 	//   (時間ホールド方式は帯域端の信号でゲートが断続ONになると永遠に
 	//    引き込めなくなるため不採用)
 	// - 信号が消えたら最後の周波数をホールド
-#define DSP_AUTO_HZ_MIN 550
+#define DSP_AUTO_HZ_MIN 500
 #define DSP_AUTO_HZ_MAX 1000
 // AUTO引き込みの絶対床: 主判定は相対条件(ノイズ床3倍+3フレーム一致)で、
 // これは無音時の誤ロックを防ぐ最低限の値 (PK表示のしきい値とは別)
 	if (tone_sel == DSP_TONE_AUTO) {
-		const int lo = 16;   // 500Hz (550Hz - 1.5bin)
+		const int lo = 14;   // 437.5Hz (500Hz - 2bin)
 		const int hi = 33;   // 1031.25Hz (1000Hz + 1bin)
 		{
 			int gb = (int)((float)gate_hz * (float)DSP_SPEC_N / (float)DSP_SAMPLE_RATE + 0.5f);
