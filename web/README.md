@@ -225,6 +225,9 @@ web/
     Vol20_Sig50_Noise100.mp3   ノイズ混じりの CW 録音 (77 秒)。
                                「音声ファイル」タブから読ませて設定の効きを比べる用。
                                内容は Alice in Wonderland の冒頭なので正解文が分かる
+    original.mp3               上と同じ内容のノイズ無し版 (32 秒)。
+                               デコード結果を突き合わせて、ノイズ下での誤りの
+                               原因を切り分けるための基準に使う
 ```
 
 `src/dsp.cpp` / `src/decoder.cpp` / `src/decode.cpp` / `lib/float_fft` は
