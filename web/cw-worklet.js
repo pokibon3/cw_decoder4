@@ -65,6 +65,8 @@ class CWProcessor extends AudioWorkletProcessor {
 			this.t0 = currentTime;
 		} else if (msg.type === 'gain') {
 			this.gain = msg.value;
+		} else if (msg.type === 'drain') {
+			this.drain();
 		}
 	}
 
@@ -99,6 +101,22 @@ class CWProcessor extends AudioWorkletProcessor {
 		this.core.cw_run();
 		this.pushed += n;
 		this.outN = 0;
+	}
+
+	//	音源が止まると入力が途切れ、最後の文字が確定しないまま保留される
+	//	(デコーダは「符号のあとに十分な無音が続いた」ことで文字を確定するため)。
+	//	再生終了・停止のときに無音を流し込んで語間を作り、吐き出させる。
+	//	実効入力レートの計算には入れない (止まったあとの分なので)
+	drain() {
+		if (!this.core) return;
+		const total = TARGET_RATE * 2;          // 2 秒ぶん = 語間として十分
+		for (let done = 0; done < total; done += this.inCap) {
+			const n = Math.min(this.inCap, total - done);
+			new Uint16Array(this.core.memory.buffer, this.inPtr, n).fill(2048);
+			this.core.cw_push(n);
+			this.core.cw_run();
+		}
+		this.post();
 	}
 
 	post() {

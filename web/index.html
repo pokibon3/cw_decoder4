@@ -86,10 +86,18 @@ label.chk { display: inline-flex; align-items: center; gap: 5px; color: var(--di
 /* 下段パネル */
 .panels { display: flex; gap: 10px; flex-wrap: wrap; }
 .panels .card { flex: 1 1 380px; padding: 8px; }
+/* パネルの全幅表示 (波形をクリックで切替)。時間軸が細かいときに使う */
+.panels .card.wide { flex: 1 1 100%; }
+.panels .card.hidden { display: none; }
+.cap { cursor: pointer; }
+.cap button { cursor: pointer; }
 canvas { display: block; width: 100%; height: 220px; background: var(--scope-bg); border-radius: 4px; cursor: crosshair; }
 .cap { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; color: var(--dim); font-size: 11px; }
 .cap .grow { text-align: right; color: var(--green); font-family: ui-monospace, monospace; }
 .trace { font: 600 11px/1 ui-monospace, monospace; padding: 4px 10px; }
+/* 再生トランスポート */
+button.tp { font-size: 15px; line-height: 1; padding: 6px 12px; min-width: 44px; }
+#transport input[type=range] { accent-color: var(--accent); }
 
 .hint { color: var(--dim); font-size: 11.5px; line-height: 1.6; }
 .hint code { background: #0a121c; padding: 1px 5px; border-radius: 3px; border: 1px solid var(--line); }
@@ -141,14 +149,23 @@ canvas { display: block; width: 100%; height: 220px; background: var(--scope-bg)
   <div class="srcpane" id="pane-file">
     <div class="row">
       <input type="file" id="fileInput" accept="audio/*">
-      <button id="filePlay" class="primary" disabled>再生</button>
-      <button id="fileStop" disabled>停止</button>
       <span class="grow"></span>
       <label class="chk"><input type="checkbox" id="fileMonitor" checked> モニター音</label>
     </div>
+    <div class="row" id="transport">
+      <button id="fileHome"  class="tp" disabled title="先頭へ">&#9198;</button>
+      <button id="fileBack"  class="tp" disabled title="5 秒戻す">&#9194;</button>
+      <button id="filePlay"  class="tp primary" disabled title="再生 / 一時停止">&#9654;</button>
+      <button id="fileFwd"   class="tp" disabled title="5 秒進める">&#9193;</button>
+      <button id="fileEnd"   class="tp" disabled title="末尾へ">&#9197;</button>
+      <input type="range" id="fileSeek" min="0" max="1000" value="0" step="1" disabled
+             title="再生位置" style="flex:1 1 160px">
+      <span id="fileTime" class="metric" style="min-width:96px;text-align:right">--:-- / --:--</span>
+    </div>
     <div class="row hint">
       WAV / MP3 などを読み込んでデコードします。同じ音源で何度でも再現できるので、
-      設定の効き具合を比べるのに使えます。
+      設定の効き具合を比べるのに使えます。<br>
+      位置を動かすとデコーダの状態はリセットされます (符号の途中から始まるため)。
     </div>
   </div>
 
@@ -220,22 +237,26 @@ canvas { display: block; width: 100%; height: 220px; background: var(--scope-bg)
 
 <!-- ============ FFT / スコープ ============ -->
 <div class="panels">
-  <div class="card">
-    <div class="cap">
+  <div class="card" id="panelFft">
+    <div class="cap" id="capFft" title="クリックで全幅表示 / もう一度で元に戻す">
       <span>FFT スペクトラム</span>
-      <span class="grow">クリックでトーン選択</span>
+      <span class="grow">クリックでトーン選択・ダブルクリックで全幅</span>
     </div>
     <canvas id="fft" width="640" height="220"></canvas>
   </div>
-  <div class="card">
-    <div class="cap">
+  <div class="card" id="panelScope">
+    <div class="cap" id="capScope" title="クリックで全幅表示 / もう一度で元に戻す">
       <span>オシロスコープ</span>
       <span class="grow" id="scopeSpan"></span>
+      <label class="chk" title="時間軸の倍率。上げると 1 列を太く描くので細かい符号が見える (そのぶん見える時間は減る)">
+        x<input type="range" id="scopeZoom" min="1" max="3" step="0.5" value="2" style="width:70px">
+        <span id="scopeZoomV" class="metric" style="min-width:24px;display:inline-block">2.0</span>
+      </label>
       <button class="trace on" id="bKey">KEY</button>
       <button class="trace on" id="bEnv">ENV</button>
       <button class="trace on" id="bRaw">RAW</button>
     </div>
-    <canvas id="scope" width="640" height="220"></canvas>
+    <canvas id="scope" width="640" height="220" title="クリックで全幅表示 / もう一度で元に戻す"></canvas>
   </div>
 </div>
 

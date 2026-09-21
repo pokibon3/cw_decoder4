@@ -200,8 +200,7 @@ function stopSource() {
 	srcNode = null;
 	srcStream = null;
 	if (monitor) monitor.gain.value = 0;
-	$('filePlay').disabled = !fileBuffer;
-	$('fileStop').disabled = true;
+	// ファイルのトランスポートは filePlaying が持つので、ここでは触らない
 	$('testStop').disabled = true;
 	$('testPlay').disabled = false;
 }
@@ -381,12 +380,96 @@ async function startTab() {
 //	入力元 3: 音声ファイル
 //==================================================================
 let fileBuffer = null;
+//	AudioBufferSourceNode は一時停止もシークもできない (start は 1 回だけ) ので、
+//	再生位置を自前で持ち、操作のたびにノードを作り直して offset 付きで start する。
+//	filePos は「今の source が start された時点の位置」で、再生中の現在位置は
+//	そこに経過時間を足して求める
+let filePos = 0;            // 秒
+let filePlaying = false;
+let fileT0 = 0;             // start した時点の ctx.currentTime
+let fileSeeking = false;    // シークバーをドラッグ中は表示を追従させない
+
+const SEEK_STEP = 5;        // 巻き戻し / 早送りの秒数
+
+function fileNow() {
+	if (!fileBuffer) return 0;
+	const t = filePlaying ? filePos + (ctx.currentTime - fileT0) : filePos;
+	return Math.max(0, Math.min(fileBuffer.duration, t));
+}
+
+const mmss = (t) => `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}`;
+
+function fileUpdateUI() {
+	const has = !!fileBuffer;
+	for (const id of ['fileHome', 'fileBack', 'filePlay', 'fileFwd', 'fileEnd', 'fileSeek']) {
+		$(id).disabled = !has;
+	}
+	$('filePlay').innerHTML = filePlaying ? '&#10074;&#10074;' : '&#9654;';
+	$('filePlay').title = filePlaying ? '一時停止' : '再生';
+	if (!has) {
+		$('fileTime').textContent = '--:-- / --:--';
+		return;
+	}
+	const t = fileNow(), d = fileBuffer.duration;
+	$('fileTime').textContent = `${mmss(t)} / ${mmss(d)}`;
+	if (!fileSeeking) $('fileSeek').value = Math.round((t / d) * 1000);
+}
+
+//	pos 秒から再生を始める。位置が飛ぶと符号の途中から入ることになるので、
+//	attachSource が投げる reset でデコーダの状態も作り直される
+function fileStartAt(pos) {
+	filePos = Math.max(0, Math.min(fileBuffer.duration - 0.01, pos));
+	const src = ctx.createBufferSource();
+	src.buffer = fileBuffer;
+	attachSource(src, $('fileMonitor').checked);
+	src.onended = () => {
+		// stop() で止めたときも呼ばれるので、末尾まで来た場合だけ後始末する
+		if (!filePlaying) return;
+		if (fileNow() >= fileBuffer.duration - 0.05) {
+			filePlaying = false;
+			filePos = fileBuffer.duration;
+			drainDecoder();             // 末尾の文字を取りこぼさない
+			fileUpdateUI();
+		}
+	};
+	src.start(0, filePos);
+	fileT0 = ctx.currentTime;
+	filePlaying = true;
+	fileUpdateUI();
+}
+
+async function filePlayPause() {
+	await ensureEngine();
+	if (!fileBuffer) return;
+	if (filePlaying) {
+		filePos = fileNow();
+		filePlaying = false;
+		drainDecoder();                 // 保留中の文字を吐き出してから止める
+		stopSource();
+		fileUpdateUI();
+	} else {
+		if (filePos >= fileBuffer.duration - 0.05) filePos = 0;   // 末尾なら頭から
+		fileStartAt(filePos);
+	}
+}
+
+//	再生中でも止まっていても同じように位置だけ動かす
+async function fileSeek(pos) {
+	await ensureEngine();
+	if (!fileBuffer) return;
+	const wasPlaying = filePlaying;
+	if (wasPlaying) { filePlaying = false; stopSource(); }
+	filePos = Math.max(0, Math.min(fileBuffer.duration, pos));
+	if (wasPlaying && filePos < fileBuffer.duration - 0.05) fileStartAt(filePos);
+	else fileUpdateUI();
+}
 
 async function loadFile(file) {
 	await ensureEngine();
 	const buf = await file.arrayBuffer();
 	fileBuffer = await ctx.decodeAudioData(buf);
-	$('filePlay').disabled = false;
+	filePos = 0;
+	filePlaying = false;
 
 	// 音源のピークを測って、-12 dBFS あたりに来るようゲインを自動設定する。
 	// 通常の音声ファイルはフルスケール近くまで振れているので、素通しだと
@@ -403,6 +486,12 @@ async function loadFile(file) {
 	const peakDb = peak > 0 ? (20 * Math.log10(peak)).toFixed(1) : '-inf';
 	setState(`ファイル: ${file.name} — ${fileBuffer.duration.toFixed(1)}秒 / ` +
 		`${fileBuffer.sampleRate}Hz / ピーク ${peakDb} dBFS → ゲイン ${db > 0 ? '+' : ''}${db} dB に自動調整`);
+	fileUpdateUI();
+}
+
+//	保留されている最後の文字を吐き出させる (再生終了・停止時)
+function drainDecoder() {
+	node?.port.postMessage({ type: 'drain' });
 }
 
 function playBuffer(buffer, monitorOn, onended) {
@@ -744,6 +833,7 @@ function drawFFT() {
 //------------------------------------------------------------------
 let showKey = true, showEnv = true, showRaw = true;
 let rawMax = 100, envMax = 500;
+let scopeZoom = 2;                        // 時間軸の倍率 (1〜3)
 
 function drawScope() {
 	const { g, w, h } = fitCanvas(el.scope);
@@ -753,13 +843,20 @@ function drawScope() {
 	g.strokeRect(0.5, 0.5, w - 1, h - 1);
 
 	const x0 = 4;
-	const cols = Math.max(16, Math.floor(w - 8));     // 1 列 = 1px
+	// 時間軸の倍率。1 倍で 1 列 = 1px (実機と同じ密度)、上げると 1 列を
+	// 太く描くので細かい符号が見えるようになる (そのぶん見える時間は減る)。
+	// 列の左端を整数へ丸めて幅を差分で出し、隙間も重なりも出さない
+	const zoom = scopeZoom;
+	const cols = Math.max(16, Math.floor((w - 8) / zoom));
+	const start = Math.max(0, sTotal - cols);
+	const colL = (i) => Math.round(x0 + (i - start) * zoom);
+	const colW = (i) => Math.max(1, colL(i + 1) - colL(i));
+	const colC = (i) => colL(i) + colW(i) / 2;        // 列の中心 (折れ線・文字用)
 	const textH = 22, keyY = textH + 4, waveTop = keyY + 10, waveBot = h - 8;
 	const midY = (waveTop + waveBot) / 2, halfH = (waveBot - waveTop) / 2;
 
 	// AGC (生波形 / エンベロープ別。実機と同じ時定数)
 	let rmax = 0, emax = 0;
-	const start = Math.max(0, sTotal - cols);
 	for (let i = start; i < sTotal; i++) {
 		const k = i % SR;
 		rmax = Math.max(rmax, Math.abs(sMx[k]), Math.abs(sMn[k]));
@@ -772,22 +869,20 @@ function drawScope() {
 
 	if (showRaw) {
 		g.strokeStyle = '#142837';
-		g.beginPath(); g.moveTo(x0, midY + 0.5); g.lineTo(x0 + cols, midY + 0.5); g.stroke();
+		g.beginPath(); g.moveTo(x0, midY + 0.5); g.lineTo(x0 + cols * zoom, midY + 0.5); g.stroke();
 	}
 
 	// 生波形 min/max バンド
 	if (showRaw) {
-		g.strokeStyle = C.raw; g.lineWidth = 1;
-		g.beginPath();
+		g.fillStyle = C.raw;
 		for (let i = start; i < sTotal; i++) {
-			const k = i % SR, x = x0 + (i - start) + 0.5;
+			const k = i % SR;
 			let y1 = midY - (sMx[k] / rawMax) * halfH;
 			let y2 = midY - (sMn[k] / rawMax) * halfH;
 			y1 = Math.max(waveTop, y1); y2 = Math.min(waveBot, y2);
 			if (y2 < y1) [y1, y2] = [y2, y1];
-			g.moveTo(x, y1); g.lineTo(x, y2 + 1);
+			g.fillRect(colL(i), y1, colW(i), y2 - y1 + 1);
 		}
-		g.stroke();
 	}
 
 	// エンベロープ (下端基準の折れ線)
@@ -796,7 +891,7 @@ function drawScope() {
 		g.beginPath();
 		let started = false;
 		for (let i = start; i < sTotal; i++) {
-			const k = i % SR, x = x0 + (i - start);
+			const k = i % SR, x = colC(i);
 			const eh = Math.min(waveBot - waveTop, (sMag[k] / envMax) * (waveBot - waveTop));
 			const y = waveBot - eh;
 			if (!started) { g.moveTo(x, y); started = true; } else g.lineTo(x, y);
@@ -809,7 +904,7 @@ function drawScope() {
 		g.fillStyle = C.gate;
 		for (let i = start; i < sTotal; i++) {
 			if (!sGate[i % SR]) continue;
-			g.fillRect(x0 + (i - start), keyY, 1, 4);
+			g.fillRect(colL(i), keyY, colW(i), 4);
 		}
 		// デコード文字を符号区間の中央に置き、掃引とともに左へ流す
 		g.fillStyle = C.textNew;
@@ -817,8 +912,7 @@ function drawScope() {
 		g.textAlign = 'center';
 		for (const t of ticker) {
 			if (t.col < start || t.col >= sTotal) continue;
-			const x = x0 + (t.col - start);
-			g.fillText(String.fromCodePoint(codepointOf(t.ch)), x, textH - 4);
+			g.fillText(String.fromCodePoint(codepointOf(t.ch)), colC(t.col), textH - 4);
 		}
 		g.textAlign = 'left';
 	}
@@ -828,6 +922,7 @@ function drawScope() {
 	const ms = status[ST.colMsX10] / 10;
 	$('scopeSpan').textContent = ms > 0
 		? `${(cols * ms / 1000).toFixed(1)}s span / ${ms.toFixed(1)}ms per col`
+		+ (zoom !== 1 ? ` / x${zoom.toFixed(1)}` : '')
 		: '';
 }
 
@@ -874,6 +969,7 @@ function frame() {
 	dirty = false;
 	updateBpf();
 	drawStatus();
+	if (filePlaying) fileUpdateUI();
 	drawFFT();
 	drawScope();
 	requestAnimationFrame(frame);
@@ -907,13 +1003,24 @@ $('micMonitor').onchange = (e) => { if (monitor && srcNode) { monitor.gain.value
 $('tabStart').onclick = guard(startTab);
 
 $('fileInput').onchange = guard((e) => e.target.files[0] && loadFile(e.target.files[0]));
-$('filePlay').onclick = guard(async () => {
-	await ensureEngine();
-	playBuffer(fileBuffer, $('fileMonitor').checked, () => { $('fileStop').disabled = true; $('filePlay').disabled = false; });
-	$('fileStop').disabled = false;
-	$('filePlay').disabled = true;
+$('filePlay').onclick = guard(filePlayPause);
+$('fileHome').onclick = guard(() => fileSeek(0));
+$('fileBack').onclick = guard(() => fileSeek(fileNow() - SEEK_STEP));
+$('fileFwd').onclick  = guard(() => fileSeek(fileNow() + SEEK_STEP));
+$('fileEnd').onclick  = guard(() => fileSeek(fileBuffer ? fileBuffer.duration : 0));
+
+// シークバー: ドラッグ中は表示の追従を止め、離した時点で飛ぶ
+$('fileSeek').oninput = () => {
+	fileSeeking = true;
+	if (fileBuffer) {
+		const t = (+$('fileSeek').value / 1000) * fileBuffer.duration;
+		$('fileTime').textContent = `${mmss(t)} / ${mmss(fileBuffer.duration)}`;
+	}
+};
+$('fileSeek').onchange = guard(async () => {
+	fileSeeking = false;
+	if (fileBuffer) await fileSeek((+$('fileSeek').value / 1000) * fileBuffer.duration);
 });
-$('fileStop').onclick = () => { stopSource(); setState('停止中'); };
 
 for (const [r, v] of [['tWpm', 'tWpmV'], ['tHz', 'tHzV'], ['tSnr', 'tSnrV']]) {
 	$(r).oninput = () => { $(v).textContent = $(r).value; };
@@ -923,13 +1030,23 @@ $('testPlay').onclick = guard(async () => {
 	const buf = synthCW($('tText').value, {
 		wpm: +$('tWpm').value, toneHz: +$('tHz').value, snrDb: +$('tSnr').value,
 	});
-	playBuffer(buf, $('testMonitor').checked, () => { $('testStop').disabled = true; $('testPlay').disabled = false; });
+	playBuffer(buf, $('testMonitor').checked, () => {
+		drainDecoder();                 // 末尾の文字を取りこぼさない
+		$('testStop').disabled = true;
+		$('testPlay').disabled = false;
+	});
 	$('testStop').disabled = false;
 	$('testPlay').disabled = true;
 	setState(`テスト信号: ${$('tWpm').value}WPM / ${$('tHz').value}Hz / S:N ${$('tSnr').value}dB`);
 });
-$('testStop').onclick = () => { stopSource(); setState('停止中'); };
-$('stopAll').onclick = () => { stopSource(); setState('停止中'); };
+$('testStop').onclick = () => { drainDecoder(); stopSource(); setState('停止中'); };
+$('stopAll').onclick = () => {
+	drainDecoder();
+	filePlaying = false;
+	stopSource();
+	fileUpdateUI();
+	setState('停止中');
+};
 
 el.gain.oninput = () => setGain(+el.gain.value);
 $('gainReset').onclick = () => setGain(0);
@@ -937,10 +1054,58 @@ $('gainReset').onclick = () => setGain(0);
 el.btnMode.onclick = () => node?.port.postMessage({ type: 'toggleMode' });
 el.btnTone.onclick = () => node?.port.postMessage({ type: 'cycleTone' });
 
+//==================================================================
+//	パネルの全幅表示
+//	オシロは掃引が WPM 追従で細かいので、横幅いっぱいにすると
+//	見える時間が倍以上になる (1 列 = 1px のため幅がそのまま時間になる)
+//==================================================================
+let expanded = null;                      // null | 'fft' | 'scope'
+
+function setExpanded(which) {
+	expanded = (expanded === which) ? null : which;
+	const fftCard = $('panelFft'), scopeCard = $('panelScope');
+	fftCard.classList.toggle('wide', expanded === 'fft');
+	fftCard.classList.toggle('hidden', expanded === 'scope');
+	scopeCard.classList.toggle('wide', expanded === 'scope');
+	scopeCard.classList.toggle('hidden', expanded === 'fft');
+}
+
+// 見出し行はどちらもクリックで切替 (KEY/ENV/RAW ボタンの上は除く)
+for (const [capId, which] of [['capFft', 'fft'], ['capScope', 'scope']]) {
+	$(capId).onclick = (e) => {
+		// 見出し内のボタンやスライダーの操作は全幅切替に拾わせない
+		if (!e.target.closest('button, input, select, label')) setExpanded(which);
+	};
+}
+
+// オシロは波形部分のクリックで切替 (他の用途が無いので単クリック)
+el.scope.onclick = () => setExpanded('scope');
+
+// FFT はクリックがトーン選択に使われている (実機の「FFT パネル内タップ」と
+// 同じ機能) ので、全幅切替はダブルクリックに割り当てる。
+// ダブルクリックの 1 打目でトーンが動かないよう、選択は 250ms 遅らせて
+// ダブルクリックが来たら取り消す
+let fftClickTimer = null;
+
 el.fft.onclick = (e) => {
+	if (fftClickTimer) return;
 	const r = el.fft.getBoundingClientRect();
-	const hz = xToHz(e.clientX - r.left, 10, r.width - 20);
-	node?.port.postMessage({ type: 'toneHz', hz: Math.round(hz) });
+	const x = e.clientX - r.left, w = r.width;
+	fftClickTimer = setTimeout(() => {
+		fftClickTimer = null;
+		node?.port.postMessage({ type: 'toneHz', hz: Math.round(xToHz(x, 10, w - 20)) });
+	}, 250);
+};
+
+el.fft.ondblclick = () => {
+	clearTimeout(fftClickTimer);
+	fftClickTimer = null;
+	setExpanded('fft');
+};
+
+$('scopeZoom').oninput = () => {
+	scopeZoom = +$('scopeZoom').value;
+	$('scopeZoomV').textContent = scopeZoom.toFixed(1);
 };
 
 $('bKey').onclick = (e) => { showKey = !showKey; e.target.className = `trace ${showKey ? 'on' : 'off'}`; };
