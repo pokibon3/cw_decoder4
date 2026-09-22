@@ -3,6 +3,10 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
+<!-- 開発中に古いページを掴まないようにする。app.js / worklet / wasm は
+     localhost のとき app.js 側でクエリを付けて外しているが、入口である
+     この index.html 自体はそれができないのでヘッダで指定する -->
+<meta http-equiv="Cache-Control" content="no-cache, must-revalidate">
 <title>CW Decoder</title>
 <style>
 :root {
@@ -197,6 +201,8 @@ button.tp { font-size: 15px; line-height: 1; padding: 6px 12px; min-width: 44px;
       <option value="700">700Hz 固定 (実機)</option>
       <option value="track">トーン追従</option>
     </select>
+    <span id="bpfNow" class="metric" style="min-width:54px;display:inline-block"
+          title="実際に効いている BPF の中心周波数"></span>
     <label class="chk" title="帯域幅 = 700/Q。Q を上げすぎるとフィルタ自身が中心とサイドビンの落差を作り、デコーダの純音判定がノイズに対して誤動作する (Q=5 以上で偽符号が出始める)"> Q <input type="range" id="bpfQ" min="1" max="8" step="0.5" value="3" style="width:80px"><span id="bpfQV" class="metric">3.0</span></label>
     <label class="chk">ch
       <select id="chSel" title="ステレオ入力のどの系統をデコードに使うか。片チャンネルだけ繋いでいるときは L か R を選ぶ">

@@ -277,13 +277,16 @@ function bpfCenter() {
 
 //	トーン追従時に中心を追わせる (再生を止めずに滑らかに動かす)
 function updateBpf() {
-	if (!bpf || !ctx) return;
+	const label = $('bpfNow');
+	if (!bpf || !ctx) { if (label) label.textContent = ''; return; }
 	const f = bpfCenter();
 	if (Math.abs(bpf.frequency.value - f) >= 1) {
 		bpf.frequency.setTargetAtTime(f, ctx.currentTime, 0.05);
 	}
 	const q = +$('bpfQ').value;
 	if (bpf.Q.value !== q) bpf.Q.value = q;
+	// 実際に効いている中心を出す。追従しているかが画面で分かるように
+	if (label) label.textContent = `${Math.round(bpf.frequency.value)}Hz`;
 }
 
 //	入力ゲイン (dB)。デコーダへ渡す信号にだけ効き、モニター音には効かない。
@@ -634,6 +637,11 @@ function onWorkletMessage(e) {
 	lastPushed = m.pushed;
 	lastT = m.t;
 
+	// BPF のトーン追従はここで行う。描画 (requestAnimationFrame) は
+	// タブやペインが隠れると止まるが、こちらはワークレットからの
+	// フレームで動くので、裏に回っても追従が続く
+	updateBpf();
+
 	const clip = m.status[ST.clip];
 	if (clip !== lastClip) { lastClip = clip; clipMs = performance.now(); }
 	gotFrame = true;
@@ -967,7 +975,6 @@ function drawStatus() {
 
 function frame() {
 	dirty = false;
-	updateBpf();
 	drawStatus();
 	if (filePlaying) fileUpdateUI();
 	drawFFT();
