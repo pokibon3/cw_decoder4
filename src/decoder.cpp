@@ -106,6 +106,20 @@ static void (*emit_fn)(uint8_t ch) = nullptr;
 // 現在組み立て中の符号グループの直前ギャップ(先頭エレメント追加時に記録)。
 // 孤立した単発エレメント(ノイズ由来のE/T)を検出するのに使う。
 static uint32_t code_pre_gap = 0;
+// ノイズだけの区間で散発的に E/T が出るのを抑える。
+// 1 文字ごとの特徴では本物と区別できない (実測: マーク強度はノイズ由来
+// 13.6dB / 本物 20.4dB で分布が重なり、前後の無音で孤立しているものは
+// 17% しかなく、単位長推定も崩れていない)。効くのは文脈で、本物の CW にも
+// E/T は 19〜43% 含まれるのに対し、ノイズだけの区間では 69〜71% に達する。
+// そこで直近 ONE_WIN 文字のうち 1 要素の文字が ONE_THR 個以上を占める
+// あいだだけ、1 要素の文字を捨てる。抑止したものも履歴には数えるので、
+// ノイズが止まれば自然に復帰する。
+// 実測 (7MHz バンドノイズ 10 分、信号なし): 541 文字 → 52 文字。
+// 実信号側は qsb/FS/qrm の常用語・コールサイン、Alice 音源の正解率 99%、
+// selftest 8 条件 100% のいずれも変化なし。
+static uint32_t one_hist = 0;       // 1=1要素 のビット列 (新しいほど下位)
+#define ONE_WIN 12
+#define ONE_THR 9
 // 孤立判定のしきい値(単位長の倍数)。前が これ以上の無音で単一エレメント
 // なら「散発ノイズ」とみなす(語間~7単位より大きめ)。
 #define ISOLATED_GAP_UNITS 6
@@ -321,6 +335,18 @@ static void decode_and_display(void)
 		if (hightimesavg > 60) hightimesavg = 60;
 		wpm = (uint16_t)((1200 + hightimesavg / 2) / hightimesavg);
 	}
+	{
+		int len = (int)strlen(code);
+		uint8_t isone = (len == 1) ? 1 : 0;
+		one_hist = (one_hist << 1) | isone;
+		uint32_t bits = one_hist & ((1u << ONE_WIN) - 1u);
+		int ones = 0;
+		for (uint32_t b = bits; b != 0; b >>= 1) ones += (int)(b & 1u);
+		if (isone && ones >= ONE_THR) {
+			code[0] = '\0';        // ノイズ主体の区間とみなして捨てる
+			return;
+		}
+	}
 	int16_t result = decode(code, &sw_mode);
 #if DEC_DIAG
 	Serial.printf("[dec] code=%-8s -> %d '%c'\n", code, result,
@@ -340,6 +366,7 @@ static void decode_and_display(void)
 void decoder_init(void)
 {
 	magnitudelimit = magnitudelimit_low;
+	one_hist = 0;
 	noise_floor = 0;
 	noise_acc = 0;
 	realstate = realstatebefore = KEY_LOW;
