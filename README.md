@@ -127,7 +127,8 @@ BOOT ボタンでも操作できます (短押し: トーン切替 / 長押し 8
 
 - **時刻合わせ**: ▲▼ で年月日時分を合わせて `決定` (RTC は無いので電源を切るとビルド日時に戻ります)
 - **ファームウェアアップデート**: 確認のうえ OTA モードへ。本体が AP (`CWDEC-OTA` / パスワード `cwdecoder`) になり、
-  スマホ/PC を接続して `http://192.168.4.1/` から `firmware.bin` (`.pio/build/esp32dev/firmware.bin`) をアップロードします。
+  スマホ/PC を接続して `http://192.168.4.1/` から `firmware.bin` をアップロードします
+  (`tools/v<版>/firmware_<パネル>.bin`。無ければ `sh tools/make_release.sh` で作る)。
   完了すると再起動します (途中で失敗しても旧ファームが残ります。戻るには再起動)。
   WiFi を登録してあれば **AP と同時に自宅 WiFi にも接続 (AP+STA)** するので、PC のネットワークを切り替えずに
   `http://cwdec.local/` (mDNS) でも更新できます。LAN 側の IP は画面の `LAN` 行に出ます
@@ -238,7 +239,39 @@ VS Code でこのフォルダを開き、PlatformIO IDE の機能を使ってビ
 2. PlatformIO IDE が有効になっていることを確認する
 3. 画面下部の PlatformIO ツールバーから `Build` を実行する
 
-environment は `esp32dev` のみです。
+environment は LCD コントローラごとに分けてあります。
+
+| environment | パネル | 出力 |
+|---|---|---|
+| `esp32dev` (既定) | ST7789 | `.pio/build/esp32dev/firmware.bin` |
+| `esp32dev_ili9341` | ILI9341 | `.pio/build/esp32dev_ili9341/firmware.bin` |
+
+```sh
+pio run                                    # 既定 (ST7789)
+pio run -e esp32dev_ili9341                # ILI9341
+pio run -e esp32dev -e esp32dev_ili9341    # 両方
+```
+
+**焼くパネルと一致しない bin を書き込むと、表示の基準面が 180° ずれてタッチの
+回転補正も連動して狂います。** 起動時にシリアル (115200) へ `[lcd] panel = ...` と
+判定結果が出るので、そこで確認できます。
+
+### OTA 配布用の bin
+
+```sh
+sh tools/make_release.sh
+```
+
+`src/version.h` の `FW_VERSION` を読んで両方をビルドし、次の場所へ書き出します。
+書き出したあと、焼き込まれたパネル指定が名前と一致しているか検査します。
+
+```
+tools/v2.4/firmware_ST7789.bin
+tools/v2.4/firmware_ILI9341.bin
+```
+
+OTA でアップロードするのはこの `firmware.bin` だけです
+(`bootloader.bin` / `partitions.bin` は USB 書き込みでしか更新されません)。
 
 ## 変更履歴
 
