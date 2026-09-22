@@ -36,6 +36,21 @@
 #define PANEL_H 67
 #define PANEL_W 160
 #define SCOPE_COLS 150
+// 下段パネルの全幅表示。波形部分をダブルタップすると、そのパネルが
+// 横幅いっぱい (320px) になり、もう一度ダブルタップで戻る。
+// 広げている間はもう一方を描かず、スプライトのバッファもそちらへ回す。
+// 掃引レートや周波数レンジは変えないので、見える量がそのまま 2 倍になる。
+// FFT のシングルタップ (トーン選択) は従来どおり残す
+#define PANEL_WIDE_NONE  0
+#define PANEL_WIDE_FFT   1
+#define PANEL_WIDE_SCOPE 2
+#define SCOPE_COLS_WIDE 310
+static uint8_t panel_wide = PANEL_WIDE_NONE;
+// 現在のパネル幅 (描画・タッチ判定の両方で使う)
+static inline int panel_w(uint8_t which)
+{
+	return (panel_wide == which) ? 320 : PANEL_W;
+}
 
 // カラーパレット
 #define C_STATUS_BG lgfx::color565(8, 20, 45)
@@ -405,16 +420,28 @@ static void draw_status(void)
 //==================================================================
 #define EQ_BAR_COUNT 29          // 1点 = 1bin (31.25Hz)、bin10〜38
 #define EQ_BIN_START 10          // 312.5Hz
-#define EQ_BAR_PITCH 5           // 5px/bin
+#define EQ_BAR_PITCH 5           // 5px/bin (全幅表示では 2 倍)
 #define EQ_X0 6
 #define EQ_BASE_Y 54
 #define EQ_PLOT_H 42
 #define EQ_F_MIN 312.5f          // bin10 の中心周波数
-#define EQ_HZ_PER_PX (31.25f / (float)EQ_BAR_PITCH)
+
+// 全幅表示ではピッチと左端を 2 倍にして横幅いっぱいに広げる。
+// 周波数レンジは変えないので、目盛りの間隔だけが広がる
+static inline int eq_pitch(void)  { return (panel_wide == PANEL_WIDE_FFT) ? EQ_BAR_PITCH * 2 : EQ_BAR_PITCH; }
+static inline int eq_x0(void)     { return (panel_wide == PANEL_WIDE_FFT) ? EQ_X0 * 2 : EQ_X0; }
+static inline float eq_hz_per_px(void) { return 31.25f / (float)eq_pitch(); }
+#define EQ_HZ_PER_PX (eq_hz_per_px())
 
 static int eq_x_of_hz(float f)
 {
-	return EQ_X0 + (int)((f - EQ_F_MIN) / EQ_HZ_PER_PX + 0.5f);
+	return eq_x0() + (int)((f - EQ_F_MIN) / eq_hz_per_px() + 0.5f);
+}
+
+//	パネル内の x 座標 → 周波数 (タッチのトーン選択用)
+static float eq_hz_of_x(int x)
+{
+	return EQ_F_MIN + (float)(x - eq_x0()) * eq_hz_per_px();
 }
 
 static void draw_fft_panel(void)
@@ -439,8 +466,10 @@ static void draw_fft_panel(void)
 	disp_max += (fmax * 1.15f - disp_max) * 0.05f;
 	if (disp_max < 8000.0f) disp_max = 8000.0f;
 
+	const int pw = panel_w(PANEL_WIDE_FFT);
+	const int px0 = eq_x0(), ppitch = eq_pitch();
 	fft_spr.fillSprite(C_PANEL_BG);
-	fft_spr.drawRect(0, 0, PANEL_W, PANEL_H, C_FRAME);
+	fft_spr.drawRect(0, 0, pw, PANEL_H, C_FRAME);
 
 	// TONE選択レンジ(600〜1000Hz)のガイド帯 + 境界線
 	{
@@ -487,9 +516,9 @@ static void draw_fft_panel(void)
 		}
 		// 塗り (点間は線形補間)
 		for (int b = 0; b < EQ_BAR_COUNT - 1; b++) {
-			int x = EQ_X0 + b * EQ_BAR_PITCH;
-			for (int dx = 0; dx < EQ_BAR_PITCH; dx++) {
-				int yy = y_pt[b] + ((y_pt[b + 1] - y_pt[b]) * dx) / EQ_BAR_PITCH;
+			int x = px0 + b * ppitch;
+			for (int dx = 0; dx < ppitch; dx++) {
+				int yy = y_pt[b] + ((y_pt[b + 1] - y_pt[b]) * dx) / ppitch;
 				if (yy < EQ_BASE_Y) {
 					fft_spr.drawFastVLine(x + dx, yy, EQ_BASE_Y - yy, C_EQ_FILL);
 				}
@@ -497,14 +526,14 @@ static void draw_fft_panel(void)
 		}
 		// エンベロープライン
 		for (int b = 0; b < EQ_BAR_COUNT - 1; b++) {
-			int x = EQ_X0 + b * EQ_BAR_PITCH;
-			fft_spr.drawLine(x, y_pt[b], x + EQ_BAR_PITCH, y_pt[b + 1], C_EQ_LINE);
+			int x = px0 + b * ppitch;
+			fft_spr.drawLine(x, y_pt[b], x + ppitch, y_pt[b + 1], C_EQ_LINE);
 		}
 		// ピークホールド (bin毎の白マーカー)
 		for (int b = 0; b < EQ_BAR_COUNT; b++) {
 			if (peak_px[b] > 1.0f) {
-				int x = EQ_X0 + b * EQ_BAR_PITCH - 1;
-				if (x < EQ_X0) x = EQ_X0;
+				int x = px0 + b * ppitch - 1;
+				if (x < px0) x = px0;
 				fft_spr.drawFastHLine(x, EQ_BASE_Y - (int)(peak_px[b] + 0.5f), 3, C_EQ_PEAK);
 			}
 		}
@@ -537,7 +566,7 @@ static void draw_fft_panel(void)
 		fft_spr.setCursor(4, 3);
 		fft_spr.print("FFT");
 		fft_spr.setTextColor(C_GATE);
-		fft_spr.setCursor(PANEL_W - 4 - (int)strlen(pkbuf) * 6, 3);
+		fft_spr.setCursor(pw - 4 - (int)strlen(pkbuf) * 6, 3);
 		fft_spr.print(pkbuf);
 
 		// 入力レベルメーター (dB スケール、LVL_DB_MIN〜0 dBFS を全幅)。
@@ -603,11 +632,13 @@ static void draw_fft_panel(void)
 //==================================================================
 static void draw_scope_panel(void)
 {
-	static scope_col_t cols[SCOPE_COLS];
+	static scope_col_t cols[SCOPE_COLS_WIDE];
 	static float raw_max = 100.0f;
 	static float env_max = 500.0f;
 
-	dsp_get_scope(cols, SCOPE_COLS);
+	const int pw = panel_w(PANEL_WIDE_SCOPE);
+	const int ncol = (panel_wide == PANEL_WIDE_SCOPE) ? SCOPE_COLS_WIDE : SCOPE_COLS;
+	dsp_get_scope(cols, ncol);
 
 	const int x0 = 4;
 	const int text_h = 16;                // デコード文字行 (lgfxJapanGothicP_16)
@@ -621,7 +652,7 @@ static void draw_scope_panel(void)
 
 	// AGC (生波形/エンベロープ別)
 	float rmax = 0.0f, emax = 0.0f;
-	for (int i = 0; i < SCOPE_COLS; i++) {
+	for (int i = 0; i < ncol; i++) {
 		float a = (float)((cols[i].mx > -cols[i].mn) ? cols[i].mx : -cols[i].mn);
 		if (a > rmax) rmax = a;
 		if ((float)cols[i].mag > emax) emax = (float)cols[i].mag;
@@ -632,13 +663,13 @@ static void draw_scope_panel(void)
 	if (env_max < 400.0f) env_max = 400.0f;
 
 	scope_spr.fillSprite(C_PANEL_BG);
-	scope_spr.drawRect(0, 0, PANEL_W, PANEL_H, C_FRAME);
+	scope_spr.drawRect(0, 0, pw, PANEL_H, C_FRAME);
 	if (show_raw) {
-		scope_spr.drawFastHLine(x0, mid_y, SCOPE_COLS, lgfx::color565(20, 40, 55));
+		scope_spr.drawFastHLine(x0, mid_y, ncol, lgfx::color565(20, 40, 55));
 	}
 
 	int prev_ey = -1;
-	for (int i = 0; i < SCOPE_COLS; i++) {
+	for (int i = 0; i < ncol; i++) {
 		int x = x0 + i;
 
 		// 生波形 min/max バンド
@@ -678,24 +709,28 @@ static void draw_scope_panel(void)
 		scope_spr.setTextColor(C_TEXT_NEW);
 		for (int i = 0; i < TICKER_N; i++) {
 			uint32_t col = ticker[i].col;
-			if (col == 0 || col >= cur || (cur - col) > (uint32_t)SCOPE_COLS + 8) continue;
-			int x = x0 + (SCOPE_COLS - 1) - (int)(cur - 1 - col);   // 符号区間の中央
+			if (col == 0 || col >= cur || (cur - col) > (uint32_t)ncol + 8) continue;
+			int x = x0 + (ncol - 1) - (int)(cur - 1 - col);   // 符号区間の中央
 			char u8[4];
 			utf8_encode(codepoint_of(ticker[i].ch), u8);
 			int w = scope_spr.textWidth(u8);
 			int tx = x - w / 2;
-			if (tx + w <= 1 || tx >= PANEL_W - 1) continue;
+			if (tx + w <= 1 || tx >= pw - 1) continue;
 			scope_spr.setCursor(tx, 0);
 			scope_spr.print(u8);
 		}
 	}
 
-	// 波形ON/OFFボタン (下段)
-	draw_panel_button(&scope_spr, 4, 48, 46, 17, "KEY", show_key);
-	draw_panel_button(&scope_spr, 57, 48, 46, 17, "ENV", show_env);
-	draw_panel_button(&scope_spr, 110, 48, 46, 17, "RAW", show_raw);
+	// 波形ON/OFFボタン (下段)。全幅表示にしてもスプライトの原点が
+	// 画面左端へ移るだけで、ボタンは画面上の同じ位置 (右半分) に置く
+	{
+		const int bx = (panel_wide == PANEL_WIDE_SCOPE) ? PANEL_W : 0;
+		draw_panel_button(&scope_spr, bx + 4, 48, 46, 17, "KEY", show_key);
+		draw_panel_button(&scope_spr, bx + 57, 48, 46, 17, "ENV", show_env);
+		draw_panel_button(&scope_spr, bx + 110, 48, 46, 17, "RAW", show_raw);
+	}
 
-	scope_spr.pushSprite(PANEL_W, PANEL_TOP);
+	scope_spr.pushSprite((panel_wide == PANEL_WIDE_SCOPE) ? 0 : PANEL_W, PANEL_TOP);
 }
 
 //==================================================================
@@ -844,18 +879,36 @@ void *display_sprite_arena(size_t need)
 
 //	デコーダ画面の3枚を共有バッファの先頭から並べる。時計画面から戻ったとき
 //	中身は壊れているが、毎フレーム fillSprite から描くので問題ない
+//	全幅表示のときは隠れる側を描かないので、その 1 枚ぶんのバッファを
+//	広げる側に回す (共有バッファ 89KB の容量内に収まる)
 static void alloc_sprites(void)
 {
 	const size_t n_status = SPRITE_BYTES_16(320, STATUS_H);
 	const size_t n_panel = SPRITE_BYTES_16(PANEL_W, PANEL_H);
-	uint8_t *base = (uint8_t *)display_sprite_arena(n_status + n_panel * 2);
+	const size_t n_wide = SPRITE_BYTES_16(320, PANEL_H);
+	const size_t need = n_status + ((panel_wide != PANEL_WIDE_NONE) ? n_wide : n_panel * 2);
+	uint8_t *base = (uint8_t *)display_sprite_arena(need);
 	if (!base) return;
 	status_spr.setColorDepth(16);
 	status_spr.setBuffer(base, 320, STATUS_H);
 	fft_spr.setColorDepth(16);
-	fft_spr.setBuffer(base + n_status, PANEL_W, PANEL_H);
 	scope_spr.setColorDepth(16);
-	scope_spr.setBuffer(base + n_status + n_panel, PANEL_W, PANEL_H);
+	if (panel_wide == PANEL_WIDE_FFT) {
+		fft_spr.setBuffer(base + n_status, 320, PANEL_H);
+	} else if (panel_wide == PANEL_WIDE_SCOPE) {
+		scope_spr.setBuffer(base + n_status, 320, PANEL_H);
+	} else {
+		fft_spr.setBuffer(base + n_status, PANEL_W, PANEL_H);
+		scope_spr.setBuffer(base + n_status + n_panel, PANEL_W, PANEL_H);
+	}
+}
+
+//	全幅表示の切り替え。スプライトを取り直し、下段を一度消してから描き直す
+static void set_panel_wide(uint8_t which)
+{
+	panel_wide = (panel_wide == which) ? PANEL_WIDE_NONE : which;
+	alloc_sprites();
+	display_lcd()->fillRect(0, PANEL_TOP, 320, PANEL_H, C_PANEL_BG);
 }
 
 
@@ -893,10 +946,43 @@ void display_enqueue(uint8_t ch)
 #define CENTER_Y0 60
 #define CENTER_Y1 140
 
+//	下段パネルのダブルタップ判定。抵抗膜なので座標が少しぶれる前提で、
+//	近い位置・短い間隔の 2 回を 1 組とみなす
+#define DTAP_MS 400
+#define DTAP_DIST 40
+static uint32_t dtap_ms = 0;
+static int16_t dtap_x = 0, dtap_y = 0;
+//	FFT のシングルタップ (トーン選択) は、ダブルタップの 1 打目で
+//	トーンが動かないよう DTAP_MS だけ保留してから実行する
+static uint8_t tone_pending = 0;
+static float tone_pending_hz = 0.0f;
+static uint32_t tone_pending_ms = 0;
+
+//	保留したトーン選択を確定させる (ダブルタップが来なかったとき)
+static void flush_tone_pending(void)
+{
+	if (!tone_pending || (millis() - tone_pending_ms) < DTAP_MS) return;
+	tone_pending = 0;
+	const float f = tone_pending_hz;
+	if (f < 400.0f || f > 1200.0f) return;
+	uint8_t best = 0;
+	float best_d = 1e9f;
+	for (uint8_t i = 0; i < DSP_TONE_COUNT; i++) {
+		float d = fabsf(f - (float)dsp_tone_hz_at(i));
+		if (d < best_d) {
+			best_d = d;
+			best = i;
+		}
+	}
+	dsp_set_tone(best);
+}
+
 static void poll_touch(void)
 {
 	static uint8_t touching = 0;
 	static uint32_t last_act_ms = 0;
+
+	flush_tone_pending();
 
 	int32_t x, y;
 	uint8_t now = (lcd.getTouch(&x, &y) > 0);
@@ -939,34 +1025,43 @@ static void poll_touch(void)
 					center_tap_fn();
 					last_act_ms = t;
 				}
-			} else if (y >= PANEL_TOP + 44 && x >= PANEL_W) {
-				// スコープの波形ON/OFFボタン (下段)
-				int lx = (int)x - PANEL_W;
-				if (lx >= 4 && lx < 51) {
-					show_key ^= 1;
-					last_act_ms = t;
-				} else if (lx >= 57 && lx < 104) {
-					show_env ^= 1;
-					last_act_ms = t;
-				} else if (lx >= 110 && lx < 157) {
-					show_raw ^= 1;
-					last_act_ms = t;
+			} else if (y >= PANEL_TOP) {
+				// 下段パネル。スコープ側にオシロの波形ON/OFFボタンがある。
+				// それ以外の場所はダブルタップで全幅表示を切り替える。
+				// FFT のシングルタップはトーン選択なので、ダブルタップの
+				// 1 打目でトーンが動かないよう保留して、2 打目が来たら取り消す
+				const uint8_t on_scope =
+					(panel_wide == PANEL_WIDE_SCOPE) ? 1 :
+					(panel_wide == PANEL_WIDE_FFT) ? 0 : (x >= PANEL_W);
+				uint8_t handled = 0;
+
+				// ボタンは全幅表示でも画面上の位置が変わらないので、
+				// 当たり判定も画面座標のまま (右半分の相対位置) で見る
+				if (on_scope && y >= PANEL_TOP + 44) {
+					const int bx = (int)x - PANEL_W;
+					if (bx >= 4 && bx < 51)        { show_key ^= 1; handled = 1; }
+					else if (bx >= 57 && bx < 104) { show_env ^= 1; handled = 1; }
+					else if (bx >= 110 && bx < 157){ show_raw ^= 1; handled = 1; }
+					if (handled) last_act_ms = t;
 				}
-			} else if (y >= PANEL_TOP && x < PANEL_W) {
-				// FFTパネル: タップ位置の周波数に最も近いトーンを選択
-				float f = EQ_F_MIN + (float)(x - EQ_X0) * EQ_HZ_PER_PX;
-				if (f >= 400.0f && f <= 1200.0f) {
-					uint8_t best = 0;
-					float best_d = 1e9f;
-					for (uint8_t i = 0; i < DSP_TONE_COUNT; i++) {
-						float d = fabsf(f - (float)dsp_tone_hz_at(i));
-						if (d < best_d) {
-							best_d = d;
-							best = i;
-						}
+				if (!handled) {
+					const uint8_t dbl = (dtap_ms != 0) && ((t - dtap_ms) < DTAP_MS) &&
+					                    (abs((int)x - dtap_x) < DTAP_DIST) &&
+					                    (abs((int)y - dtap_y) < DTAP_DIST);
+					dtap_ms = t;
+					dtap_x = (int16_t)x;
+					dtap_y = (int16_t)y;
+					if (dbl) {
+						tone_pending = 0;          // 1 打目のトーン選択を取り消す
+						dtap_ms = 0;               // 3 打目を 2 打目にしない
+						set_panel_wide(on_scope ? PANEL_WIDE_SCOPE : PANEL_WIDE_FFT);
+						last_act_ms = t;
+					} else if (!on_scope) {
+						// FFT の 1 打目: ダブルタップでなければ後でトーン選択
+						tone_pending = 1;
+						tone_pending_hz = eq_hz_of_x((int)x);
+						tone_pending_ms = t;
 					}
-					dsp_set_tone(best);
-					last_act_ms = t;
 				}
 			}
 		}
@@ -1004,6 +1099,6 @@ void display_update(void)
 		text_putchar(ch);
 	}
 	draw_status();
-	draw_fft_panel();
-	draw_scope_panel();
+	if (panel_wide != PANEL_WIDE_SCOPE) draw_fft_panel();
+	if (panel_wide != PANEL_WIDE_FFT) draw_scope_panel();
 }
