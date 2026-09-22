@@ -243,14 +243,17 @@ environment は LCD コントローラごとに分けてあります。
 
 | environment | パネル | 出力 |
 |---|---|---|
-| `esp32dev` (既定) | ST7789 | `.pio/build/esp32dev/firmware.bin` |
-| `esp32dev_ili9341` | ILI9341 | `.pio/build/esp32dev_ili9341/firmware.bin` |
+| `esp32dev` | ST7789 | `.pio/build/esp32dev/firmware.bin` |
+| `esp32dev_ili9341` (既定) | ILI9341 | `.pio/build/esp32dev_ili9341/firmware.bin` |
 
 ```sh
-pio run                                    # 既定 (ST7789)
-pio run -e esp32dev_ili9341                # ILI9341
+pio run                                    # 既定 (ILI9341)
+pio run -e esp32dev                        # ST7789
 pio run -e esp32dev -e esp32dev_ili9341    # 両方
 ```
+
+`default_envs` が ILI9341 なので、`pio run -t upload` は ILI9341 用を焼きます。
+**ST7789 のボードへ書き込むときは `-e esp32dev` を明示してください。**
 
 **焼くパネルと一致しない bin を書き込むと、表示の基準面が 180° ずれてタッチの
 回転補正も連動して狂います。** 起動時にシリアル (115200) へ `[lcd] panel = ...` と
