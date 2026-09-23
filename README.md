@@ -2,7 +2,7 @@
 
 ESP32 ボード (2.8inch CYD 系: ST7789 / ILI9341 240x320 + XPT2046 タッチ) で動作する CW Decoder です。  
 VS Code + PlatformIO + Arduino + LovyanGFX でビルドできます。  
-現在のバージョンは `v2.7` です (`src/version.h` の `FW_VERSION`)。
+現在のバージョンは `v2.8` です (`src/version.h` の `FW_VERSION`)。
 
 CH32V003 / CH32V006 (UIAPduino) 版は
 [UIAP_CWDecoder2](https://github.com/pokibon3/UIAP_CWDecoder2) を参照してください
@@ -358,6 +358,13 @@ CA が変わったときに「更新できないファームを更新で直せ�
   - LCD コントローラ ST7789 / ILI9341 両対応（自動判定 + ビルドフラグ）
   - 音声入力を I2S ADC から ADC continuous DMA (32kHz 取得 → 4 点平均で 8kHz) に変更
   - ±167Hz 近サイドビンによる広帯域ノイズ棄却、入力レベルメータ、Peak 表示の安定化
+- V2.8
+  - 自動更新が「更新を開始できませんでした」で止まるのを修正。`Update.begin()` が
+    要求する 4KB の作業バッファを **TLS 接続を張った後**に取っていたため、空きの合計は
+    足りていても連続領域が取れず落ちていた (実機で発生)。サイズは latest.txt から
+    分かっているので、接続前に `Update.begin()` を済ませるようにした
+  - あわせて Content-Length が latest.txt のサイズと食い違うときは進めないようにし、
+    失敗時のメッセージを実態に合わせた (容量不足と誤読させない)
 - V2.7
   - SETUP の項目の並びを整理し、名前を短く揃えた
     (`ファームウェアアップデート` → `FW更新`、`自動更新` → `FW自動更新`、

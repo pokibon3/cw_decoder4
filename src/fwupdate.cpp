@@ -203,10 +203,27 @@ static void sync_time(void)
 //	bin を取ってきて非アクティブ側へ書く。成功したら true (呼び出し側が再起動する)
 static bool download_and_flash(const String &url, size_t size, const String &md5)
 {
+	// Update の作業バッファ (4KB) は TLS を張る前に確保する。
+	// mbedTLS がヒープを大きく取った後だと、空きの合計は足りていても
+	// 連続した 4KB が取れずに begin() が落ちる (実機で発生した)。
+	// サイズは latest.txt から分かっているので先に始められる。
+	Serial.printf("[upd] update begin: size=%u heap=%u max_block=%u\n",
+	              (unsigned)size, (unsigned)ESP.getFreeHeap(),
+	              (unsigned)ESP.getMaxAllocHeap());
+	if (!Update.begin(size)) {
+		Update.printError(Serial);
+		draw_status("更新を開始できませんでした", C_ERR);
+		return false;
+	}
+	if (md5.length() == 32) {
+		Update.setMD5(md5.c_str());     // 配布物と一致しなければ end() で弾かれる
+	}
+
 	WiFiClientSecure client;
 	HTTPClient http;
 
 	if (!http_begin(http, client, url)) {
+		Update.abort();
 		draw_status("ダウンロードを開始できません", C_ERR);
 		return false;
 	}
@@ -215,24 +232,22 @@ static bool download_and_flash(const String &url, size_t size, const String &md5
 		Serial.printf("[upd] bin GET failed: %d\n", code);
 		draw_status("ダウンロードに失敗しました", C_ERR);
 		http.end();
+		Update.abort();
 		return false;
 	}
 
+	// chunked 等でサイズが取れないときは latest.txt の値をそのまま使う。
+	// 取れたのに食い違うときは配布物がおかしいので進めない
 	int len = http.getSize();
-	if (len <= 0) {
-		len = (int)size;            // chunked 等でサイズが取れないときは latest.txt の値
-	}
-	Serial.printf("[upd] downloading %d bytes\n", len);
-
-	if (!Update.begin((size_t)len)) {
-		Update.printError(Serial);
-		draw_status("書き込み領域が足りません", C_ERR);
+	if (len > 0 && (size_t)len != size) {
+		Serial.printf("[upd] size mismatch: %d != %u\n", len, (unsigned)size);
+		draw_status("配布物のサイズが一致しません", C_ERR);
 		http.end();
+		Update.abort();
 		return false;
 	}
-	if (md5.length() == 32) {
-		Update.setMD5(md5.c_str());     // 配布物と一致しなければ end() で弾かれる
-	}
+	len = (int)size;
+	Serial.printf("[upd] downloading %d bytes\n", len);
 
 	draw_bar(0);
 	WiFiClient *stream = http.getStreamPtr();
