@@ -37,7 +37,7 @@ jobs:
         run: |
           mkdir -p _site
           # 実行に要るものだけを置く (C ソースやビルド用スクリプトは配らない)
-          cp web/index.html web/app.js web/cw-worklet.js web/cwcore.wasm _site/
+          cp web/index.html web/manual.html web/app.js web/cw-worklet.js web/cwcore.wasm _site/
           # 単一ファイル版も置く (他所へ 1 枚だけ持っていきたいとき用)
           python3 web/bundle.py
           cp web/cw-decoder.html _site/

@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CW Decoder 4 — 使い方</title>
+<style>
+:root {
+  --bg: #0b0f14; --panel: #111823; --line: #28374b;
+  --tx: #d8dee6; --dim: #8b94a3; --accent: #5a96d2;
+  --amber: #fac775; --green: #5adc78;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0 auto; padding: 20px 18px 60px; max-width: 760px;
+  background: var(--bg); color: var(--tx);
+  font: 14px/1.85 -apple-system, BlinkMacSystemFont, "Segoe UI", "Hiragino Sans", "Noto Sans JP", sans-serif;
+}
+a { color: var(--accent); }
+h1 { font-size: 20px; margin: 0 0 4px; }
+h1 small { display: block; color: var(--dim); font-size: 13px; font-weight: 400; margin-top: 4px; }
+h2 {
+  font-size: 16px; margin: 34px 0 10px; padding-bottom: 5px;
+  border-bottom: 1px solid var(--line);
+}
+h3 { font-size: 14px; margin: 20px 0 6px; color: var(--amber); }
+p, li { margin: 0 0 8px; }
+ul, ol { padding-left: 22px; }
+code {
+  background: #0a121c; border: 1px solid var(--line); border-radius: 3px;
+  padding: 1px 5px; font-size: 12.5px;
+}
+table { border-collapse: collapse; width: 100%; margin: 10px 0 14px; font-size: 13px; }
+th, td { border: 1px solid var(--line); padding: 5px 9px; text-align: left; vertical-align: top; }
+th { background: var(--panel); font-weight: 600; }
+.note {
+  background: var(--panel); border: 1px solid var(--line);
+  border-left: 3px solid var(--amber); border-radius: 0 6px 6px 0;
+  padding: 10px 14px; margin: 14px 0;
+}
+.note.warn { border-left-color: #eb4638; }
+.note p:last-child, .note ul:last-child { margin-bottom: 0; }
+.back {
+  display: inline-block; margin-bottom: 18px; font-size: 13px;
+  border: 1px solid var(--line); border-radius: 5px; padding: 3px 12px;
+  text-decoration: none;
+}
+.back:hover { border-color: var(--accent); }
+nav.toc {
+  background: var(--panel); border: 1px solid var(--line);
+  border-radius: 8px; padding: 10px 16px; margin: 18px 0 8px;
+}
+nav.toc ol { margin: 0; padding-left: 20px; }
+nav.toc li { margin: 2px 0; }
+footer {
+  margin-top: 40px; padding-top: 12px; border-top: 1px solid var(--line);
+  color: var(--dim); font-size: 12px; line-height: 1.7;
+}
+</style>
+</head>
+<body>
+
+<a class="back" href="index.html">&larr; デコーダへ戻る</a>
+
+<h1>CW Decoder 4 — 使い方
+  <small>ブラウザで動くモールス信号デコーダ。ESP32 版のファームウェアと同じ信号処理を
+  そのまま WebAssembly で動かしています。インストールは不要です。</small>
+</h1>
+
+<nav class="toc">
+  <ol>
+    <li><a href="#start">まずは動かしてみる</a></li>
+    <li><a href="#input">音声の入れ方</a></li>
+    <li><a href="#screen">画面の見方</a></li>
+    <li><a href="#control">操作</a></li>
+    <li><a href="#trouble">うまく読めないとき</a></li>
+    <li><a href="#note">仕様と制限</a></li>
+  </ol>
+</nav>
+
+<h2 id="start">1. まずは動かしてみる</h2>
+
+<p>
+  無線機もマイクも無しで試せます。<strong>テスト信号</strong>タブを開いて
+  <strong>送出</strong>を押してください。内蔵の CW 発生器が符号を送り、
+  デコードされた文字が画面に出ます。
+</p>
+<p>
+  <strong>S/N</strong> のスライダーを下げていくと、ノイズの中でどこまで読めるかが
+  その場で分かります。WPM とトーン周波数も変えられます。
+</p>
+
+<h2 id="input">2. 音声の入れ方</h2>
+
+<p>画面上部のタブで 4 通りから選びます。</p>
+
+<h3>マイク / ライン入力</h3>
+<p>
+  実際に無線機の音をデコードするときはこれです。
+  <strong>無線機の AF 出力 → USB オーディオ I/F → PC</strong> が最も確実で、
+  FT8 (WSJT-X など) を運用されているなら<strong>まったく同じ配線がそのまま使えます</strong>。
+  新しい機材は要りません。
+</p>
+<p>
+  PC 内部で鳴っている音 (SDR ソフトなど) は、仮想オーディオループバックを経由すると拾えます。
+  macOS なら BlackHole、Windows なら VB-CABLE やステレオミキサーです。
+</p>
+<p>
+  <strong>開始</strong>を押すとブラウザがマイクの使用許可を尋ねます。許可すると
+  デバイス一覧に実際の名前が出るので、使う入力を選び直してください。
+</p>
+<div class="note">
+  <p>
+    エコーキャンセル・ノイズ抑制・AGC は<strong>自動で無効化</strong>しています。
+    これらが効いているとブラウザが CW を「ノイズ」とみなして消してしまい、
+    まったくデコードできません。実際に無効化できたかは、開始後に状態行へ表示されます。
+  </p>
+  <p style="margin-top:6px">
+    <code>マイク/ライン: (デバイス名) — 48000Hz / 2ch → L / 前処理なし</code>
+  </p>
+</div>
+
+<h3>タブ音声</h3>
+<p>
+  WebSDR や動画など、<strong>ブラウザの別タブで鳴っている音</strong>をそのままデコードします。
+  仮想ループバックを入れなくても使えるのが利点です。
+</p>
+<p>
+  共有ダイアログでは<strong>タブ</strong>を選び、<strong>タブの音声も共有する</strong>に
+  必ずチェックを入れてください。Chrome 系のブラウザのみ対応しています
+  (Safari / Firefox は非対応)。
+</p>
+
+<h3>音声ファイル</h3>
+<p>
+  WAV / MP3 などを読み込んでデコードします。<strong>同じ音源で何度でも再現できる</strong>ので、
+  設定を変えたときの効き具合を比べるのに向いています。
+</p>
+<p>
+  先頭 / 5 秒戻し / 再生・一時停止 / 5 秒送り / 末尾 のボタンとシークバーがあります。
+  読み込むと音量を自動で適正レベル (-12 dBFS) に合わせます。
+</p>
+<p>
+  再生位置を動かすとデコーダの状態はリセットされます。符号の途中から始まるためで、
+  飛んだ直後の 1〜2 文字は化けることがあります。
+</p>
+
+<h3>テスト信号</h3>
+<p>
+  ハード無しで動作確認するための内蔵 CW 発生器です。WPM (8〜45)、トーン (450〜1050Hz)、
+  S/N (-6〜40dB)、送出する文字列を指定できます。
+</p>
+
+<h2 id="screen">3. 画面の見方</h2>
+
+<table>
+  <tr><th>場所</th><th>内容</th></tr>
+  <tr><td>大きな文字エリア</td>
+      <td>デコードされた文字。最新の 1 文字は緑で表示されます。
+          選択してコピーできるほか、<strong>コピー</strong>ボタンで全文をクリップボードへ送れます。
+          和文モードではカタカナで表示し、濁点・半濁点は前の文字と合成します</td></tr>
+  <tr><td>WPM</td><td>推定した送信速度。受信しながら自動で追従します</td></tr>
+  <tr><td>TONE</td><td>いま検出に使っているトーン周波数。AUTO では受信中の信号へ自動同調します</td></tr>
+  <tr><td>Peak</td><td>スペクトル上で実測したピーク周波数 (1 秒保持)</td></tr>
+  <tr><td>LVL</td><td>入力レベル (dBFS)。緑が適正、黄〜赤は過大。<code>CLIP</code> は振り切れ</td></tr>
+  <tr><td>sps</td><td>実効入力レート。正常は <code>8000</code>。赤く表示されたら音が取りこぼされています</td></tr>
+  <tr><td>FFT スペクトラム</td>
+      <td>約 300〜1200Hz。青い帯が TONE の選択レンジ (600〜1000Hz)、
+          黄色い帯が<strong>いま検出に使っている帯域</strong>、下の三角が中心です</td></tr>
+  <tr><td>オシロスコープ</td>
+      <td>生波形 (青)、トーンの強さ (アンバー)、キー判定 (緑のバー) を同じ時間軸で重ねています。
+          キーのバーの上に、その符号の位置でデコード文字が流れます</td></tr>
+</table>
+
+<h2 id="control">4. 操作</h2>
+
+<table>
+  <tr><th>操作</th><th>動作</th></tr>
+  <tr><td><strong>US</strong> / <strong>JP</strong></td><td>欧文 / 和文モードの切り替え</td></tr>
+  <tr><td><strong>AUTO</strong> (TONE ボタン)</td>
+      <td>押すたびに AUTO → 600 → 700 → 800 → 900 → 1000Hz と送り。
+          AUTO は受信中の最も強い信号へ自動同調します</td></tr>
+  <tr><td>FFT パネルを<strong>クリック</strong></td><td>その位置の周波数に最も近いトーンを手動選択</td></tr>
+  <tr><td>FFT / オシロを<strong>ダブルクリック</strong></td>
+      <td>そのパネルを横幅いっぱいに広げる。もう一度で戻ります。
+          見出しのクリックでも切り替わります</td></tr>
+  <tr><td><strong>x</strong> スライダー (オシロ)</td>
+      <td>時間軸の倍率 1.0〜3.0。上げると符号が太く描かれて見やすくなり、
+          そのぶん見える時間は短くなります</td></tr>
+  <tr><td><strong>KEY</strong> / <strong>ENV</strong> / <strong>RAW</strong></td>
+      <td>オシロの各波形の表示 ON/OFF</td></tr>
+  <tr><td><strong>入力BPF</strong></td>
+      <td>入力段のバンドパスフィルタ。<strong>基本は ON のまま</strong>にしてください
+          (理由は<a href="#bpf">下記</a>)</td></tr>
+  <tr><td>BPF の中心</td>
+      <td><strong>トーン追従</strong> (既定) は受信中の信号に合わせて動きます。
+          右に実際に効いている中心周波数が出ます。
+          <strong>700Hz 固定</strong>は実機のハードと同じ条件です</td></tr>
+  <tr><td><strong>Q</strong></td><td>BPF の鋭さ。既定 3.0。上げすぎないでください (<a href="#bpf">下記</a>)</td></tr>
+  <tr><td><strong>ch</strong></td>
+      <td>ステレオ入力のどの系統を使うか。<strong>片チャンネルだけに無線機を繋いでいるときは
+          L か R を選んでください</strong>。L+R にすると空いている側のノイズが混ざります</td></tr>
+  <tr><td><strong>入力ゲイン</strong></td>
+      <td>-40〜+40dB。レベルメーターを見ながら黄色より左に収めます</td></tr>
+  <tr><td><strong>モニター音</strong></td><td>入力音をスピーカーへ出す (マイク使用時はハウリングに注意)</td></tr>
+  <tr><td><strong>クリア</strong></td><td>デコード文字を消去</td></tr>
+</table>
+
+<h2 id="trouble">5. うまく読めないとき</h2>
+
+<p>上から順に確認してください。</p>
+
+<h3 id="bpf">入力BPF が ON か</h3>
+<p>
+  <strong>これが一番効きます。</strong>実機は ADC の手前にアナログのバンドパスフィルタが
+  入っており、デコーダのしきい値はその帯域制限された入力を前提に調整されています。
+  ブラウザには素の全帯域音声が入るので、BPF が無いと帯域外のノイズが
+  内部のノイズ床推定を押し上げ、しきい値が信号に迫ってしまいます。
+</p>
+<p>
+  ノイズ混じりの録音での実測では、<strong>BPF なし 44% → あり 93%</strong>
+  (正解文との文字一致率) でした。
+</p>
+<div class="note warn">
+  <p>
+    <strong>Q は上げすぎないでください。</strong>帯域を狭くしすぎると、
+    フィルタ自身がノイズを「純音らしく」整形してしまい、信号が無いのに文字が出ます。
+    純ノイズ 60 秒での偽文字は Q=3 で 0 個、Q=5 で 8 個、Q=8 で 144 個でした。
+    既定の 3.0 は、偽符号が出ない範囲で最大限ノイズを削れる値です。
+  </p>
+</div>
+
+<h3>ch の選択 (ステレオ入力のとき)</h3>
+<p>
+  ステレオ I/F の片チャンネルだけに無線機を繋いでいる場合、<code>L+R</code> にすると
+  空いている側のノイズを足し込むことになります。合成信号での実測では、
+  条件によっては<strong>読めていたものが完全に読めなくなる</strong>ほどの差が出ました。
+  信号の載っている側を選んでください。
+</p>
+
+<h3>入力レベル</h3>
+<p>
+  レベルメーターが黄〜赤なら入力ゲインを下げます。目安は -24〜-12 dBFS です。
+  <code>CLIP</code> が点いていなくても、黄より右は過大です。
+</p>
+
+<h3>ブラウザの前処理</h3>
+<p>
+  マイク入力の開始後、状態行に <code>⚠ noiseSuppression が無効化できていません</code>
+  のような警告が出たら、そのブラウザが無効化の要求を受け入れていません。
+  CW が消されてしまうので、別のブラウザ (Chrome 系) をお試しください。
+</p>
+
+<h3>sps 表示</h3>
+<p>
+  状態行右の実効入力レートが <code>8000</code> を割って赤くなっている場合、
+  音が取りこぼされています。符号の長さが狂うので速度推定ごと崩れます。
+  他の重いタブを閉じる、モニター音を切る、などをお試しください。
+</p>
+
+<h3>受信開始直後の 1 文字目</h3>
+<p>
+  振幅しきい値と速度推定が収束する前に当たるため、化けることがあります。
+  これは実機と同じ挙動で、異常ではありません。
+</p>
+
+<h2 id="note">6. 仕様と制限</h2>
+
+<ul>
+  <li><strong>タブを裏に回すと画面の更新は止まります</strong>が、デコードは動き続けます。
+      戻れば溜まった文字がそのまま出ます</li>
+  <li>マイクを使うには初回に許可が必要です。許可の記憶はブラウザごと・サイトごとです</li>
+  <li>タブ音声の取り込みは Chrome 系のみです</li>
+  <li>スマートフォンでも動きますが、iPhone / iPad はライン入力が無いため
+      音響結合 (スピーカーの音をマイクで拾う) になります</li>
+  <li>デコードの中核は ESP32 版ファームウェアと<strong>同一のソース</strong>を
+      WebAssembly にしたものです。時計・WiFi・OTA など実機固有の機能はありません</li>
+</ul>
+
+<footer>
+  <p>
+    モールスデコーダ部分は Hjalmar Skovholm Hansen OZ1JHM 氏の
+    <a href="http://oz1jhm.dk/content/very-simpel-cw-decoder-easy-build" rel="noopener">Arduino 用 CW Decoder</a>
+    を一部流用しており、オリジナルの
+    <a href="http://www.gnu.org/copyleft/gpl.html" rel="noopener">GPL</a> ライセンス条件が適用されます。
+  </p>
+  <p>
+    ソース・実機版のファームウェア:
+    <a href="https://github.com/pokibon3/cw_decoder4" rel="noopener">github.com/pokibon3/cw_decoder4</a>
+  </p>
+  <p><a href="index.html">&larr; デコーダへ戻る</a></p>
+</footer>
+
+</body>
+</html>

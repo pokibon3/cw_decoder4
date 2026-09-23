@@ -57,8 +57,13 @@ def main() -> int:
         + "\n</script>"
     )
 
+    body = html[:start] + inlined + html[end:]
+    # 単一ファイル版は 1 枚で完結させるので、別ファイルであるマニュアルへの
+    # リンクは外す (リンク先が無い状態で残すと切れたリンクになる)
+    body = body.replace('<a class="manual" href="manual.html">使い方</a>', "")
+
     out = HERE / "cw-decoder.html"
-    out.write_text(html[:start] + inlined + html[end:], encoding="utf-8")
+    out.write_text(body, encoding="utf-8")
     out.chmod(0o644)
     size = out.stat().st_size
     print(f"built {out} ({size} bytes, {size / 1024:.0f}KB)")

@@ -7,7 +7,7 @@
      localhost のとき app.js 側でクエリを付けて外しているが、入口である
      この index.html 自体はそれができないのでヘッダで指定する -->
 <meta http-equiv="Cache-Control" content="no-cache, must-revalidate">
-<title>CW Decoder</title>
+<title>CW Decoder 4</title>
 <style>
 :root {
   --bg: #0b0f14;
@@ -30,7 +30,13 @@ body {
   display: flex; flex-direction: column; gap: 7px; min-height: 100%;
 }
 h1 { font-size: 14px; margin: 0; font-weight: 600; letter-spacing: .04em; }
-h1 small { color: var(--dim); font-weight: 400; margin-left: 8px; font-size: 12px; }
+h1 { display: flex; align-items: baseline; gap: 8px; }
+h1 small { color: var(--dim); font-weight: 400; font-size: 12px; }
+h1 .manual {
+  margin-left: auto; font-size: 12px; font-weight: 400; color: var(--accent);
+  border: 1px solid var(--line); border-radius: 5px; padding: 2px 10px; text-decoration: none;
+}
+h1 .manual:hover { border-color: var(--accent); }
 
 .card {
   background: var(--panel); border: 1px solid var(--line);
@@ -124,7 +130,10 @@ footer a { color: var(--accent); }
 </head>
 <body>
 
-<h1>CW Decoder <small>ESP32 版と同一の DSP / デコーダを WebAssembly で実行</small></h1>
+<h1>CW Decoder 4
+  <small>ESP32 版と同一の DSP / デコーダを WebAssembly で実行</small>
+  <a class="manual" href="manual.html">使い方</a>
+</h1>
 
 <!-- ============ 入力元 ============ -->
 <div class="card">
