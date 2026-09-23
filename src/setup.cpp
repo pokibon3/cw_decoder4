@@ -3,15 +3,16 @@
 //
 //	2列 x 5行のグリッド (9項目、最終行の右列は空き)。
 //
-//	┌ SETUP                              [戻る] ┐
-//	│ [ WiFi設定 ]        [ 時刻合わせ ]        │
-//	│ [ 夏時間: ON ]      [ スコープ: ON ]      │
-//	│ [ タッチ: 既定値 ]  [ FW更新 ]            │
-//	│ [ 自動更新: ON ]    [ 初期化 ]            │
-//	│ [ About ]                                 │
-//	└───────────────────────────────────────────┘
+//	┌ SETUP                                [戻る] ┐
+//	│ [ WiFi設定 ]         [ 時刻合わせ ]         │
+//	│ [ FW更新 ]           [ 夏時間: ON ]         │
+//	│ [ FW自動更新: ON ]   [ タッチパネル調整 ]   │
+//	│ [ ログ出力: ON ]     [ 初期化 ]             │
+//	│ [ About ]                                   │
+//	└─────────────────────────────────────────────┘
 //
-//	タッチ → touchcal / FW更新 → ota (SoftAP) / About → about_run
+//	FW更新 → ota (SoftAP+ブラウザで手動アップロード)
+//	タッチパネル調整 → touchcal / About → about_run
 //
 //	「自動更新」は起動時 (スプラッシュ表示中) に WiFi 経由で新しい
 //	ファームウェアを自動チェックするかどうかの ON/OFF (fwupdate.cpp)。
@@ -166,19 +167,18 @@ static void draw_screen(void)
 	draw_button(BACK_X, BACK_Y, BACK_W, BACK_H, "戻る", C_BTN_BG, C_BTN_BD, C_BTN_TX,
 	            &fonts::lgfxJapanGothicP_16);
 
-	char summer[40], scope[40], touch[40], upd[40];
+	char summer[40], scope[40], upd[40];
 	snprintf(summer, sizeof(summer), "夏時間: %s", clock_summer_time() ? "ON" : "OFF");
-	snprintf(scope, sizeof(scope), "スコープ: %s", scopelog_enabled() ? "ON" : "OFF");
-	snprintf(touch, sizeof(touch), "タッチ: %s", touchcal_saved() ? "調整済み" : "既定値");
-	snprintf(upd, sizeof(upd), "自動更新: %s", fwupdate_check_enabled() ? "ON" : "OFF");
+	snprintf(scope, sizeof(scope), "ログ出力: %s", scopelog_enabled() ? "ON" : "OFF");
+	snprintf(upd, sizeof(upd), "FW自動更新: %s", fwupdate_check_enabled() ? "ON" : "OFF");
 	const struct { const char *label; bool on; } items[ITEM_N] = {
 		{ "WiFi設定", false },
 		{ "時刻合わせ", false },
-		{ summer, clock_summer_time() != 0 },
-		{ scope, scopelog_enabled() != 0 },
-		{ touch, touchcal_saved() },
 		{ "FW更新", false },
+		{ summer, clock_summer_time() != 0 },
 		{ upd, fwupdate_check_enabled() },
+		{ "タッチパネル調整", false },
+		{ scope, scopelog_enabled() != 0 },
 		{ "初期化", false },
 		{ "About", false },
 	};
@@ -246,16 +246,7 @@ void setup_run(LGFX *lcd_)
 		case 1:
 			timeset_run(lcd);
 			break;
-		case 2:
-			clock_set_summer_time(!clock_summer_time());
-			break;
-		case 3:
-			scopelog_set_enabled(!scopelog_enabled());
-			break;
-		case 4:
-			touchcal_run(lcd);      // タッチの四隅校正 (DSP は動いたまま)
-			break;
-		case 5:
+		case 2:                     // FW更新 (SoftAP + ブラウザから手動アップロード)
 			if (display_confirm(lcd, "OTAモードに入ります",
 			            "受信を止めて WiFi を起動します",
 			            "更新が成功すると再起動します", "開始")) {
@@ -264,8 +255,17 @@ void setup_run(LGFX *lcd_)
 				ap_mode_leave();
 			}
 			break;
-		case 6:                     // 起動時アップデートチェック ON/OFF
+		case 3:
+			clock_set_summer_time(!clock_summer_time());
+			break;
+		case 4:                     // 起動時アップデートチェック ON/OFF
 			fwupdate_set_check_enabled(!fwupdate_check_enabled());
+			break;
+		case 5:
+			touchcal_run(lcd);      // タッチの四隅校正 (DSP は動いたまま)
+			break;
+		case 6:
+			scopelog_set_enabled(!scopelog_enabled());
 			break;
 		case 7:
 			if (display_confirm(lcd, "設定を初期化します",
