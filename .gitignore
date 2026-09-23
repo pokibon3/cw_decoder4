@@ -15,5 +15,12 @@ web/cw-decoder.html
 # web/tools/ に置いておけば「音声ファイル」タブから読ませて使える。
 # 調査記録が参照しているファイル名はそのまま残してあるので、
 # 手元に同名で置けば README の手順を再現できる。
+# 拡張子を並べると漏れるので、音声はディレクトリごと除外して
+# 必要なものだけ明示的に足す方針にする (m4a を取りこぼした実績あり)
 web/tools/*.mp3
 web/tools/*.wav
+web/tools/*.m4a
+web/tools/*.aac
+web/tools/*.flac
+web/tools/*.ogg
+web/tools/*.opus
