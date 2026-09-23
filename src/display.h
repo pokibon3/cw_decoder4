@@ -33,6 +33,9 @@ LGFX *display_lcd(void);            // 他画面 (時計/セットアップ/OTA)
 #define SPRITE_BYTES_16(w, h) (((size_t)(w) * (h) * 2 + 2 + 3) & ~(size_t)3)
 #define SPRITE_ARENA_BYTES (3 * SPRITE_BYTES_16(122, 122))   // 時計3枚分が最大
 void *display_sprite_arena(size_t need);   // need > SPRITE_ARENA_BYTES なら NULL
+// 起動時アップデートの書き換え直前にだけ呼ぶ (TLS に 89KB を回すため)。
+// 解放後はスプライトを使う描画ができないので、呼んだら必ず再起動すること
+void display_sprite_arena_free(void);
 
 // デコーダ画面の表示/非表示。非表示中も受信文字はグリッドに溜め続け
 // (描画だけ止める)、display_redraw() で最新状態を丸ごと描き直す。

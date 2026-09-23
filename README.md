@@ -2,7 +2,7 @@
 
 ESP32 ボード (2.8inch CYD 系: ST7789 / ILI9341 240x320 + XPT2046 タッチ) で動作する CW Decoder です。  
 VS Code + PlatformIO + Arduino + LovyanGFX でビルドできます。  
-現在のバージョンは `v2.8` です (`src/version.h` の `FW_VERSION`)。
+現在のバージョンは `v2.9` です (`src/version.h` の `FW_VERSION`)。
 
 CH32V003 / CH32V006 (UIAPduino) 版は
 [UIAP_CWDecoder2](https://github.com/pokibon3/UIAP_CWDecoder2) を参照してください
@@ -358,6 +358,14 @@ CA が変わったときに「更新できないファームを更新で直せ�
   - LCD コントローラ ST7789 / ILI9341 両対応（自動判定 + ビルドフラグ）
   - 音声入力を I2S ADC から ADC continuous DMA (32kHz 取得 → 4 点平均で 8kHz) に変更
   - ±167Hz 近サイドビンによる広帯域ノイズ棄却、入力レベルメータ、Peak 表示の安定化
+- V2.9
+  - 自動更新の書き換えがメモリ不足で始まらないのを修正。mbedTLS は 16KB 級の
+    連続領域を複数要求するが、スプライト用に確保した 89KB があるため最大連続空きが
+    36KB しかなく、bin 取得の TLS 接続で `SSL - Memory allocation failed` になっていた。
+    書き換え直前にスプライト領域を解放して TLS に回す。解放後はスプライトを使う描画が
+    できないので、**更新の成否によらず再起動する**ようにした
+  - 失敗が続いて再起動を繰り返さないよう、失敗直後の 1 回だけチェックを飛ばす
+    (RTC メモリの印。電源を切れば消える)
 - V2.8
   - 自動更新が「更新を開始できませんでした」で止まるのを修正。`Update.begin()` が
     要求する 4KB の作業バッファを **TLS 接続を張った後**に取っていたため、空きの合計は

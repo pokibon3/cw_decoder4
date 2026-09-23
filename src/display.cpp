@@ -951,6 +951,20 @@ void *display_sprite_arena(size_t need)
 	return (sprite_arena && need <= SPRITE_ARENA_BYTES) ? sprite_arena : NULL;
 }
 
+//	起動時アップデートの書き換え直前にだけ呼ぶ。mbedTLS は 16KB 級の連続領域を
+//	複数要求するので、この 89KB を返さないと TLS 接続が張れない (実機で発生)。
+//	スプライトはこの領域を指したままになるため、解放したら以後スプライトを使う
+//	描画はできない。呼び出し側は成否によらず再起動すること
+void display_sprite_arena_free(void)
+{
+	if (sprite_arena) {
+		heap_caps_free(sprite_arena);
+		sprite_arena = NULL;
+		Serial.printf("[lcd] sprite arena freed, heap=%u max_block=%u\n",
+		              (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMaxAllocHeap());
+	}
+}
+
 //	デコーダ画面の3枚を共有バッファの先頭から並べる。時計画面から戻ったとき
 //	中身は壊れているが、毎フレーム fillSprite から描くので問題ない
 //	全幅表示のときは隠れる側を描かないので、その 1 枚ぶんのバッファを

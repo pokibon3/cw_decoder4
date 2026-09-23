@@ -63,6 +63,12 @@
 static LGFX *lcd;
 static bool check_enabled = true;
 
+// 更新に失敗して再起動したとき、次の1回だけチェックを飛ばすための印。
+// RTC メモリなのでソフトリセットでは残り、電源を切れば消える
+// (失敗し続けて再起動を繰り返さないようにするため)
+#define SKIP_MAGIC 0xC0DEC0DEu
+RTC_DATA_ATTR static uint32_t skip_next_check;
+
 //	----- 設定 (NVS) -----
 
 void fwupdate_init(void)
@@ -203,6 +209,12 @@ static void sync_time(void)
 //	bin を取ってきて非アクティブ側へ書く。成功したら true (呼び出し側が再起動する)
 static bool download_and_flash(const String &url, size_t size, const String &md5)
 {
+	// スプライト用の 89KB を返して TLS に回す。mbedTLS は 16KB 級の連続領域を
+	// 複数要求するので、これが無いと接続が張れない (実機で -32512)。
+	// 以後スプライトを使う描画はできないため、この関数を抜けたら成否に
+	// よらず呼び出し側が再起動する
+	display_sprite_arena_free();
+
 	// Update の作業バッファ (4KB) は TLS を張る前に確保する。
 	// mbedTLS がヒープを大きく取った後だと、空きの合計は足りていても
 	// 連続した 4KB が取れずに begin() が落ちる (実機で発生した)。
@@ -364,15 +376,22 @@ static void check_and_update(void)
 
 	draw_base();
 	String url = String(FW_URL_BASE) + "firmware_" + FW_PANEL + ".bin";
-	if (!download_and_flash(url, size, md5)) {
-		delay(1500);                // 失敗の理由を読ませてから通常起動を続ける
-		return;
-	}
+	bool ok = download_and_flash(url, size, md5);
 
-	draw_bar(100);
-	draw_status("更新しました 再起動します", C_OK);
-	Serial.println("[upd] success, restarting");
-	delay(1200);
+	// download_and_flash() はスプライト領域を解放しているので、ここから
+	// 通常の画面には戻れない。成否によらず再起動する
+	if (ok) {
+		draw_bar(100);
+		draw_status("更新しました 再起動します", C_OK);
+		Serial.println("[upd] success, restarting");
+	} else {
+		// 失敗したまま再起動すると同じことを繰り返すので、次の1回だけ
+		// チェックを飛ばす (電源を切れば RTC メモリごと消えて元に戻る)
+		skip_next_check = SKIP_MAGIC;
+		draw_status("更新できませんでした 再起動します", C_ERR);
+		Serial.println("[upd] failed, restarting without update");
+	}
+	delay(1500);
 	ESP.restart();
 }
 
@@ -381,6 +400,11 @@ static void check_and_update(void)
 void fwupdate_check_on_boot(LGFX *lcd_)
 {
 	if (!check_enabled || !netsync_has_wifi()) {
+		return;
+	}
+	if (skip_next_check == SKIP_MAGIC) {
+		skip_next_check = 0;        // 前回の失敗による再起動。今回は飛ばす
+		Serial.println("[upd] skip once (previous attempt failed)");
 		return;
 	}
 	lcd = lcd_;
