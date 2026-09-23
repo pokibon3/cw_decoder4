@@ -2,7 +2,7 @@
 
 ESP32 ボード (2.8inch CYD 系: ST7789 / ILI9341 240x320 + XPT2046 タッチ) で動作する CW Decoder です。  
 VS Code + PlatformIO + Arduino + LovyanGFX でビルドできます。  
-現在のバージョンは `v2.9` です (`src/version.h` の `FW_VERSION`)。
+現在のバージョンは `v3.0` です (`src/version.h` の `FW_VERSION`)。
 
 CH32V003 / CH32V006 (UIAPduino) 版は
 [UIAP_CWDecoder2](https://github.com/pokibon3/UIAP_CWDecoder2) を参照してください
@@ -347,6 +347,12 @@ CA が変わったときに「更新できないファームを更新で直せ�
   - ボタン・セレクト・テキスト入力の高さを 32px に固定 (パディング任せでは
     `select` の `line-height: normal` 強制で 2〜3px ずれる)。枠の明るさは全部そろえ、
     強調は地色だけに任せる (枠だけ明るいとその 1 個が膨らんで見える)
+- V3.0
+  - AUTO 同調を選び直したとき、待機周波数 600Hz (`DSP_AUTO_IDLE_HZ`) から探し直すように
+    修正。`TONE` ボタンで 1000Hz から AUTO へ送ると 1000Hz へ居座っていた。
+    直前の手動周波数のピークホールドも捨てる (残ると乗り換え条件
+    `DSP_AUTO_STEAL_RATIO` に引っかかって引き込みが 1〜2 秒遅れる)
+  - Web 版の画面を整理 (詳細は下の「Web 版」)。信号処理はファームと同一ソース
 - V2.6〜V2.9 (オンライン自動更新)
   - **オンライン自動アップデート**。起動時 (スプラッシュ直後) に WiFi へ数秒つなぎ、
     NTP 時刻同期と新版チェックを 1 回の接続でまとめて行う。新版があれば画面で
