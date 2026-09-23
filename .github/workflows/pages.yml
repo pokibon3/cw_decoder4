@@ -1,0 +1,59 @@
+# web/ を GitHub Pages に公開する。
+#
+# ブランチから公開する方式はルートか /docs しか選べないので、
+# ディレクトリ名を web/ のまま保つために Actions で成果物を組み立てる。
+#
+# cwcore.wasm はビルド済みでリポジトリに入れてあるので、ここではビルドせず
+# そのまま配る (ビルドには wasm-ld が要る。web/build.sh を参照)。
+#
+# 公開後の URL: https://pokibon3.github.io/cw_decoder4/
+name: Deploy web to Pages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'web/**'
+      - '.github/workflows/pages.yml'
+  workflow_dispatch:        # 手動実行も可
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# 同時に走らせない。進行中のデプロイは終わらせてから次を流す
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 配布物を組み立てる
+        run: |
+          mkdir -p _site
+          # 実行に要るものだけを置く (C ソースやビルド用スクリプトは配らない)
+          cp web/index.html web/app.js web/cw-worklet.js web/cwcore.wasm _site/
+          # 単一ファイル版も置く (他所へ 1 枚だけ持っていきたいとき用)
+          python3 web/bundle.py
+          cp web/cw-decoder.html _site/
+          ls -l _site
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
