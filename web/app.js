@@ -199,7 +199,7 @@ function stopSource() {
 	chain = [];
 	srcNode = null;
 	srcStream = null;
-	if (monitor) monitor.gain.value = 0;
+	if (monitor && ctx) monitor.gain.setTargetAtTime(0, ctx.currentTime, 0.01);
 	// ファイルのトランスポートは filePlaying が持つので、ここでは触らない
 	$('testStop').disabled = true;
 	$('testPlay').disabled = false;
@@ -260,8 +260,25 @@ function wireChain() {
 	}
 
 	out.connect(node);
-	if (monitor) monitor.gain.value = monitorOn_ ? 1 : 0;
-	if (monitorOn_) out.connect(monitor);
+	// モニターは常につないでおき、聞こえるかどうかは音量だけで決める。
+	// 接続/切断で切り替えると再生中に反映されない (chain を張り直すまで
+	// 効かない) ので、ここでは必ず繋ぐ
+	if (monitor) {
+		out.connect(monitor);
+		applyMonitor();
+	}
+}
+
+//	モニター音の ON/OFF。3 つのタブのチェックは同じ 1 本の経路を指すので
+//	状態を揃える。切り替えでプツッと鳴らないよう短いランプをかける
+function applyMonitor(on) {
+	if (on !== undefined) monitorOn_ = !!on;
+	for (const id of ['micMonitor', 'tabMonitor', 'fileMonitor', 'testMonitor']) {
+		const el = $(id);
+		if (el) el.checked = monitorOn_;
+	}
+	if (!monitor || !ctx) return;
+	monitor.gain.setTargetAtTime(monitorOn_ ? 1 : 0, ctx.currentTime, 0.01);
 }
 
 //	BPF の中心周波数。既定はトーン追従で、AUTO の同調先へ合わせる。
@@ -1007,7 +1024,10 @@ $('bpfOn').onchange = () => wireChain();
 $('bpfCenter').onchange = () => updateBpf();
 $('bpfQ').oninput = () => { $('bpfQV').textContent = (+$('bpfQ').value).toFixed(1); updateBpf(); };
 $('micRescan').onclick = guard(async () => { await ensureEngine(); await listMics(); });
-$('micMonitor').onchange = (e) => { if (monitor && srcNode) { monitor.gain.value = e.target.checked ? 1 : 0; if (e.target.checked) srcNode.connect(monitor); } };
+// モニター音はどのタブのチェックでも即座に反映される (再生中でも)
+for (const id of ['micMonitor', 'tabMonitor', 'fileMonitor', 'testMonitor']) {
+	$(id).onchange = (e) => applyMonitor(e.target.checked);
+}
 $('tabStart').onclick = guard(startTab);
 
 $('fileInput').onchange = guard((e) => e.target.files[0] && loadFile(e.target.files[0]));
