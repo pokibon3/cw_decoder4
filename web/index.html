@@ -37,6 +37,7 @@ h1 .manual {
   border: 1px solid var(--line); border-radius: 5px; padding: 2px 10px; text-decoration: none;
 }
 h1 .manual:hover { border-color: var(--accent); }
+h1 .ver { color: var(--dim); font-weight: 400; font-size: 12px; font-family: ui-monospace, monospace; }
 
 .card {
   background: var(--panel); border: 1px solid var(--line);
@@ -47,19 +48,22 @@ h1 .manual:hover { border-color: var(--accent); }
 .grow { flex: 1 1 auto; }
 .sep { width: 1px; align-self: stretch; background: var(--line); margin: 0 4px; }
 
-button, select, input[type=file]::file-selector-button {
+button, select, input[type=file]::file-selector-button, input[type=text] {
   font: inherit; color: var(--tx); background: #1a2331;
   border: 1px solid var(--line); border-radius: 6px;
-  padding: 6px 12px; cursor: pointer;
+  height: 32px; padding: 0 12px; cursor: pointer;
+}
+button, input[type=file]::file-selector-button {
+  display: inline-flex; align-items: center; justify-content: center;
 }
 button:hover:not(:disabled), select:hover { border-color: #47607f; }
 button:disabled { opacity: .4; cursor: default; }
-button.primary { background: #16324a; border-color: #2f6592; color: #cfe7ff; }
+button.primary { background: #16324a; color: #cfe7ff; }
 button.on { background: #122d50; border-color: var(--accent); color: #c8e6ff; }
 button.off { background: #0a121c; border-color: #2a3a4d; color: #62727f; }
 button.jp { background: #6e4610; border-color: var(--amber); color: #ffe8be; }
-button.danger { background: #3a1f1f; border-color: #6d3535; }
-select { padding: 6px 8px; max-width: 320px; }
+button.danger { background: #3a1f1f; }
+select { padding: 0 6px; max-width: 320px; }
 label.chk { display: inline-flex; align-items: center; gap: 5px; color: var(--dim); cursor: pointer; }
 
 /* 入力元のタブ */
@@ -83,7 +87,7 @@ label.chk { display: inline-flex; align-items: center; gap: 5px; color: var(--di
 
 /* デコード文字エリア */
 #text {
-  margin: 0; flex: 1 1 auto; min-height: 96px;
+  margin: 0; flex: 1 1 auto; min-height: 220px;
   background: var(--panel2); border: 1px solid var(--line); border-radius: 8px;
   padding: 8px 12px; overflow-y: auto;
   font-family: "Hiragino Sans", "Noto Sans JP", "Yu Gothic", monospace;
@@ -104,27 +108,17 @@ label.chk { display: inline-flex; align-items: center; gap: 5px; color: var(--di
 canvas { display: block; width: 100%; height: 176px; background: var(--scope-bg); border-radius: 4px; cursor: crosshair; }
 .cap { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; color: var(--dim); font-size: 11px; }
 .cap .grow { text-align: right; color: var(--green); font-family: ui-monospace, monospace; }
-.trace { font: 600 11px/1 ui-monospace, monospace; padding: 4px 10px; }
+.trace { font: 600 11px/1 ui-monospace, monospace; height: 22px; padding: 0 10px; }
 /* 再生トランスポート */
-button.tp { font-size: 15px; line-height: 1; padding: 6px 12px; min-width: 44px; }
+button.tp { font-size: 15px; line-height: 1; min-width: 44px; }
 #transport input[type=range] { accent-color: var(--accent); }
 
-.hint { color: var(--dim); font-size: 11.5px; line-height: 1.6; }
-details.hint { margin-top: 6px; }
-details.hint > summary {
-  cursor: pointer; color: var(--dim); font-size: 11px;
-  list-style: none; display: inline-block;
-  border: 1px solid var(--line); border-radius: 4px; padding: 1px 8px;
-}
-details.hint > summary::-webkit-details-marker { display: none; }
-details.hint > summary:hover { border-color: #47607f; }
-details.hint[open] > summary { margin-bottom: 4px; }
-footer {
-  color: var(--dim); font-size: 11px; line-height: 1.5;
+/* 一番下のステータス行 */
+#statusbar {
+  flex: 0 0 auto; color: var(--dim); font-size: 11.5px; line-height: 1.5;
   border-top: 1px solid var(--line); padding-top: 5px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-footer a { color: var(--accent); }
-.hint code { background: #0a121c; padding: 1px 5px; border-radius: 3px; border: 1px solid var(--line); }
 .err { color: #ff9a8f; }
 </style>
 </head>
@@ -132,6 +126,9 @@ footer a { color: var(--accent); }
 
 <h1>CW Decoder 4
   <a class="manual" href="manual.html">使い方</a>
+  <!-- バージョンはファームウェア (src/version.h の FW_VERSION) と揃える。
+       上げるときは manual.html の先頭の表示も一緒に直す -->
+  <span class="ver">v2.9</span>
 </h1>
 
 <!-- ============ 入力元 ============ -->
@@ -146,17 +143,12 @@ footer a { color: var(--accent); }
   <div class="srcpane active" id="pane-mic">
     <div class="row">
       <select id="micDev"><option value="">既定の入力 (許可すると一覧が出ます)</option></select>
-      <button id="micStart" class="primary">開始</button>
       <button id="micRescan">再検索</button>
+      <button id="micStart" class="primary">開始</button>
+      <button id="stopAll" class="danger">終了</button>
       <span class="grow"></span>
       <label class="chk"><input type="checkbox" id="micMonitor"> モニター音</label>
     </div>
-    <details class="hint"><summary>説明</summary>
-      無線機の AF 出力 → USB オーディオ I/F が最も確実です (FT8 と同じ配線)。
-      PC 内部の音は仮想ループバック (macOS: BlackHole / Windows: VB-CABLE) 経由で拾えます。<br>
-      エコーキャンセル・ノイズ抑制・AGC は自動で無効化し、実際に無効化できたかを下の行に表示します。<br>
-      ステレオ I/F に片チャンネルだけ繋いでいるときは <code>L+R</code> にしないでください (空き側のノイズで S/N が約 3dB 落ちます)。
-    </details>
   </div>
 
   <div class="srcpane" id="pane-tab">
@@ -165,11 +157,6 @@ footer a { color: var(--accent); }
       <span class="grow"></span>
       <label class="chk"><input type="checkbox" id="tabMonitor" checked> モニター音</label>
     </div>
-    <details class="hint"><summary>説明</summary>
-      WebSDR や動画など、ブラウザの別タブで鳴っている音をそのままデコードします。
-      共有ダイアログで <code>タブ</code> を選び、<code>タブの音声も共有する</code> を必ず ON にしてください。
-      (Chrome 系のみ。Safari / Firefox は非対応)
-    </details>
   </div>
 
   <div class="srcpane" id="pane-file">
@@ -188,11 +175,6 @@ footer a { color: var(--accent); }
              title="再生位置" style="flex:1 1 160px">
       <span id="fileTime" class="metric" style="min-width:96px;text-align:right">--:-- / --:--</span>
     </div>
-    <details class="hint"><summary>説明</summary>
-      WAV / MP3 などを読み込んでデコードします。同じ音源で何度でも再現できるので、
-      設定の効き具合を比べるのに使えます。<br>
-      位置を動かすとデコーダの状態はリセットされます (符号の途中から始まるため)。
-    </details>
   </div>
 
   <div class="srcpane" id="pane-test">
@@ -202,20 +184,14 @@ footer a { color: var(--accent); }
       <label class="chk">S/N <input type="range" id="tSnr" min="-6" max="40" value="15"><span id="tSnrV" class="metric">15</span>dB</label>
     </div>
     <div class="row">
-      <input type="text" id="tText" value="CQ CQ DE JA1ABC JA1ABC K" style="flex:1 1 300px;padding:6px 8px;background:#0a121c;border:1px solid var(--line);border-radius:6px;color:var(--tx);font:inherit">
-      <button id="testPlay" class="primary">送出</button>
+      <input type="text" id="tText" value="CQ CQ DE JA1QRP JA1QRP K" style="flex:1 1 300px;padding:0 8px;background:#0a121c;cursor:text">
+      <button id="testPlay" class="primary">送信</button>
       <button id="testStop" disabled>停止</button>
       <label class="chk"><input type="checkbox" id="testMonitor"> モニター音</label>
     </div>
-    <details class="hint"><summary>説明</summary>
-      ハード無しで動作確認するための内蔵 CW 発生器です。S/N を振ると、
-      ノイズ下でどこまで読めるかをその場で確かめられます。
-    </details>
   </div>
 
   <div class="row" style="margin-top:8px">
-    <span id="state" class="hint">停止中</span>
-    <span class="grow"></span>
     <label class="chk" title="実機は ADC の手前に多重帰還型 BPF (700Hz / Q=5) が入っている。これが無いと帯域外ノイズでデコード率が落ちる">
       <input type="checkbox" id="bpfOn" checked> 入力BPF
     </label>
@@ -235,7 +211,6 @@ footer a { color: var(--accent); }
     </label>
     <label class="chk">入力ゲイン <input type="range" id="gain" min="-40" max="40" step="1" value="0"><span id="gainV" class="metric" style="min-width:52px;display:inline-block;text-align:right">0 dB</span></label>
     <button id="gainReset">0 dB</button>
-    <button id="stopAll" class="danger">入力を止める</button>
   </div>
 </div>
 
@@ -288,14 +263,8 @@ footer a { color: var(--accent); }
   </div>
 </div>
 
-<footer>
-  <a href="http://www.gnu.org/copyleft/gpl.html" rel="noopener">GPL</a> /
-  デコーダ部は <a href="http://oz1jhm.dk/content/very-simpel-cw-decoder-easy-build" rel="noopener">OZ1JHM</a> 氏の
-  Arduino 用 CW Decoder 由来 /
-  ソース <a href="https://github.com/pokibon3/cw_decoder4" rel="noopener">github.com/pokibon3/cw_decoder4</a>
-  (<code>cwcore.wasm</code> は
-  <a href="https://github.com/pokibon3/cw_decoder4/blob/main/web/build.sh" rel="noopener">web/build.sh</a> で再生成可)
-</footer>
+<!-- 一番下のステータス行。動作状態とエラーはここに出す -->
+<div id="statusbar"><span id="state">停止中</span></div>
 
 <script>
 // app.js を読み込む。localhost のときだけキャッシュを外す (開発用)。

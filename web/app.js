@@ -95,7 +95,7 @@ let ready = false;
 
 function setState(msg, isErr = false) {
 	el.state.textContent = msg;
-	el.state.className = isErr ? 'hint err' : 'hint';
+	el.state.className = isErr ? 'err' : '';
 }
 
 //	AudioWorklet モジュールと WASM はブラウザにキャッシュされる。ローカルで
@@ -508,6 +508,8 @@ async function loadFile(file) {
 	setState(`ファイル: ${file.name} — ${fileBuffer.duration.toFixed(1)}秒 / ` +
 		`${fileBuffer.sampleRate}Hz / ピーク ${peakDb} dBFS → ゲイン ${db > 0 ? '+' : ''}${db} dB に自動調整`);
 	fileUpdateUI();
+	// 選んだらそのまま先頭から再生する (毎回 ▶ を押す手間を省く)
+	fileStartAt(0);
 }
 
 //	保留されている最後の文字を吐き出させる (再生終了・停止時)

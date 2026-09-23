@@ -36,7 +36,8 @@ static int64_t diag_jit_sum = 0;
 
 static const uint16_t tone_tbl[DSP_TONE_COUNT] = { 600, 700, 800, 900, 1000 };
 static volatile uint8_t tone_sel = DSP_TONE_AUTO;   // デフォルトはAUTO
-static volatile uint16_t gate_hz = 600;             // ゲート中心 (AUTO待機時の既定 600Hz)
+#define DSP_AUTO_IDLE_HZ 600                        // AUTO で信号を掴んでいない間のゲート中心
+static volatile uint16_t gate_hz = DSP_AUTO_IDLE_HZ;   // ゲート中心
 
 // AUTO同調の候補追跡
 static uint16_t cand_hz = 0;
@@ -105,8 +106,13 @@ void dsp_set_tone(uint8_t idx)
 	tone_sel = idx;
 	if (idx != DSP_TONE_AUTO) {
 		gate_hz = tone_tbl[idx];
+	} else {
+		// AUTO は待機周波数から探し直す (手動 1000Hz から AUTO へ送った
+		// ときに 1000Hz へ居座らせない)。ピークホールドも捨てないと、
+		// 直前の手動周波数のホールドが残って引き込みが 1〜2 秒遅れる
+		gate_hz = DSP_AUTO_IDLE_HZ;
+		lock_hold = 0.0f;
 	}
-	// AUTO選択時は現在の中心を維持したまま追従を再開する
 	side_ema_started = 0;
 	cand_cnt = 0;
 	gate_update_coeff();
