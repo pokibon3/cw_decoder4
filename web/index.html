@@ -24,20 +24,20 @@
 * { box-sizing: border-box; }
 html, body { height: 100%; }
 body {
-  margin: 0; padding: 12px;
+  margin: 0; padding: 8px 10px;
   background: var(--bg); color: var(--tx);
   font: 13px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", "Hiragino Sans", "Noto Sans JP", sans-serif;
-  display: flex; flex-direction: column; gap: 10px; min-height: 100%;
+  display: flex; flex-direction: column; gap: 7px; min-height: 100%;
 }
-h1 { font-size: 15px; margin: 0; font-weight: 600; letter-spacing: .04em; }
+h1 { font-size: 14px; margin: 0; font-weight: 600; letter-spacing: .04em; }
 h1 small { color: var(--dim); font-weight: 400; margin-left: 8px; font-size: 12px; }
 
 .card {
   background: var(--panel); border: 1px solid var(--line);
-  border-radius: 8px; padding: 10px 12px;
+  border-radius: 8px; padding: 7px 10px;
 }
 .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
-.row + .row { margin-top: 8px; }
+.row + .row { margin-top: 6px; }
 .grow { flex: 1 1 auto; }
 .sep { width: 1px; align-self: stretch; background: var(--line); margin: 0 4px; }
 
@@ -77,9 +77,9 @@ label.chk { display: inline-flex; align-items: center; gap: 5px; color: var(--di
 
 /* デコード文字エリア */
 #text {
-  margin: 0; flex: 1 1 auto; min-height: 140px;
+  margin: 0; flex: 1 1 auto; min-height: 96px;
   background: var(--panel2); border: 1px solid var(--line); border-radius: 8px;
-  padding: 12px 14px; overflow-y: auto;
+  padding: 8px 12px; overflow-y: auto;
   font-family: "Hiragino Sans", "Noto Sans JP", "Yu Gothic", monospace;
   font-size: 22px; line-height: 1.45; letter-spacing: .06em;
   white-space: pre-wrap; word-break: break-all;
@@ -89,14 +89,14 @@ label.chk { display: inline-flex; align-items: center; gap: 5px; color: var(--di
 
 /* 下段パネル */
 .panels { display: flex; gap: 10px; flex-wrap: wrap; }
-.panels .card { flex: 1 1 380px; padding: 8px; }
+.panels .card { flex: 1 1 380px; padding: 6px; }
 /* パネルの全幅表示 (波形をクリックで切替)。時間軸が細かいときに使う */
 .panels .card.wide { flex: 1 1 100%; }
 .panels .card.hidden { display: none; }
 .cap { cursor: pointer; }
 .cap button { cursor: pointer; }
-canvas { display: block; width: 100%; height: 220px; background: var(--scope-bg); border-radius: 4px; cursor: crosshair; }
-.cap { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; color: var(--dim); font-size: 11px; }
+canvas { display: block; width: 100%; height: 176px; background: var(--scope-bg); border-radius: 4px; cursor: crosshair; }
+.cap { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; color: var(--dim); font-size: 11px; }
 .cap .grow { text-align: right; color: var(--green); font-family: ui-monospace, monospace; }
 .trace { font: 600 11px/1 ui-monospace, monospace; padding: 4px 10px; }
 /* 再生トランスポート */
@@ -104,11 +104,19 @@ button.tp { font-size: 15px; line-height: 1; padding: 6px 12px; min-width: 44px;
 #transport input[type=range] { accent-color: var(--accent); }
 
 .hint { color: var(--dim); font-size: 11.5px; line-height: 1.6; }
-footer {
-  color: var(--dim); font-size: 11.5px; line-height: 1.7;
-  border-top: 1px solid var(--line); padding-top: 10px; margin-top: 2px;
+details.hint { margin-top: 6px; }
+details.hint > summary {
+  cursor: pointer; color: var(--dim); font-size: 11px;
+  list-style: none; display: inline-block;
+  border: 1px solid var(--line); border-radius: 4px; padding: 1px 8px;
 }
-footer p { margin: 0 0 4px; }
+details.hint > summary::-webkit-details-marker { display: none; }
+details.hint > summary:hover { border-color: #47607f; }
+details.hint[open] > summary { margin-bottom: 4px; }
+footer {
+  color: var(--dim); font-size: 11px; line-height: 1.5;
+  border-top: 1px solid var(--line); padding-top: 5px;
+}
 footer a { color: var(--accent); }
 .hint code { background: #0a121c; padding: 1px 5px; border-radius: 3px; border: 1px solid var(--line); }
 .err { color: #ff9a8f; }
@@ -135,12 +143,12 @@ footer a { color: var(--accent); }
       <span class="grow"></span>
       <label class="chk"><input type="checkbox" id="micMonitor"> モニター音</label>
     </div>
-    <div class="row hint">
+    <details class="hint"><summary>説明</summary>
       無線機の AF 出力 → USB オーディオ I/F が最も確実です (FT8 と同じ配線)。
       PC 内部の音は仮想ループバック (macOS: BlackHole / Windows: VB-CABLE) 経由で拾えます。<br>
       エコーキャンセル・ノイズ抑制・AGC は自動で無効化し、実際に無効化できたかを下の行に表示します。<br>
       ステレオ I/F に片チャンネルだけ繋いでいるときは <code>L+R</code> にしないでください (空き側のノイズで S/N が約 3dB 落ちます)。
-    </div>
+    </details>
   </div>
 
   <div class="srcpane" id="pane-tab">
@@ -149,11 +157,11 @@ footer a { color: var(--accent); }
       <span class="grow"></span>
       <label class="chk"><input type="checkbox" id="tabMonitor" checked> モニター音</label>
     </div>
-    <div class="row hint">
+    <details class="hint"><summary>説明</summary>
       WebSDR や動画など、ブラウザの別タブで鳴っている音をそのままデコードします。
       共有ダイアログで <code>タブ</code> を選び、<code>タブの音声も共有する</code> を必ず ON にしてください。
       (Chrome 系のみ。Safari / Firefox は非対応)
-    </div>
+    </details>
   </div>
 
   <div class="srcpane" id="pane-file">
@@ -172,11 +180,11 @@ footer a { color: var(--accent); }
              title="再生位置" style="flex:1 1 160px">
       <span id="fileTime" class="metric" style="min-width:96px;text-align:right">--:-- / --:--</span>
     </div>
-    <div class="row hint">
+    <details class="hint"><summary>説明</summary>
       WAV / MP3 などを読み込んでデコードします。同じ音源で何度でも再現できるので、
       設定の効き具合を比べるのに使えます。<br>
       位置を動かすとデコーダの状態はリセットされます (符号の途中から始まるため)。
-    </div>
+    </details>
   </div>
 
   <div class="srcpane" id="pane-test">
@@ -191,10 +199,10 @@ footer a { color: var(--accent); }
       <button id="testStop" disabled>停止</button>
       <label class="chk"><input type="checkbox" id="testMonitor"> モニター音</label>
     </div>
-    <div class="row hint">
+    <details class="hint"><summary>説明</summary>
       ハード無しで動作確認するための内蔵 CW 発生器です。S/N を振ると、
       ノイズ下でどこまで読めるかをその場で確かめられます。
-    </div>
+    </details>
   </div>
 
   <div class="row" style="margin-top:8px">
@@ -254,7 +262,7 @@ footer a { color: var(--accent); }
       <span>FFT スペクトラム</span>
       <span class="grow">クリックでトーン選択・ダブルクリックで全幅</span>
     </div>
-    <canvas id="fft" width="640" height="220"></canvas>
+    <canvas id="fft" width="640" height="176"></canvas>
   </div>
   <div class="card" id="panelScope">
     <div class="cap" id="capScope" title="クリックで全幅表示 / もう一度で元に戻す">
@@ -268,29 +276,17 @@ footer a { color: var(--accent); }
       <button class="trace on" id="bEnv">ENV</button>
       <button class="trace on" id="bRaw">RAW</button>
     </div>
-    <canvas id="scope" width="640" height="220" title="クリックで全幅表示 / もう一度で元に戻す"></canvas>
+    <canvas id="scope" width="640" height="176" title="クリックで全幅表示 / もう一度で元に戻す"></canvas>
   </div>
 </div>
 
 <footer>
-  <p>
-    ESP32 版ファームウェアと同一の DSP / デコーダ (<code>src/dsp.cpp</code>,
-    <code>decoder.cpp</code>, <code>decode.cpp</code>) を WebAssembly でビルドして動かしています。
-  </p>
-  <p>
-    モールスデコーダ部分は Hjalmar Skovholm Hansen OZ1JHM 氏の
-    <a href="http://oz1jhm.dk/content/very-simpel-cw-decoder-easy-build" rel="noopener">Arduino 用 CW Decoder</a>
-    を一部流用しており、オリジナルの
-    <a href="http://www.gnu.org/copyleft/gpl.html" rel="noopener">GPL</a>
-    ライセンス条件が適用されます。
-  </p>
-  <p>
-    ソース:
-    <a href="https://github.com/pokibon3/cw_decoder4" rel="noopener">github.com/pokibon3/cw_decoder4</a>
-    — このページの <code>cwcore.wasm</code> は
-    <a href="https://github.com/pokibon3/cw_decoder4/blob/main/web/build.sh" rel="noopener">web/build.sh</a>
-    で同リポジトリのソースから再生成できます。
-  </p>
+  <a href="http://www.gnu.org/copyleft/gpl.html" rel="noopener">GPL</a> /
+  デコーダ部は <a href="http://oz1jhm.dk/content/very-simpel-cw-decoder-easy-build" rel="noopener">OZ1JHM</a> 氏の
+  Arduino 用 CW Decoder 由来 /
+  ソース <a href="https://github.com/pokibon3/cw_decoder4" rel="noopener">github.com/pokibon3/cw_decoder4</a>
+  (<code>cwcore.wasm</code> は
+  <a href="https://github.com/pokibon3/cw_decoder4/blob/main/web/build.sh" rel="noopener">web/build.sh</a> で再生成可)
 </footer>
 
 <script>
