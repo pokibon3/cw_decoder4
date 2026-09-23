@@ -104,6 +104,12 @@ button.tp { font-size: 15px; line-height: 1; padding: 6px 12px; min-width: 44px;
 #transport input[type=range] { accent-color: var(--accent); }
 
 .hint { color: var(--dim); font-size: 11.5px; line-height: 1.6; }
+footer {
+  color: var(--dim); font-size: 11.5px; line-height: 1.7;
+  border-top: 1px solid var(--line); padding-top: 10px; margin-top: 2px;
+}
+footer p { margin: 0 0 4px; }
+footer a { color: var(--accent); }
 .hint code { background: #0a121c; padding: 1px 5px; border-radius: 3px; border: 1px solid var(--line); }
 .err { color: #ff9a8f; }
 </style>
@@ -265,6 +271,27 @@ button.tp { font-size: 15px; line-height: 1; padding: 6px 12px; min-width: 44px;
     <canvas id="scope" width="640" height="220" title="クリックで全幅表示 / もう一度で元に戻す"></canvas>
   </div>
 </div>
+
+<footer>
+  <p>
+    ESP32 版ファームウェアと同一の DSP / デコーダ (<code>src/dsp.cpp</code>,
+    <code>decoder.cpp</code>, <code>decode.cpp</code>) を WebAssembly でビルドして動かしています。
+  </p>
+  <p>
+    モールスデコーダ部分は Hjalmar Skovholm Hansen OZ1JHM 氏の
+    <a href="http://oz1jhm.dk/content/very-simpel-cw-decoder-easy-build" rel="noopener">Arduino 用 CW Decoder</a>
+    を一部流用しており、オリジナルの
+    <a href="http://www.gnu.org/copyleft/gpl.html" rel="noopener">GPL</a>
+    ライセンス条件が適用されます。
+  </p>
+  <p>
+    ソース:
+    <a href="https://github.com/pokibon3/cw_decoder4" rel="noopener">github.com/pokibon3/cw_decoder4</a>
+    — このページの <code>cwcore.wasm</code> は
+    <a href="https://github.com/pokibon3/cw_decoder4/blob/main/web/build.sh" rel="noopener">web/build.sh</a>
+    で同リポジトリのソースから再生成できます。
+  </p>
+</footer>
 
 <script>
 // app.js を読み込む。localhost のときだけキャッシュを外す (開発用)。
