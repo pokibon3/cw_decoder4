@@ -6,6 +6,14 @@
 #	  tools/v<版>/firmware_ST7789.bin
 #	  tools/v<版>/firmware_ILI9341.bin
 #
+#	あわせて web/firmware/latest.txt (版数・サイズ・MD5 の目録) を書く。
+#	本体の「自動更新」(起動時チェック, src/fwupdate.cpp) は
+#	  https://pokibon3.github.io/cw_decoder4/firmware/latest.txt
+#	を見て新版を取りに来る。bin は複製せず、公開時に Actions が
+#	latest.txt の版数を見て tools/v<版>/ から配る。
+#	公開するには tools/v<版>/ と web/firmware/latest.txt を commit して
+#	push すること (.github/workflows/pages.yml が拾う)。
+#
 #	OTA でアップロードするのはこの firmware.bin だけでよい
 #	(bootloader.bin / partitions.bin は USB 書き込みでしか更新されない)。
 #
@@ -45,3 +53,36 @@ for f in "$OUT"/firmware_*.bin; do
 	if strings "$f" | grep -qx "$want"; then ok="ok"; else ok="!! $want が見つからない"; fi
 	printf "  %-24s %8s bytes  %s\n" "$(basename "$f")" "$(wc -c < "$f" | tr -d ' ')" "$ok"
 done
+
+# 自動更新 (起動時チェック) 用の目録を web/firmware/latest.txt に書く。
+# bin は増やさない: 公開時に Actions が latest.txt の version を読んで
+# tools/v<版>/ から同じものを配る (.github/workflows/pages.yml)。
+# キー名は src/version.h の FW_PANEL ("ST7789"/"ILI9341") とそろえてあり、
+# src/fwupdate.cpp がその名前で size / md5 を引く。
+WEB="$ROOT/web/firmware"
+mkdir -p "$WEB"
+
+md5_of() {
+	# macOS は md5 -q、Linux は md5sum
+	if command -v md5 >/dev/null 2>&1; then
+		md5 -q "$1"
+	else
+		md5sum "$1" | cut -d' ' -f1
+	fi
+}
+
+{
+	echo "version=$VER"
+	echo "build=$(date '+%Y-%m-%d %H:%M:%S')"
+	for p in ST7789 ILI9341; do
+		f="$OUT/firmware_$p.bin"
+		echo "${p}_size=$(wc -c < "$f" | tr -d ' ')"
+		echo "${p}_md5=$(md5_of "$f")"
+	done
+} > "$WEB/latest.txt"
+
+echo
+echo "=== $WEB/latest.txt ==="
+sed 's/^/  /' "$WEB/latest.txt"
+echo
+echo "公開するには tools/v$VER/ と web/firmware/latest.txt を commit して push すること"

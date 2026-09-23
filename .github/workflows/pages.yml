@@ -6,7 +6,12 @@
 # cwcore.wasm はビルド済みでリポジトリに入れてあるので、ここではビルドせず
 # そのまま配る (ビルドには wasm-ld が要る。web/build.sh を参照)。
 #
+# 本体の「自動更新」用の配布物もここから配る。目録は
+# web/firmware/latest.txt (tools/make_release.sh が作る)、bin はそこに
+# 書かれた版の tools/v<版>/ から取る (リポジトリに二重で持たせないため)。
+#
 # 公開後の URL: https://pokibon3.github.io/cw_decoder4/
+#               https://pokibon3.github.io/cw_decoder4/firmware/latest.txt
 name: Deploy web to Pages
 
 on:
@@ -41,7 +46,16 @@ jobs:
           # 単一ファイル版も置く (他所へ 1 枚だけ持っていきたいとき用)
           python3 web/bundle.py
           cp web/cw-decoder.html _site/
-          ls -l _site
+          # 本体の「自動更新」が見にくる配布物。bin はリポジトリに二重で
+          # 持たせず、latest.txt に書かれた版の tools/v<版>/ から配る
+          if [ -f web/firmware/latest.txt ]; then
+            VER=$(sed -n 's/^version=//p' web/firmware/latest.txt)
+            mkdir -p _site/firmware
+            cp web/firmware/latest.txt _site/firmware/
+            cp "tools/v$VER"/firmware_ST7789.bin  _site/firmware/
+            cp "tools/v$VER"/firmware_ILI9341.bin _site/firmware/
+          fi
+          ls -lR _site
 
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3

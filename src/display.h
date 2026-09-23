@@ -6,11 +6,21 @@
 #include "lgfx_config.h"
 
 void display_init(void);
+// 絵柄を描いて 1.5 秒見せる (画面はそのまま。デコーダ画面への切り替えは
+// 起動時アップデートチェックの後に呼び出し側が display_redraw() で行う)
 void display_splash(void);
+// スプラッシュの絵柄だけを描く (待ちも画面切替もしない)。最下段 (y 223..239) は
+// 空けてあり、起動時アップデートチェックが状況をそこに書く (fwupdate.cpp)
+void display_splash_draw(void);
 // スプラッシュの見出し (タイトル + モールス飾り + 罫線) を title_y に描く。
 // About 画面がスプラッシュと同じ体裁を使うために公開している
 void display_splash_header(int title_y);
 #define DISPLAY_SPLASH_BG lgfx::color565(4, 10, 24)
+
+// 確認ダイアログ (title / 2行の説明 / キャンセル・ok_label)。
+// SETUP 画面のほか、起動時アップデートチェックからも使う共通部品
+bool display_confirm(LGFX *lcd, const char *title, const char *line1, const char *line2,
+                     const char *ok_label);
 void display_enqueue(uint8_t ch);   // decoder emit callback (thread-safe)
 void display_update(void);          // call from loop (~30fps)
 

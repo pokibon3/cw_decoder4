@@ -7,6 +7,15 @@
 //
 #pragma once
 
-#define FW_VERSION "2.5"
+#define FW_VERSION "2.6"
 
 extern const char FW_BUILD[];       // 例: "Sep 16 2026 12:34:56"
+
+// ビルドしたパネル ("ST7789"/"ILI9341")。tools/make_release.sh が
+// firmware_<FW_PANEL>.bin という名前で書き出すのに合わせてある。
+// fwupdate.cpp が latest.txt からダウンロードする bin を選ぶのに使う
+#if defined(PANEL_ST7789)
+#define FW_PANEL "ST7789"
+#else
+#define FW_PANEL "ILI9341"
+#endif

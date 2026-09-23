@@ -67,6 +67,12 @@ uint32_t netsync_last_epoch(void)
 	return last_epoch;
 }
 
+void netsync_note_synced(uint32_t epoch)
+{
+	last_epoch = epoch;
+	next_ms = millis() + SYNC_INTERVAL_MS;
+}
+
 void netsync_clear_wifi(void)
 {
 	ssid = "";

@@ -23,3 +23,8 @@ void netsync_clear_wifi(void);              // WiFi初期化 (NVS の SSID/パ�
 String netsync_ssid(void);
 String netsync_pass(void);                  // OTA が AP+STA で使う
 uint32_t netsync_last_epoch(void);          // 最後に同期できた時刻 (0=未同期)
+
+// 他のモジュール (fwupdate.cpp) が独自に NTP 同期できたときに呼ぶ。
+// last_epoch を更新し、次回の日次同期予定を SYNC_INTERVAL_MS 後に
+// 繰り延べる (起動直後に二重で WiFi が立ち上がらないようにする)
+void netsync_note_synced(uint32_t epoch);

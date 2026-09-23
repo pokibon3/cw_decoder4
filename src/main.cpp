@@ -49,6 +49,7 @@
 #include "clock.h"
 #include "setup.h"
 #include "netsync.h"
+#include "fwupdate.h"
 #include "scopelog.h"
 #include "touchcal.h"
 
@@ -255,8 +256,16 @@ void setup()
 
 	// 時計 / NTP 設定の読み込み (WiFi はここでは起動しない)
 	netsync_init();
-	clock_init(display_lcd());
+	clock_init(display_lcd());      // ここで時刻がビルド日時に戻るので同期はこの後
 	clock_alloc();                  // 字面の実測 (初回のみ)
+
+	// 起動時のオンラインアップデートチェック (自動更新 ON + WiFi登録済みのとき)。
+	// 状況はスプラッシュの最下段に出る。NTP 同期も一緒に済ませる。
+	// dsp_start() より前に済ませること — ADC 連続 DMA を動かしたまま
+	// WiFi を起動すると WDT リセットになる
+	fwupdate_init();
+	fwupdate_check_on_boot(display_lcd());
+	display_redraw();               // ここで初めてスプラッシュからデコーダ画面へ
 
 	decoder_init();
 	decoder_set_emit(display_enqueue);

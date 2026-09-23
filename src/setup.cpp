@@ -1,16 +1,21 @@
 //
 //	セットアップ画面
 //
-//	┌ SETUP                               [戻る] ┐
-//	│      [ WiFi設定 (NTP時刻同期用) ]          │
-//	│      [ 時刻合わせ ]                        │
-//	│      [ Summer Time: OFF/ON ]               │
-//	│      [ スコープログ: OFF/ON ]              │
-//	│      [ タッチ調整 ]  → touchcal            │
-//	│      [ ファームウェアアップデート ]        │
-//	│      [ 初期化 (WiFi設定等) ]               │
-//	│      [ CW Decoder について ]  → About      │
-//	└────────────────────────────────────────────┘
+//	2列 x 5行のグリッド (9項目、最終行の右列は空き)。
+//
+//	┌ SETUP                              [戻る] ┐
+//	│ [ WiFi設定 ]        [ 時刻合わせ ]        │
+//	│ [ 夏時間: ON ]      [ スコープ: ON ]      │
+//	│ [ タッチ: 既定値 ]  [ FW更新 ]            │
+//	│ [ 自動更新: ON ]    [ 初期化 ]            │
+//	│ [ About ]                                 │
+//	└───────────────────────────────────────────┘
+//
+//	タッチ → touchcal / FW更新 → ota (SoftAP) / About → about_run
+//
+//	「自動更新」は起動時 (スプラッシュ表示中) に WiFi 経由で新しい
+//	ファームウェアを自動チェックするかどうかの ON/OFF (fwupdate.cpp)。
+//	「FW更新」は既存の SoftAP+ブラウザ手動アップロード (ota.cpp)。
 //
 #include <Arduino.h>
 #include <WiFi.h>
@@ -19,6 +24,7 @@
 #include "timeset.h"
 #include "netsync.h"
 #include "ota.h"
+#include "fwupdate.h"
 #include "dsp.h"
 #include "version.h"
 #include "scopelog.h"
@@ -36,8 +42,6 @@
 #define C_BTN_TX  lgfx::color565(190, 206, 226)
 #define C_OK_BG   lgfx::color565(24, 54, 42)
 #define C_OK_BD   lgfx::color565(90, 200, 140)
-#define C_DLG_BG  lgfx::color565(20, 27, 37)
-#define C_DLG_BD  lgfx::color565(120, 150, 190)
 
 #define TITLE_H 36
 #define BACK_X 248
@@ -45,13 +49,22 @@
 #define BACK_W 64
 #define BACK_H 26
 
-#define ITEM_X 20
-#define ITEM_W 280
-#define ITEM_H 22
+// 2列 x 5行のグリッド (9項目、最終行の右列だけ空き)
+#define ITEM_COL_W 138
+#define ITEM_COL_GAP 12
+#define ITEM_H 34
 #define ITEM_Y0 40
-#define ITEM_PITCH 25
-#define ITEM_Y(i) (ITEM_Y0 + ITEM_PITCH * (i))
-#define ITEM_N 8
+#define ITEM_PITCH 38
+#define ITEM_N 9
+#define ITEM_COL_X(c) (16 + (c) * (ITEM_COL_W + ITEM_COL_GAP))
+#define ITEM_ROW_Y(r) (ITEM_Y0 + ITEM_PITCH * (r))
+
+// idx (0..ITEM_N-1) から (x, y) を求める。row = idx/2, col = idx%2
+static void item_pos(int idx, int *x, int *y)
+{
+	*x = ITEM_COL_X(idx % 2);
+	*y = ITEM_ROW_Y(idx / 2);
+}
 
 // About 画面 (スプラッシュと同じ体裁)
 #define ABOUT_BACK_X 214
@@ -153,67 +166,34 @@ static void draw_screen(void)
 	draw_button(BACK_X, BACK_Y, BACK_W, BACK_H, "戻る", C_BTN_BG, C_BTN_BD, C_BTN_TX,
 	            &fonts::lgfxJapanGothicP_16);
 
-	char summer[40], scope[40], touch[40];
-	snprintf(summer, sizeof(summer), "Summer Time: %s", clock_summer_time() ? "ON" : "OFF");
-	snprintf(scope, sizeof(scope), "スコープログ: %s",
-	         scopelog_enabled() ? "ON (シリアル)" : "OFF");
-	snprintf(touch, sizeof(touch), "タッチ調整: %s",
-	         touchcal_saved() ? "調整済み" : "既定値");
+	char summer[40], scope[40], touch[40], upd[40];
+	snprintf(summer, sizeof(summer), "夏時間: %s", clock_summer_time() ? "ON" : "OFF");
+	snprintf(scope, sizeof(scope), "スコープ: %s", scopelog_enabled() ? "ON" : "OFF");
+	snprintf(touch, sizeof(touch), "タッチ: %s", touchcal_saved() ? "調整済み" : "既定値");
+	snprintf(upd, sizeof(upd), "自動更新: %s", fwupdate_check_enabled() ? "ON" : "OFF");
 	const struct { const char *label; bool on; } items[ITEM_N] = {
-		{ "WiFi設定 (NTP時刻同期用)", false },
+		{ "WiFi設定", false },
 		{ "時刻合わせ", false },
 		{ summer, clock_summer_time() != 0 },
 		{ scope, scopelog_enabled() != 0 },
 		{ touch, touchcal_saved() },
-		{ "ファームウェアアップデート", false },
-		{ "初期化 (WiFi設定等)", false },
-		{ "CW Decoder について", false },
+		{ "FW更新", false },
+		{ upd, fwupdate_check_enabled() },
+		{ "初期化", false },
+		{ "About", false },
 	};
 	for (int i = 0; i < ITEM_N; i++) {
-		draw_button(ITEM_X, ITEM_Y(i), ITEM_W, ITEM_H, items[i].label,
+		int x, y;
+		item_pos(i, &x, &y);
+		draw_button(x, y, ITEM_COL_W, ITEM_H, items[i].label,
 		            items[i].on ? C_OK_BG : C_BTN_BG,
 		            items[i].on ? C_OK_BD : C_BTN_BD, C_BTN_TX,
 		            &fonts::lgfxJapanGothicP_16);
 	}
 }
 
-//	確認ダイアログ (title / 2行の説明 / キャンセル・ok_label)
-static bool confirm(const char *title, const char *line1, const char *line2,
-                    const char *ok_label)
-{
-	const int x = 24, y = 52, w = 272, h = 136;
-	lcd->fillRoundRect(x, y, w, h, 8, C_DLG_BG);
-	lcd->drawRoundRect(x, y, w, h, 8, C_DLG_BD);
-
-	lcd->setFont(&fonts::lgfxJapanGothicP_16);
-	lcd->setTextColor(C_VALUE, C_DLG_BG);
-	lcd->setTextDatum(lgfx::textdatum_t::top_center);
-	lcd->drawString(title, x + w / 2, y + 14);
-	lcd->setTextColor(C_LABEL, C_DLG_BG);
-	lcd->drawString(line1, x + w / 2, y + 44);
-	lcd->drawString(line2, x + w / 2, y + 64);
-	lcd->setTextDatum(lgfx::textdatum_t::top_left);
-
-	const int bw = 112, bh = 36, by = y + h - bh - 14;
-	const int bx_no = x + 16, bx_yes = x + w - bw - 16;
-	draw_button(bx_no, by, bw, bh, "キャンセル", C_BTN_BG, C_BTN_BD, C_BTN_TX,
-	            &fonts::lgfxJapanGothicP_16);
-	draw_button(bx_yes, by, bw, bh, ok_label, C_OK_BG, C_OK_BD, C_BTN_TX,
-	            &fonts::lgfxJapanGothicP_16);
-
-	wait_release();
-	int32_t tx, ty;
-	for (;;) {
-		if (lcd->getTouch(&tx, &ty)) {
-			bool yes = hit(tx, ty, bx_yes, by, bw, bh);
-			bool no = hit(tx, ty, bx_no, by, bw, bh);
-			wait_release();
-			if (yes) return true;
-			if (no) return false;
-		}
-		delay(10);
-	}
-}
+//	確認ダイアログは display.cpp の display_confirm() (SETUP と起動時
+//	アップデートチェックで共有) を使う
 
 //	AP (WiFi) を使うモードの前後処理: ADC DMA を止めて DSP を待機させる
 //	(WiFi と同時に動かすと WDT リセット)。スプライト類は解放しない —
@@ -246,7 +226,9 @@ void setup_run(LGFX *lcd_)
 		}
 		int idx = -1;
 		for (int i = 0; i < ITEM_N; i++) {
-			if (hit(tx, ty, ITEM_X, ITEM_Y(i), ITEM_W, ITEM_H)) {
+			int ix, iy;
+			item_pos(i, &ix, &iy);
+			if (hit(tx, ty, ix, iy, ITEM_COL_W, ITEM_H)) {
 				idx = i;
 				break;
 			}
@@ -274,7 +256,7 @@ void setup_run(LGFX *lcd_)
 			touchcal_run(lcd);      // タッチの四隅校正 (DSP は動いたまま)
 			break;
 		case 5:
-			if (confirm("OTAモードに入ります",
+			if (display_confirm(lcd, "OTAモードに入ります",
 			            "受信を止めて WiFi を起動します",
 			            "更新が成功すると再起動します", "開始")) {
 				ap_mode_enter();
@@ -282,8 +264,11 @@ void setup_run(LGFX *lcd_)
 				ap_mode_leave();
 			}
 			break;
-		case 6:
-			if (confirm("設定を初期化します",
+		case 6:                     // 起動時アップデートチェック ON/OFF
+			fwupdate_set_check_enabled(!fwupdate_check_enabled());
+			break;
+		case 7:
+			if (display_confirm(lcd, "設定を初期化します",
 			            "WiFi の SSID / パスワードを消し",
 			            "NTP 時刻同期を止めます", "初期化")) {
 				netsync_clear_wifi();

@@ -795,7 +795,10 @@ void display_splash_header(int title_y)
 	lcd.setTextDatum(lgfx::textdatum_t::top_left);
 }
 
-void display_splash(void)
+//	スプラッシュの絵柄だけを描く (待ちも画面切替もしない)。
+//	最下段 (y 223..239) は空けてあり、起動時アップデートチェックが
+//	時刻同期や更新の状況をそこに書く (fwupdate.cpp)
+void display_splash_draw(void)
 {
 	lcd.fillScreen(DISPLAY_SPLASH_BG);
 	display_splash_header(76);
@@ -815,17 +818,88 @@ void display_splash(void)
 		lcd.drawString(sub, 160, 214);
 	}
 
-	// タッチ調整を入れているときだけ、触らずに戻す方法を出しておく
-	// (ズレた値を保存してしまっても BOOT ボタンだけで復帰できる)
-	if (touchcal_saved()) {
-		lcd.setFont(&fonts::lgfxJapanGothicP_16);
-		lcd.setTextColor(C_LABEL);
-		lcd.drawString("BOOT を押しながら電源投入 = タッチ調整を消去", 160, 232);
-	}
-
 	lcd.setTextDatum(lgfx::textdatum_t::top_left);
+}
+
+//	絵柄を描いて 1.5 秒見せる。デコーダ画面への切り替えはしない —
+//	この後に起動時アップデートチェックが同じ画面の最下段へ状況を書くので、
+//	切り替えは呼び出し側 (main.cpp) が最後に display_redraw() で行う
+void display_splash(void)
+{
+	display_splash_draw();
 	delay(1500);
-	display_redraw();
+}
+
+// setup.cpp と同じ配色・体裁の確認ダイアログ (SETUP 画面 / 起動時アップデート
+// チェックで共有する)
+#define CFM_BTN_BG  lgfx::color565(26, 34, 46)
+#define CFM_BTN_BD  lgfx::color565(70, 92, 120)
+#define CFM_BTN_TX  lgfx::color565(190, 206, 226)
+#define CFM_OK_BG   lgfx::color565(24, 54, 42)
+#define CFM_OK_BD   lgfx::color565(90, 200, 140)
+#define CFM_DLG_BG  lgfx::color565(20, 27, 37)
+#define CFM_DLG_BD  lgfx::color565(120, 150, 190)
+#define CFM_VALUE   lgfx::color565(235, 240, 246)
+#define CFM_LABEL   lgfx::color565(120, 140, 165)
+
+static bool confirm_hit(int tx, int ty, int x, int y, int w, int h)
+{
+	return (tx >= x && tx < x + w && ty >= y && ty < y + h);
+}
+
+static void confirm_wait_release(LGFX *lcd_)
+{
+	int32_t tx, ty;
+	while (lcd_->getTouch(&tx, &ty)) {
+		delay(10);
+	}
+}
+
+static void confirm_draw_button(LGFX *lcd_, int x, int y, int w, int h, const char *label,
+                                uint16_t bg, uint16_t bd, uint16_t tx)
+{
+	lcd_->fillRoundRect(x, y, w, h, 6, bg);
+	lcd_->drawRoundRect(x, y, w, h, 6, bd);
+	lcd_->setFont(&fonts::lgfxJapanGothicP_16);
+	lcd_->setTextColor(tx, bg);
+	lcd_->setTextDatum(lgfx::textdatum_t::middle_center);
+	lcd_->drawString(label, x + w / 2, y + h / 2);
+	lcd_->setTextDatum(lgfx::textdatum_t::top_left);
+}
+
+bool display_confirm(LGFX *lcd_, const char *title, const char *line1, const char *line2,
+                     const char *ok_label)
+{
+	const int x = 24, y = 52, w = 272, h = 136;
+	lcd_->fillRoundRect(x, y, w, h, 8, CFM_DLG_BG);
+	lcd_->drawRoundRect(x, y, w, h, 8, CFM_DLG_BD);
+
+	lcd_->setFont(&fonts::lgfxJapanGothicP_16);
+	lcd_->setTextColor(CFM_VALUE, CFM_DLG_BG);
+	lcd_->setTextDatum(lgfx::textdatum_t::top_center);
+	lcd_->drawString(title, x + w / 2, y + 14);
+	lcd_->setTextColor(CFM_LABEL, CFM_DLG_BG);
+	lcd_->drawString(line1, x + w / 2, y + 44);
+	lcd_->drawString(line2, x + w / 2, y + 64);
+	lcd_->setTextDatum(lgfx::textdatum_t::top_left);
+
+	const int bw = 112, bh = 36, by = y + h - bh - 14;
+	const int bx_no = x + 16, bx_yes = x + w - bw - 16;
+	confirm_draw_button(lcd_, bx_no, by, bw, bh, "キャンセル", CFM_BTN_BG, CFM_BTN_BD, CFM_BTN_TX);
+	confirm_draw_button(lcd_, bx_yes, by, bw, bh, ok_label, CFM_OK_BG, CFM_OK_BD, CFM_BTN_TX);
+
+	confirm_wait_release(lcd_);
+	int32_t tx, ty;
+	for (;;) {
+		if (lcd_->getTouch(&tx, &ty)) {
+			bool yes = confirm_hit(tx, ty, bx_yes, by, bw, bh);
+			bool no = confirm_hit(tx, ty, bx_no, by, bw, bh);
+			confirm_wait_release(lcd_);
+			if (yes) return true;
+			if (no) return false;
+		}
+		delay(10);
+	}
 }
 
 LGFX *display_lcd(void)
