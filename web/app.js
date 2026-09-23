@@ -264,9 +264,10 @@ function wireChain() {
 	if (monitorOn_) out.connect(monitor);
 }
 
-//	BPF の中心周波数。実機は 700Hz 固定。トーン追従を選ぶと
-//	AUTO の同調先へ合わせる (実機には無い動作だが、700Hz から離れた
-//	信号を受けるときはこちらが有利)
+//	BPF の中心周波数。既定はトーン追従で、AUTO の同調先へ合わせる。
+//	実機のハードは 700Hz 固定だが、Web 版にその制約は無く、実測でも
+//	トーンが 700Hz から離れた音源ほど有利だった (下の README 参照)。
+//	実機と同じ条件で比べたいときは「700Hz 固定」を選ぶ
 function bpfCenter() {
 	if ($('bpfCenter').value === 'track') {
 		const hz = status[ST.toneHz];

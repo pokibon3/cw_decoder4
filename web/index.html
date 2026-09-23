@@ -197,9 +197,9 @@ button.tp { font-size: 15px; line-height: 1; padding: 6px 12px; min-width: 44px;
     <label class="chk" title="実機は ADC の手前に多重帰還型 BPF (700Hz / Q=5) が入っている。これが無いと帯域外ノイズでデコード率が落ちる">
       <input type="checkbox" id="bpfOn" checked> 入力BPF
     </label>
-    <select id="bpfCenter" title="実機は 700Hz 固定">
-      <option value="700">700Hz 固定 (実機)</option>
-      <option value="track">トーン追従</option>
+    <select id="bpfCenter" title="既定はトーン追従。実機のハードは 700Hz 固定なので、実機と同じ条件で比べたいときは固定を選ぶ">
+      <option value="track" selected>トーン追従</option>
+      <option value="700">700Hz 固定 (実機と同条件)</option>
     </select>
     <span id="bpfNow" class="metric" style="min-width:54px;display:inline-block"
           title="実際に効いている BPF の中心周波数"></span>
