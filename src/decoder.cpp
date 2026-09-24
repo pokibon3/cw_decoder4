@@ -84,28 +84,31 @@ static uint32_t highduration;
 static uint32_t hightimesavg = 60;
 static uint32_t startttimelow;
 static uint32_t lowduration;
-// キーイングの重み = 符号内スペース長 / 短点長 を Q8 で追う。
+// 符号内スペース長の推定 (ms)。マーク由来の hightimesavg とは別に持つ。
 //
-// 重みは送り手によって 1:1 とは限らない。実測 (POTA QSO 録音): 短点 51ms /
-// 長点 165ms に対し符号内スペースが 83ms あり、短点の 1.63 倍だった
-// (機械送出の original.mp3 はきっちり 1.00 倍)。長点/短点比は 3.24、語間も
-// 6.8 短点で標準的なので、崩れているのは符号内スペースだけ。
-// 短点だけから単位長を出して「1.5 単位以上は文字間」と切ると、この音源の
-// 符号内スペース 83ms は 1.5 x 51 = 76ms を超えて全て文字間と判定され、
-// 1 文字が要素ごとにばらける (デコード結果が E/T だらけになる)。
+// キーイングの重み (マーク:スペース) は送り手によって 1:1 とは限らない。
+// 実測 (POTA QSO 録音): 短点 51ms / 長点 165ms に対し符号内スペースが 83ms
+// あり、短点の 1.63 倍だった (機械送出の original.mp3 はきっちり 1.00 倍)。
+// 長点/短点比は 3.24、語間も 6.8 短点で標準的なので、崩れているのは
+// 符号内スペースだけ。短点だけから単位長を出して「1.5 単位以上は文字間」と
+// 切ると、この音源の符号内スペース 83ms は 1.5 x 51 = 76ms を超えて全て
+// 文字間と判定され、1 文字が要素ごとにばらける (結果が E/T だらけになる)。
 // 符号内スペースそのものを測って、文字間との境界をそこから出す。
+static uint32_t lowtimesavg = 60;           // 起動時は hightimesavg と同じ (重み 1.0)
+// 暴走防止の拘束: 文字間ギャップを符号内と取り違えると推定が伸び、伸びた分
+// だけ次の文字間も飲み込む正帰還になる。マーク由来の単位長から離れられる
+// 範囲を 0.75〜2.0 倍に限る (Farnsworth は文字間だけが伸びて符号内は
+// 1 単位のままなので、この下限側に張り付いて従来どおり動く)
 //
-// 長さ (ms) ではなく短点長との比で持つのが要点: 起動直後や速度追従中は
-// hightimesavg が動くので、絶対値で覚えておくと古い速度の値が残って
-// 境界がずれる (35WPM の合成 CW で初期値 60ms が残り、文字間 103ms を
-// 符号内と誤判定して CQ CQ が 1 文字に融合した)。
-static uint32_t gap_ratio_q8 = 256;         // 256 = 1.00 倍 (理想 CW)
-// 暴走防止の拘束: 文字間ギャップを符号内と取り違えると比が伸び、伸びた分
-// だけ次の文字間も飲み込む正帰還になる。重み 0.8〜2.0 倍に限る
-// (Farnsworth は文字間だけが伸びて符号内は 1 単位のままなので、
-//  この下限側に張り付いて従来どおり動く)
-#define GAP_RATIO_MIN_Q8 205                // 0.80
-#define GAP_RATIO_MAX_Q8 512                // 2.00
+// 変数どうしの乗除算を使わないのは、CH32V 版へこのまま移植できるように
+// するため。定数倍と 2 のべき乗の除算だけで書いてあるので、GCC が
+// ターゲットに応じて最適な形を選ぶ:
+//   CH32V003 (rv32ec、乗算も除算も無し) … unit * 3 は slli + add
+//   CH32V006 (rv32ec_zmmul、乗算あり)   … unit * 3 は mul 命令
+// どちらも __mulsi3 / __udivsi3 を呼ばない。比 (符号内 / 短点) で持つと
+// 比を測るのに変数どうしの除算が要り、006 でも __udivsi3 になるので
+// 長さ (ms) のまま持つ。EMA 係数も 1/3 ではなく 1/4 にしてシフトで済ませる。
+#define GAP_UNIT_EMA_SHIFT 2                // EMA 係数 1/4
 static uint8_t nb_acc = 0;          // ノイズブランカの積分値 (0..nb_max)
 
 static char code[20];
@@ -162,10 +165,15 @@ typedef enum {
 	GAP_WORD  = 2
 } gap_type_t;
 
-//	現在の重みから見た符号内スペース長 (ms)
+//	符号内スペース推定を unit から離れすぎない範囲に収めて返す (ms)
 static uint32_t gap_unit(uint32_t unit)
 {
-	return (unit * gap_ratio_q8) >> 8;
+	uint32_t gu = lowtimesavg;
+	uint32_t lo = (unit * 3) >> 2;          // 0.75 unit
+	uint32_t hi = unit << 1;                // 2.00 unit
+	if (gu < lo) gu = lo;
+	if (gu > hi) gu = hi;
+	return gu;
 }
 
 //	符号内/文字間の境界 (ms)。実測した符号内スペース長と、あるべき文字間
@@ -173,11 +181,14 @@ static uint32_t gap_unit(uint32_t unit)
 //	  理想 CW (重み 1.0) なら (1u + 3u)/2 = 2.0u … 1 と 3 の真ん中
 //	  POTA 録音 (重み 1.63) なら (83 + 153)/2 = 118ms … 符号内 83 と
 //	  文字間 170〜250 の間に十分な余裕をもって入る
-//	重みが上限 2.0 まで振れても境界は (2u + 3u)/2 = 2.5u にしかならず、
-//	3 単位の文字間を飲み込むことは構造上ない (正帰還に入らない)。
+//	境界が 3 単位の文字間を飲み込むことは構造上ない: 推定が上限 2.0u まで
+//	振れても (2u + 3u)/2 = 2.5u にしかならない。3u に錨を降ろしているので、
+//	速度追従中に推定が古いままでも境界は暴れない (35WPM で単位長が 34ms へ
+//	下がる途中、推定が初期値 60ms のままでも境界は (60+102)/2 = 81ms で、
+//	文字間 102ms の手前に収まる)。
 static uint32_t gap_char_threshold(uint32_t unit)
 {
-	return (gap_unit(unit) + unit * 3) / 2;
+	return (gap_unit(unit) + unit * 3) >> 1;
 }
 
 static gap_type_t classify_gap(uint32_t gap, uint32_t unit)
@@ -357,6 +368,8 @@ static int decodeAscii(int16_t asciinumber)
 		emit('H'); emit('H');
 	} else if (asciinumber == 8) {			// BK
 		emit('B'); emit('K');
+	} else if (asciinumber == 9) {			// UR
+		emit('U'); emit('R');
 	} else {
 		emit((uint8_t)asciinumber);
 	}
@@ -414,7 +427,7 @@ void decoder_init(void)
 	realstate = realstatebefore = KEY_LOW;
 	filteredstate = filteredstatebefore = KEY_LOW;
 	hightimesavg = 60;
-	gap_ratio_q8 = 256;
+	lowtimesavg = 60;
 	highduration = 0;
 	lowduration = 0;
 	last_mark_ms = 0;
@@ -615,18 +628,17 @@ void decoder_process_block(int32_t magnitude, int32_t side_mag, int32_t side_mag
 			Serial.printf("[dec] S %4lu u=%lu\n", (unsigned long)lowduration,
 			              (unsigned long)hightimesavg);
 #endif
-			// 重みの追従。符号内と判定できたギャップだけを取り込む。
-			// 取り込む値も 0.8〜2.0 に丸めてから平均するので、文字間を
-			// 取り違えても比が上限を越えて伸びることはない
+			// 符号内スペース推定の追従。符号内と判定できたギャップだけを
+			// 取り込む。動かす起点は拘束後の値 (gap_unit) にする: 生の
+			// lowtimesavg から動かすと、拘束の外に駐まったまま単位長の
+			// 変化に追いつけなくなる
 			if (lowduration >= 20 && hightimesavg > 0 &&
 			    lowduration < gap_char_threshold(hightimesavg)) {
-				uint32_t r = (lowduration << 8) / hightimesavg;
-				if (r < GAP_RATIO_MIN_Q8) r = GAP_RATIO_MIN_Q8;
-				if (r > GAP_RATIO_MAX_Q8) r = GAP_RATIO_MAX_Q8;
-				if (r >= gap_ratio_q8) {
-					gap_ratio_q8 += (r - gap_ratio_q8) / 3;
+				uint32_t g = gap_unit(hightimesavg);
+				if (lowduration >= g) {
+					lowtimesavg = g + ((lowduration - g) >> GAP_UNIT_EMA_SHIFT);
 				} else {
-					gap_ratio_q8 -= (gap_ratio_q8 - r) / 3;
+					lowtimesavg = g - ((g - lowduration) >> GAP_UNIT_EMA_SHIFT);
 				}
 			}
 			// ギャップは直前マークとの 1:3 スナップにだけ使う。単独の平滑更新は
