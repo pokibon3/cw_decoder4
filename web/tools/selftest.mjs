@@ -45,7 +45,9 @@ const MORSE = {
 //==================================================================
 //	キーイングは立ち上がり/立ち下がりを raised-cosine で 5ms なまらせる
 //	(矩形キーイングはクリックで広帯域成分が出て、実際の受信より条件が悪くなる)
-function synthesize(text, { wpm = 20, toneHz = 700, snrDb = 20, amp = 0.30 } = {}) {
+//	weight = 符号内スペース / 短点。1.0 が理想 CW だが、実際の送信では
+//	1:1 とは限らない (実測の POTA QSO 録音は 1.63 倍あった)
+function synthesize(text, { wpm = 20, toneHz = 700, snrDb = 20, amp = 0.30, weight = 1.0 } = {}) {
 	const unit = 1.2 / wpm;                       // 短点長 (秒)
 	const rise = Math.min(0.005, unit / 4);
 	const keys = [];                              // [on(bool), 秒]
@@ -58,7 +60,7 @@ function synthesize(text, { wpm = 20, toneHz = 700, snrDb = 20, amp = 0.30 } = {
 		if (!first) keys.push([false, 3 * unit]);  // 文字間
 		first = false;
 		code.split('').forEach((el, i) => {
-			if (i > 0) keys.push([false, unit]);   // 符号内
+			if (i > 0) keys.push([false, weight * unit]);   // 符号内
 			keys.push([true, el === '.' ? unit : 3 * unit]);
 		});
 	}
@@ -197,5 +199,33 @@ for (const c of CASES) {
 		`${(acc * 100).toFixed(0).padStart(5)}%  ${got}`);
 	if (verbose) console.log(`        tone=${st[6]}Hz auto=${st[8]} peak=${st[9]} bw=${st[10]}`);
 }
+
+//==================================================================
+//	キーイングの重み (符号内スペース / 短点) を振る
+//==================================================================
+//	送り手によっては符号内スペースが短点より長い。マーク由来の単位長だけで
+//	符号内/文字間を切っていた頃は、重みが 1.5 を超えたあたりで符号内スペースが
+//	文字間と判定され、1 文字が要素ごとにばらけて全崩れした。
+//	(実測: POTA QSO 録音が重み 1.63 で、対策前は 1 文字も読めなかった)
+console.log('\n  重み | 推定wpm  正解率  デコード結果');
+console.log('  -----+ ------------------------------------------');
+for (const weight of [0.8, 1.0, 1.2, 1.4, 1.6, 1.8]) {
+	const core = await createCore();
+	core.exports.cw_reset();
+	core.exports.cw_set_tone(5);
+	const audio = synthesize(WARMUP + TEXT, { wpm: 20, toneHz: 700, snrDb: 25, weight });
+	let got = '';
+	const step = SAMPLE_RATE / 4;
+	for (let off = 0; off < audio.length; off += step) {
+		core.feed(audio.subarray(off, Math.min(off + step, audio.length)));
+		got += core.drainChars();
+	}
+	got = got.replace(/\s+/g, ' ').trim().split(' ').slice(1).join(' ');
+	const acc2 = accuracy(TEXT, got);
+	if (acc2 < worst) worst = acc2;
+	console.log(`  ${weight.toFixed(1)} | ${String(core.status()[5]).padStart(6)}  ` +
+		`${(acc2 * 100).toFixed(0).padStart(5)}%  ${got}`);
+}
+
 console.log(`\n最低正解率: ${(worst * 100).toFixed(0)}%`);
 process.exit(worst >= 0.8 ? 0 : 1);
