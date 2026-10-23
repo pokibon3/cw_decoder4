@@ -490,11 +490,14 @@ void decoder_toggle_mode(void)
 	code[0] = '\0';
 }
 
+static void key_step(void);
+
 //==================================================================
 //	ブロック処理本体 (CH32版 cwDecoder ループ1周分)
 //==================================================================
-void decoder_process_block(int32_t magnitude, int32_t side_mag, int32_t side_mag_inst,
-                           int32_t side_mag_max, int32_t near_side, int32_t jitter)
+void decoder_process_block(int32_t magnitude, int32_t tone_mag, int32_t side_mag,
+                           int32_t side_mag_inst, int32_t side_mag_max, int32_t near_side,
+                           int32_t jitter)
 {
 	dec_samples += DSP_HOP;
 	dec_ms = (uint32_t)(dec_samples / DEC_SAMPLES_PER_MS);
@@ -517,7 +520,7 @@ void decoder_process_block(int32_t magnitude, int32_t side_mag, int32_t side_mag
 	// 無音 mag=18 なのに nf=107 のまま、信号中に 326 まで上昇し ON
 	// しきい値が信号を超えてマークが削られた)
 	{
-		uint8_t tone_like = (magnitude > side_mag * 2);
+		uint8_t tone_like = (tone_mag > side_mag * 2);
 		if (noise_acc == 0) {
 			noise_acc = magnitude << 8;
 		} else if (!tone_like || magnitude < noise_floor) {
@@ -554,12 +557,12 @@ void decoder_process_block(int32_t magnitude, int32_t side_mag, int32_t side_mag
 	(void)jitter;
 	{
 		uint8_t tone_on  = (((uint32_t)magnitude * 5U) > ((uint32_t)magnitudelimit * 3U)) &&
-		                   (magnitude > side_mag * TONE_SIDE_RATIO) &&
-		                   (magnitude > side_mag_max) &&
-		                   (magnitude * 10 > near_side * TONE_NEAR_RATIO_X10);
+		                   (tone_mag > side_mag * TONE_SIDE_RATIO) &&
+		                   (tone_mag > side_mag_max) &&
+		                   (tone_mag * 10 > near_side * TONE_NEAR_RATIO_X10);
 		uint8_t tone_off = (((uint32_t)magnitude * 5U) < ((uint32_t)magnitudelimit * 2U)) ||
-		                   (magnitude * 10 < side_mag * TONE_SIDE_RATIO_OFF_X10) ||
-		                   (magnitude * 10 < near_side * TONE_NEAR_RATIO_OFF_X10);
+		                   (tone_mag * 10 < side_mag * TONE_SIDE_RATIO_OFF_X10) ||
+		                   (tone_mag * 10 < near_side * TONE_NEAR_RATIO_OFF_X10);
 		if (tone_on) {
 			realstate = KEY_HIGH;
 		} else if (tone_off) {
@@ -569,6 +572,33 @@ void decoder_process_block(int32_t magnitude, int32_t side_mag, int32_t side_mag
 		                       ((realstate == KEY_HIGH) ? 4 : 0));
 	}
 
+	key_step();
+}
+
+//	ALE 判定 (dsp.cpp の DSP_DET_ALE_RATIO) 用の入口。トーンの ON/OFF は
+//	呼び出し側が ALE の電力比で決めて渡すので、振幅しきい値とサイドビン比の
+//	判定を飛ばして、ノイズブランカ以降 (タイミング処理) だけを共用する。
+//	magnitude / limit はスコープ表示用
+void decoder_process_key(int32_t magnitude, int32_t limit, uint8_t tone_on, uint8_t tone_off)
+{
+	dec_samples += DSP_HOP;
+	dec_ms = (uint32_t)(dec_samples / DEC_SAMPLES_PER_MS);
+	magnitudelimit = limit;
+	noise_floor = 0;
+	(void)magnitude;
+	if (tone_on) {
+		realstate = KEY_HIGH;
+	} else if (tone_off) {
+		realstate = KEY_LOW;
+	}
+	gate_flags = (uint8_t)((tone_on ? 1 : 0) | (tone_off ? 2 : 0) |
+	                       ((realstate == KEY_HIGH) ? 4 : 0));
+	key_step();
+}
+
+//	ノイズブランカ + 要素長の計測 + 符号の組み立て。realstate を入力とする
+static void key_step(void)
+{
 	// ノイズブランカ: realstate を上下カウンタで積分して filteredstate を出す。
 	//
 	// 旧「nbtime ms 安定したら反映」方式は、しきい値付近で realstate が

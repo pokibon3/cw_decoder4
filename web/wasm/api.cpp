@@ -307,6 +307,29 @@ WASM_EXPORT void cw_cycle_tone(void)
 	dsp_set_tone((uint8_t)((idx >= DSP_TONE_AUTO) ? 0 : (idx + 1)));
 }
 
+//	トーン検出方式 (評価中): 0=Goertzel / 1=ALE→Goertzel / 2=ALE 電力比
+WASM_EXPORT void cw_set_det(int m)
+{
+	dsp_set_det_mode((uint8_t)m);
+}
+
+WASM_EXPORT int cw_det(void)
+{
+	return dsp_det_mode();
+}
+
+//	ALE のパラメータ。整数だけで渡せるよう mu は 1e-5 単位、比は 1/100 単位
+WASM_EXPORT void cw_set_ale(int taps, int delay, int mu_e5, int ron_x100, int roff_x100)
+{
+	dsp_set_ale_param((uint16_t)taps, (uint16_t)delay, (float)mu_e5 * 1e-5f,
+	                  (float)ron_x100 * 0.01f, (float)roff_x100 * 0.01f);
+}
+
+WASM_EXPORT int cw_ale_ratio_x1000(void)
+{
+	return (int)(dsp_ale_ratio() * 1000.0f);
+}
+
 WASM_EXPORT void cw_toggle_mode(void)
 {
 	decoder_toggle_mode();

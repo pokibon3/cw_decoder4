@@ -50,7 +50,8 @@ EXPORTS="cw_init cw_push cw_run cw_poll cw_reset \
 	cw_in_ptr cw_in_cap cw_status_ptr cw_spec_ptr cw_scope_ptr cw_chars_ptr \
 	cw_scope_stride cw_spec_bins cw_sample_rate \
 	cw_elem_ptr cw_elem_stride cw_elem_count cw_elem_lost cw_elem_clear \
-	cw_set_tone cw_set_tone_hz cw_cycle_tone cw_toggle_mode"
+	cw_set_tone cw_set_tone_hz cw_cycle_tone cw_toggle_mode \
+	cw_set_det cw_det cw_set_ale cw_ale_ratio_x1000"
 
 EXPORT_FLAGS=""
 for e in $EXPORTS; do

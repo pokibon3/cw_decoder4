@@ -202,6 +202,15 @@ button.tp { font-size: 15px; line-height: 1; min-width: 44px; }
     <span id="bpfNow" class="metric" style="min-width:54px;display:inline-block"
           title="実際に効いている BPF の中心周波数"></span>
     <label class="chk" title="帯域幅 = 700/Q。Q を上げすぎるとフィルタ自身が中心とサイドビンの落差を作り、デコーダの純音判定がノイズに対して誤動作する (Q=5 以上で偽符号が出始める)"> Q <input type="range" id="bpfQ" min="1" max="8" step="0.5" value="3" style="width:80px"><span id="bpfQV" class="metric">3.0</span></label>
+    <label class="chk" title="トーン検出方式 (評価中)。A=現行の Goertzel、B=ALE (適応型ラインエンハンサ) の出力を Goertzel へ、C=ALE の出力/誤差の電力比だけで判定">検出
+      <select id="detSel">
+        <option value="0" selected>A Goertzel</option>
+        <option value="1">B ALE→Goertzel</option>
+        <option value="2">C ALE 電力比</option>
+        <option value="3">D 振幅=生 / 純音=ALE</option>
+        <option value="4">E 振幅=ALE / 純音=生</option>
+      </select>
+    </label>
     <label class="chk">ch
       <select id="chSel" title="ステレオ入力のどの系統をデコードに使うか。片チャンネルだけ繋いでいるときは L か R を選ぶ">
         <option value="L">L</option>

@@ -59,6 +59,12 @@ static uint16_t peak_cand_hz = 0;
 static uint8_t peak_cand_cnt = 0;
 
 static int16_t sample_ring[512];
+static int16_t ale_ring[512];           // ALE の出力 y を sample_ring と同じ位置に積む
+static volatile uint8_t det_mode = DSP_DET_GOERTZEL;
+// ALE のタップ数 L と予測遅延 D。DSP_DET_ALE_AMP の評価で決めた値
+// (L=128 は 40WPM の短点をなまらせて 94% → 75%、L=64 で A と同等)
+static uint16_t ale_taps = 64;
+static uint16_t ale_delay = 16;
 static uint16_t sample_pos = 0;
 static int32_t dc_est = 2048 * 256;   // 生ADC値の直流分 (Q8)
 
@@ -268,20 +274,42 @@ static inline int32_t goertzel_mag(float q1, float q2, float coeff)
 	return (int32_t)(sqrtf(mag2) + 0.5f);
 }
 
+//	中心ビンは生入力と ALE 出力 (y) の 2 本を計算できる。サイドビンは常に
+//	生入力から取る: サイドまで y から取ると、ALE が狭い BPF として作る
+//	スペクトルの傾きを純音と取り違え、ノイズで偽符号が出る (実測 8 個/分)。
+//	どちらの中心をどこに使うかは det_mode で決める:
+//	  振幅 (しきい値・ノイズ床) 用 / 純音判定 (サイド比) 用
+//	  GOERTZEL     生 / 生
+//	  ALE_GOERTZEL y  / y
+//	  ALE_TONE     生 / y   … 感度は現行のまま、純音判定だけ ALE で厳しく
+//	  ALE_AMP      y  / 生
 static int32_t process_gate(void)
 {
 	// 直近 gate_win サンプルを窓として使う (120時はホップ30で75%重複)
 	const int n = gate_win;
+	const uint8_t use_ale = (det_mode != DSP_DET_GOERTZEL);
 	float win[DSP_GATE_WIN_LONG];
-	float mean = 0.0f;
+	float win_a[DSP_GATE_WIN_LONG];
+	float mean = 0.0f, mean_a = 0.0f;
 	uint16_t base = (uint16_t)((sample_pos + 512 - n) % 512);
+	// y の包絡線は生入力より平均 D + L/2 サンプル遅れて立ち上がり、同じだけ
+	// 遅れて消える。生入力側の窓をその分さかのぼって時間をそろえる。
+	// そろえないと、振幅と純音判定で別の時刻を見ることになり、ON (両方
+	// 成立) は遅れ OFF (片方で成立) は早まってマークが削られる
+	// (実測: 振幅=生 / 純音=y で -3dB の正解率が 100% → 53%)
+	const uint16_t lag = use_ale ? (uint16_t)(ale_delay + ale_taps / 2) : 0;
+	uint16_t base_raw = (uint16_t)((sample_pos + 1024 - n - lag) % 512);
 	for (int i = 0; i < n; i++) {
-		win[i] = (float)sample_ring[(base + i) % 512];
+		win[i] = (float)sample_ring[(base_raw + i) % 512];
+		win_a[i] = use_ale ? (float)ale_ring[(base + i) % 512] : 0.0f;
 		mean += win[i];
+		mean_a += win_a[i];
 	}
 	mean /= (float)n;
+	mean_a /= (float)n;
 
 	float q1c = 0.0f, q2c = 0.0f;
+	float q1a = 0.0f, q2a = 0.0f;
 	float q1l = 0.0f, q2l = 0.0f;
 	float q1h = 0.0f, q2h = 0.0f;
 	float q1nl = 0.0f, q2nl = 0.0f;
@@ -295,8 +323,16 @@ static int32_t process_gate(void)
 		q0 = g_coeff_nl * q1nl - q2nl + x; q2nl = q1nl; q1nl = q0;
 		q0 = g_coeff_nh * q1nh - q2nh + x; q2nh = q1nh; q1nh = q0;
 	}
+	if (use_ale) {
+		for (int i = 0; i < n; i++) {
+			float q0 = g_coeff_c * q1a - q2a + (win_a[i] - mean_a);
+			q2a = q1a;
+			q1a = q0;
+		}
+	}
 
 	int32_t mag_c = goertzel_mag(q1c, q2c, g_coeff_c);
+	int32_t mag_a = use_ale ? goertzel_mag(q1a, q2a, g_coeff_c) : mag_c;
 	int32_t mag_l = goertzel_mag(q1l, q2l, g_coeff_l);
 	int32_t mag_h = goertzel_mag(q1h, q2h, g_coeff_h);
 	int32_t mag_nl = goertzel_mag(q1nl, q2nl, g_coeff_nl);
@@ -308,7 +344,7 @@ static int32_t process_gate(void)
 	// なので ON にならず、WPM が更新されなくなって短窓から戻れなくなる
 	if (n < DSP_GATE_WIN_LONG) {
 		const int32_t k = DSP_GATE_WIN_LONG / n;
-		mag_c *= k; mag_l *= k; mag_h *= k; mag_nl *= k; mag_nh *= k;
+		mag_c *= k; mag_a *= k; mag_l *= k; mag_h *= k; mag_nl *= k; mag_nh *= k;
 	}
 
 	int32_t side_inst = (mag_l < mag_h) ? mag_l : mag_h;
@@ -352,7 +388,10 @@ static int32_t process_gate(void)
 	if (side_inst_max > side_max) side_max = side_inst_max;
 
 	// 旧 normalize_decoder_magnitude() と同じ >>2
-	int32_t mag_norm = mag_c >> 2;
+	const int32_t amp_src = (det_mode == DSP_DET_ALE_GOERTZEL || det_mode == DSP_DET_ALE_AMP) ? mag_a : mag_c;
+	const int32_t tone_src = (det_mode == DSP_DET_ALE_GOERTZEL || det_mode == DSP_DET_ALE_TONE) ? mag_a : mag_c;
+	int32_t mag_norm = amp_src >> 2;
+	int32_t tone_norm = tone_src >> 2;
 	int32_t side_norm = side >> 2;
 	int32_t side_inst_norm = side_inst >> 2;
 	int32_t side_max_norm = side_max >> 2;
@@ -361,7 +400,7 @@ static int32_t process_gate(void)
 
 	last_side_norm = side_norm;
 	last_near_norm = near_norm;
-	decoder_process_block(mag_norm, side_norm, side_inst_norm, side_max_norm,
+	decoder_process_block(mag_norm, tone_norm, side_norm, side_inst_norm, side_max_norm,
 	                      near_norm, jitter_norm);
 
 #if DSP_DIAG
@@ -376,6 +415,172 @@ static int32_t process_gate(void)
 #endif
 
 	return mag_norm;
+}
+
+//==================================================================
+//	適応型ラインエンハンサ (ALE) — 評価中
+//
+//	NLMS の線形予測器。D サンプル遅らせた入力の L タップから現在値を
+//	予測する。ノイズは D 以上離れると相関が無い (入力 BPF Q=3 の相関時間は
+//	約 1.4ms = 11 サンプル) ので予測できず、周期的なトーンだけが予測できる。
+//	  y = 予測 (トーンを強めた音声)
+//	  e = x - y (予測できなかった成分 = ノイズ)
+//	収束すると係数はトーン周波数に合った帯域 fs/L 程度の BPF になる。
+//	NLMS の収束時定数はモードの電力比で決まり、トーンが来ると
+//	約 2(1+1/SNR)/mu サンプルで掴み、ノイズだけの間は L/mu サンプルかけて
+//	ゆっくり崩れる (L=128, mu=0.01 で 1.6 秒)。つまり符号間や語間では
+//	係数がほぼ保たれ、次のキーダウンで即座に応答する。
+//
+//	判定方式 (dsp_set_det_mode):
+//	  DSP_DET_ALE_GOERTZEL … 中心ビンだけ y から取り、サイドビンは生入力のまま
+//	  DSP_DET_ALE_RATIO    … y の電力 / e の電力 (長時間平均) だけで ON/OFF。
+//	                         Goertzel を使わない
+//==================================================================
+#define ALE_TAPS_MAX 256
+#define ALE_HIST 512                    // 履歴リング (L + D 以上の 2 のべき)
+static float ale_mu = 0.01f;
+// 比しきい値。純ノイズでの比はマーク外の 99% 点で約 0.3 (L=128, D=32)。
+// 合成 -6dB / 実ノイズの偽文字の釣り合いで決めた (web/tools/aletest.mjs)
+static float ale_r_on = 0.45f;          // ON: Py / Pe_slow がこれを超える
+static float ale_r_off = 0.25f;         // OFF: これを下回る
+static float ale_w[ALE_TAPS_MAX];
+static float ale_x[ALE_HIST];
+static uint16_t ale_pos = 0;
+static float ale_pow = 0.0f;            // 入力電力の長時間平均 (サンプル当たり)
+static float ale_hop_y = 0.0f, ale_hop_e = 0.0f;   // 現ホップの二乗和
+static float ale_win_y[DSP_GATE_WIN_LONG / DSP_HOP];   // 直近ホップの二乗和 (窓)
+static uint8_t ale_win_pos = 0;
+static float ale_e_slow = 0.0f;         // e の電力の長時間平均 (ホップ単位)
+static uint8_t ale_e_started = 0;
+static volatile float ale_last_ratio = 0.0f;
+static float ale_peak = 0.0f;           // 比の振幅 (sqrt) のピーク追従
+
+static void ale_reset(void)
+{
+	memset(ale_w, 0, sizeof(ale_w));
+	memset(ale_x, 0, sizeof(ale_x));
+	memset(ale_ring, 0, sizeof(ale_ring));
+	memset(ale_win_y, 0, sizeof(ale_win_y));
+	ale_pos = 0;
+	ale_pow = 0.0f;
+	ale_hop_y = ale_hop_e = 0.0f;
+	ale_win_pos = 0;
+	ale_e_slow = 0.0f;
+	ale_e_started = 0;
+	ale_peak = 0.0f;
+}
+
+void dsp_set_det_mode(uint8_t m)
+{
+	if (m > DSP_DET_ALE_AMP) m = DSP_DET_GOERTZEL;
+	ale_reset();
+	side_ema_started = 0;
+	det_mode = m;
+}
+
+uint8_t dsp_det_mode(void)
+{
+	return det_mode;
+}
+
+void dsp_set_ale_param(uint16_t taps, uint16_t delay, float mu, float r_on, float r_off)
+{
+	if (taps < 8) taps = 8;
+	if (taps > ALE_TAPS_MAX) taps = ALE_TAPS_MAX;
+	if (delay < 1) delay = 1;
+	if (taps + delay > ALE_HIST - 1) delay = (uint16_t)(ALE_HIST - 1 - taps);
+	ale_taps = taps;
+	ale_delay = delay;
+	ale_mu = mu;
+	ale_r_on = r_on;
+	ale_r_off = r_off;
+	ale_reset();
+}
+
+float dsp_ale_ratio(void)
+{
+	return ale_last_ratio;
+}
+
+//	1 サンプル処理して予測 y を返す。e の二乗和もここで積む
+static inline float ale_sample(float x)
+{
+	const uint16_t L = ale_taps, D = ale_delay;
+	const uint16_t M = ALE_HIST - 1;
+	// 正規化は参照ベクトルの瞬時の二乗和ではなく、入力電力の長時間平均
+	// (τ 0.5 秒) x L で行う。瞬時値だと、キーダウン直後は参照ベクトルに
+	// まだトーンが入りきっておらず分母が小さいのに e はトーンまるごとで、
+	// ステップが過大になって係数が跳ねる (実測: マーク頭で y が定常の
+	// 2.7 倍に跳ね、その分マークが 20ms ほど長く測られた)
+	ale_pow += (x * x - ale_pow) * (1.0f / 4096.0f);
+	float y = 0.0f;
+	for (uint16_t k = 0; k < L; k++) {
+		y += ale_w[k] * ale_x[(uint16_t)(ale_pos - D - k) & M];
+	}
+	const float e = x - y;
+	const float g = ale_mu * e / (ale_pow * (float)L + 1.0f);
+	for (uint16_t k = 0; k < L; k++) {
+		ale_w[k] += g * ale_x[(uint16_t)(ale_pos - D - k) & M];
+	}
+	ale_x[ale_pos & M] = x;
+	ale_pos = (uint16_t)((ale_pos + 1) & M);
+	ale_hop_y += y * y;
+	ale_hop_e += e * e;
+	return y;
+}
+
+//	DSP_DET_ALE_RATIO の判定 (ホップ毎)。窓は Goertzel と同じ gate_win
+//	(既定 120 = 15ms) にそろえ、y の電力をその窓で、e の電力は τ 0.5 秒の
+//	EMA で取る。e を長時間平均にするのは立ち上がりと立ち下がりの遅れを
+//	そろえるため: y は D〜D+L サンプル遅れて立ち上がり、同じだけ遅れて
+//	消える。e の短時間値を分母にすると、キーダウン直後 (y がまだ無く
+//	e にトーンが残る) だけ比が下がり、マークが短く測られる
+static int32_t ale_decide(void)
+{
+	const uint8_t nh = (uint8_t)(gate_win / DSP_HOP);
+	ale_win_y[ale_win_pos] = ale_hop_y;
+	ale_win_pos = (uint8_t)((ale_win_pos + 1) % (DSP_GATE_WIN_LONG / DSP_HOP));
+	float py = 0.0f;
+	for (uint8_t i = 0; i < nh; i++) {
+		py += ale_win_y[(ale_win_pos + (DSP_GATE_WIN_LONG / DSP_HOP) - 1 - i) %
+		                (DSP_GATE_WIN_LONG / DSP_HOP)];
+	}
+	py /= (float)(nh * DSP_HOP);
+	const float pe = ale_hop_e / (float)DSP_HOP;
+	// e の基準はノイズだけを見たい。単純な EMA だと、キーダウン直後に
+	// e へ残るトーン (y が D〜D+L 遅れて追いつくまで) とキーアップ後の
+	// y の残響が混ざり、きれいな信号ではこれが支配的になる (実測: マーク
+	// 頭で比 6.9 → 同じマークの中で 0.6 まで落ちた)。基準の 4 倍を超える
+	// ホップは取り込まず、そのときは基準を 1% ずつだけ持ち上げる
+	// (本当にノイズが増えたときは 0.25 秒ほどで倍になって追いつく)
+	if (!ale_e_started) {
+		ale_e_started = 1;
+		ale_e_slow = pe;
+	} else if (pe < ale_e_slow * 4.0f) {
+		ale_e_slow += (pe - ale_e_slow) * (1.0f / 128.0f);
+	} else {
+		ale_e_slow *= 1.01f;
+	}
+	ale_hop_y = ale_hop_e = 0.0f;
+
+	const float r = py / (ale_e_slow + 1.0f);
+	ale_last_ratio = r;
+	// 固定の比しきい値だけだと、強い信号ほどキーアップ後の y の残響
+	// (D+L サンプル) がしきい値を超えたまま残り、マークが伸びて空白が
+	// 詰まる (10dB で語間が消えた)。現行の magnitudelimit と同じく、
+	// 振幅 (sqrt) のピークに追従するしきい値を併用してエッジを信号の
+	// 大きさによらず振幅の 0.6 / 0.4 倍の位置で切る
+	const float a = sqrtf(r);
+	if (a > ale_peak) {
+		ale_peak += (a - ale_peak) * (1.0f / 6.0f);
+	} else {
+		ale_peak += (a - ale_peak) * (1.0f / 48.0f);
+	}
+	const uint8_t on = (r > ale_r_on) && (a * 5.0f > ale_peak * 3.0f);
+	const uint8_t off = (r < ale_r_off) || (a * 5.0f < ale_peak * 2.0f);
+	const int32_t mag = (int32_t)(a * 1000.0f);
+	decoder_process_key(mag, (int32_t)(ale_peak * 1000.0f), on, off);
+	return mag;
 }
 
 //==================================================================
@@ -590,6 +795,11 @@ void dsp_step(void)
 			dc_est += (r - dc_est) >> 10;                 // ゆっくり直流追従
 			int16_t s = (int16_t)((r - dc_est) >> 8);       // ±2048 (中心値がフルスケール中央の場合)
 			sample_ring[sample_pos] = s;
+			if (det_mode != DSP_DET_GOERTZEL) {
+				float y = ale_sample((float)s);
+				ale_ring[sample_pos] = (int16_t)((y > 32767.0f) ? 32767.0f :
+				                                 ((y < -32768.0f) ? -32768.0f : y));
+			}
 			sample_pos = (uint16_t)((sample_pos + 1) % 512);
 			if (s < mn) mn = s;
 			if (s > mx) mx = s;
@@ -608,7 +818,12 @@ void dsp_step(void)
 			input_peak = (int16_t)((ipk > 2048) ? 2048 : ipk);
 		}
 
-		int32_t mag = process_gate();
+		int32_t mag;
+		if (det_mode == DSP_DET_ALE_RATIO) {
+			mag = ale_decide();
+		} else {
+			mag = process_gate();
+		}
 		uint16_t mag16 = (mag > 65535) ? 65535 : (uint16_t)((mag < 0) ? 0 : mag);
 		{
 			// 文字の符号区間の追跡 (デコード文字のスコープ表示用)

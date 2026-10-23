@@ -189,6 +189,7 @@ async function ensureEngine() {
 			}
 		}, 10);
 	});
+	node.port.postMessage({ type: 'det', mode: +$('detSel').value });
 }
 
 function stopSource() {
@@ -1023,6 +1024,7 @@ $('micStart').onclick = guard(startMic);
 // チャンネル切替と BPF の ON/OFF は再生中でもその場で繋ぎ替える (止めずに比べられる)
 $('chSel').onchange = () => wireChain();
 $('bpfOn').onchange = () => wireChain();
+$('detSel').onchange = () => node?.port.postMessage({ type: 'det', mode: +$('detSel').value });
 $('bpfCenter').onchange = () => updateBpf();
 $('bpfQ').oninput = () => { $('bpfQV').textContent = (+$('bpfQ').value).toFixed(1); updateBpf(); };
 $('micRescan').onclick = guard(async () => { await ensureEngine(); await listMics(); });

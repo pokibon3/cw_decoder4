@@ -43,6 +43,17 @@ typedef struct {
 #define DSP_GATE_WIN_SHORT (DSP_GATE_WIN_LONG / 2)
 #define DSP_GATE_WIN DSP_GATE_WIN_LONG      // バッファ確保用 (最大値)
 
+// トーン検出方式 (評価中)。既定は DSP_DET_GOERTZEL
+#define DSP_DET_GOERTZEL 0          // 現行: Goertzel 中心/サイドビン
+#define DSP_DET_ALE_GOERTZEL 1      // 中心ビンだけ ALE の出力から取る (サイドは生入力)
+#define DSP_DET_ALE_RATIO 2         // ALE の出力/誤差の電力比だけで判定 (Goertzel 不使用)
+#define DSP_DET_ALE_TONE 3          // 振幅は生入力の中心、純音判定 (サイド比) は ALE の中心
+#define DSP_DET_ALE_AMP 4           // 振幅は ALE の中心、純音判定は生入力の中心
+void dsp_set_det_mode(uint8_t m);
+uint8_t dsp_det_mode(void);
+void dsp_set_ale_param(uint16_t taps, uint16_t delay, float mu, float r_on, float r_off);
+float dsp_ale_ratio(void);
+
 void dsp_start(void);
 // ブロック 1 回ぶん (DSP_HOP サンプル) を処理する。ESP32 では内部の DSP
 // タスクが回すので呼ぶ必要はない。Web (WASM) ビルドが外から駆動するために公開。
