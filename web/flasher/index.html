@@ -60,13 +60,12 @@ legend { color: var(--dim); padding: 0 4px; }
 #notes { margin: 6px 0 0; padding-left: 18px; color: var(--dim); max-height: 140px; overflow-y: auto; }
 #bar { flex: 1 1 200px; height: 12px; border: 1px solid var(--line); border-radius: 3px; background: #060a10; overflow: hidden; }
 #barFill { height: 100%; width: 0; background: #2dc878; transition: width .1s linear; }
-#flog, #mon {
+#flog {
   margin: 0; background: var(--panel2); border: 1px solid var(--line); border-radius: 6px;
   padding: 6px 8px; overflow-y: auto; white-space: pre-wrap; word-break: break-all;
   font: 12px/1.45 ui-monospace, "SF Mono", Menlo, Consolas, monospace; color: #c9d3c3;
 }
 #flog { height: 110px; }
-#mon { height: 320px; }
 #unsupported { display: none; border-color: #7a3a33; }
 a { color: var(--accent); }
 </style>
@@ -130,19 +129,6 @@ a { color: var(--accent); }
   <div class="row" style="margin-top:6px"><pre id="flog" style="flex:1 1 auto"></pre></div>
 </div>
 
-<div class="card">
-  <h2>シリアルモニター <span class="dim" style="font-weight:400">115200bps</span></h2>
-  <div class="row">
-    <button id="btnMon" disabled>モニター開始</button>
-    <button id="btnReset" disabled title="本体を再起動して起動ログを表示する">本体をリセット</button>
-    <button id="btnClear">クリア</button>
-    <button id="btnSave">ログを保存</button>
-    <label class="opt dim" title="スコープ画面の元データ (S/T/C/W/E/L/H/X で始まる行)。SETUP の「ログ出力」が ON だと毎秒大量に流れる">
-      <input type="checkbox" id="hideScope" checked> スコープログを隠す</label>
-    <label class="opt dim"><input type="checkbox" id="autoScroll" checked> 自動スクロール</label>
-  </div>
-  <div class="row" style="margin-top:6px"><pre id="mon" style="flex:1 1 auto"></pre></div>
-</div>
 
 <script type="module" src="flasher.js"></script>
 <script type="module">

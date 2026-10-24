@@ -14,8 +14,10 @@
 //	  0x10000 firmware_<パネル>.bin
 //	「設定を初期化する」は NVS (0x9000〜0xDFFF) を 0xFF で埋める (消去状態と同じ)。
 //
-//	接続中はシリアルモニターを開いておき、起動ログの [boot] / [lcd] 行から
-//	いまの版とパネルを読む。書き込みの間だけモニターを閉じて esptool-js に渡す。
+//	接続したときと書き込んだ後だけ、ポートを開いて本体を再起動させ、起動ログの
+//	[boot] / [lcd] 行からいまの版とパネルを読んだら閉じる (画面にログは出さない)。
+//	開きっぱなしにしないのは、本体がスコープログを 115200bps いっぱいに流し
+//	続けるため。書き込みは閉じたポートを esptool-js に渡して行う。
 //
 import { ESPLoader, Transport } from './vendor/esptool-js-0.6.1/bundle.js';
 import { md5hex } from './md5.js';
@@ -31,15 +33,13 @@ const USB_NAMES = { 0x1a86: 'CH340', 0x10c4: 'CP210x', 0x0403: 'FTDI', 0x303a: '
 // この基板の CH340 は 921600bps だと同期が乱れて書けなかった (実測)。
 // pio の既定と同じ 460800 で書き、失敗したら 115200 でやり直す
 const FLASH_BAUDS = [460800, 115200];
-const MON_BAUD = 115200;
-// スコープログの行 (src/scopelog.cpp): 英大文字 1 字 + 空白で始まる
-const SCOPE_LINE = /^[HTSWCELX] /;
-const MON_KEEP = 20000;          // 保存用に持つ行数
-const MON_SHOW = 1500;           // 画面に出す行数
+const LOG_BAUD = 115200;
+const BOOT_WAIT_MS = 5000;       // 再起動から起動ログの [boot] 行が出るまで待つ時間
 
 let index = null;                // versions.json
 let port = null;
 let busy = false;                // 書き込み中
+let reading = false;             // 起動ログを読み取り中
 let device = { version: null, panel: null };
 
 //==================================================================
@@ -51,20 +51,21 @@ function setState() {
 		el.innerHTML = '<span class="dim">本体を USB で接続して「ポートを選んで接続」を押してください。</span>';
 		return;
 	}
+	if (reading) {
+		el.innerHTML = '<span class="dim">本体を再起動して、いまの版とパネルを読み取っています…</span>';
+		return;
+	}
 	const v = device.version ? `v${device.version}` : '<span class="dim">不明</span>';
 	const p = device.panel || '<span class="dim">不明</span>';
 	el.innerHTML = `本体のファーム: <b>${v}</b>&nbsp;&nbsp;パネル: <b>${p}</b>` +
-		(device.version ? '' : ' <span class="dim">(起動ログを読み取り中。出ないときは「本体をリセット」)</span>');
+		(device.version ? '' : ' <span class="dim">(読み取れませんでした。書き込みはできます。パネルを選んでください)</span>');
 }
 
 function updateButtons() {
 	const connected = !!port;
-	$('btnConnect').disabled = connected || busy || !('serial' in navigator);
-	$('btnDisconnect').disabled = !connected || busy;
-	$('btnFlash').disabled = !connected || busy || !index;
-	$('btnMon').disabled = !connected || busy;
-	$('btnMon').textContent = monitor.running ? 'モニター停止' : 'モニター開始';
-	$('btnReset').disabled = !connected || busy || !monitor.running;
+	$('btnConnect').disabled = connected || busy || reading || !('serial' in navigator);
+	$('btnDisconnect').disabled = !connected || busy || reading;
+	$('btnFlash').disabled = !connected || busy || reading || !index;
 	$('selVer').disabled = busy || !index;
 	for (const r of document.querySelectorAll('input[name=panel], input[name=erase]')) r.disabled = busy;
 }
@@ -168,108 +169,79 @@ function checkPanel() {
 }
 
 //==================================================================
-//	シリアルモニター
+//	起動ログの読み取り
 //==================================================================
-const monitor = {
-	running: false,
-	reader: null,
-	lines: [],                   // 全行 (保存用、MON_KEEP まで)
-	partial: '',
-	dirty: false,
-	closed: null,                // 読み取りループの終了 Promise
-};
-
 function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
 
-async function monitorStart() {
-	if (monitor.running || !port) return;
-	await port.open({ baudRate: MON_BAUD });
-	// DTR / RTS は基板の自動リセット回路につながっている (RTS = EN、DTR = IO0)。
-	// 開いた直後に両方とも下げて、通常起動のまま走らせる
-	await port.setSignals({ dataTerminalReady: false, requestToSend: false });
-	monitor.running = true;
-	monitor.reader = port.readable.getReader();
-	const dec = new TextDecoder('utf-8');
-	monitor.closed = (async () => {
-		try {
-			for (;;) {
-				const { value, done } = await monitor.reader.read();
-				if (done) break;
-				monitorFeed(dec.decode(value, { stream: true }));
-			}
-		} catch (e) {
-			if (monitor.running) monitorFeed(`\n[モニター: ${e.message}]\n`);
-		} finally {
-			monitor.reader.releaseLock();
-		}
-	})();
-	updateButtons();
-}
-
-async function monitorStop() {
-	if (!monitor.running) return;
-	monitor.running = false;
-	try { await monitor.reader.cancel(); } catch { /* 既に切れている */ }
-	await monitor.closed;
-	try { await port.close(); } catch { /* 抜かれた */ }
-	updateButtons();
-}
-
-//	本体をリセットして起動ログを出させる (EN を 100ms 落とす、IO0 は High のまま)
-async function monitorReset() {
-	if (!monitor.running) return;
+//	本体をリセットして起動ログを出させる (EN を 100ms 落とす、IO0 は High のまま)。
+//	DTR / RTS は基板の自動リセット回路につながっている (RTS = EN、DTR = IO0)
+async function resetDevice() {
 	await port.setSignals({ dataTerminalReady: false, requestToSend: true });
 	await sleep(100);
 	await port.setSignals({ requestToSend: false });
 }
 
-function monitorFeed(text) {
-	const parts = (monitor.partial + text).split(/\r?\n/);
-	monitor.partial = parts.pop();
-	for (const line of parts) {
-		monitor.lines.push(line);
-		parseBootLine(line);
-	}
-	if (monitor.lines.length > MON_KEEP) monitor.lines.splice(0, monitor.lines.length - MON_KEEP);
-	monitor.dirty = true;
-}
-
-//	起動ログからいまの版とパネルを読む
+//	ポートを開いて本体を再起動し、起動ログから版とパネルを読んで閉じる。
+//	[boot] 行が BOOT_WAIT_MS 以内に出なければもう 1 回だけ再起動する。
+//	起動ログの例:
 //	  [lcd] panel = ST7789
 //	  [boot] v3.4 build Oct 24 2026 10:27:01  running=app0 ...
-function parseBootLine(line) {
-	let m = line.match(/^\[boot\] v(\d+(?:\.\d+)+)/);
-	if (m) {
-		device.version = m[1];
-		onDeviceInfo();
+async function readBootInfo() {
+	const info = { version: null, panel: null };
+	// 受信バッファは既定 255 バイトしかなく、スコープログであふれるので広げる
+	await port.open({ baudRate: LOG_BAUD, bufferSize: 1 << 16 });
+	try {
+		await port.setSignals({ dataTerminalReady: false, requestToSend: false });
+		for (let attempt = 0; attempt < 2 && !info.version; attempt++) {
+			await resetDevice();
+			const deadline = Date.now() + BOOT_WAIT_MS;
+			const dec = new TextDecoder('utf-8');
+			let partial = '';
+			while (!info.version && Date.now() < deadline && port.readable) {
+				const reader = port.readable.getReader();
+				const timer = setTimeout(() => reader.cancel().catch(() => {}), deadline - Date.now());
+				try {
+					for (;;) {
+						const { value, done } = await reader.read();
+						if (done) break;
+						const parts = (partial + dec.decode(value, { stream: true })).split(/\r?\n/);
+						partial = parts.pop();
+						for (const line of parts) {
+							let m = line.match(/^\[lcd\] panel = (ST7789|ILI9341)/);
+							if (m) info.panel = m[1];
+							m = line.match(/^\[boot\] v(\d+(?:\.\d+)+)/);
+							if (m) info.version = m[1];
+						}
+						if (info.version) break;      // [lcd] は [boot] より先に出る
+					}
+				} catch {
+					// あふれ・フレーミングエラー等。期限まで読み直す
+				} finally {
+					clearTimeout(timer);
+					reader.releaseLock();
+				}
+			}
+		}
+	} finally {
+		try { await port.close(); } catch { /* 抜かれた */ }
 	}
-	m = line.match(/^\[lcd\] panel = (ST7789|ILI9341)/);
-	if (m) {
-		device.panel = m[1];
-		// 本体のパネルに合わせる。書き込み中 (直後の起動確認を含む) は
-		// ユーザーの選択を動かさない
-		if (!busy) document.querySelector(`input[name=panel][value=${m[1]}]`).checked = true;
-		onDeviceInfo();
-	}
+	return info;
 }
 
-let bootWaiter = null;           // 書き込み後の起動確認
-function onDeviceInfo() {
+//	接続時の読み取り: 結果を画面に反映し、パネルの選択を本体に合わせる
+async function detectDevice() {
+	reading = true;
+	setState();
+	updateButtons();
+	try {
+		device = await readBootInfo();
+	} finally {
+		reading = false;
+	}
+	if (device.panel) document.querySelector(`input[name=panel][value=${device.panel}]`).checked = true;
 	setState();
 	showVersion();
-	if (bootWaiter && device.version) bootWaiter(device.version);
-}
-
-function renderMonitor() {
-	if (monitor.dirty) {
-		monitor.dirty = false;
-		const hide = $('hideScope').checked;
-		const src = hide ? monitor.lines.filter((l) => !SCOPE_LINE.test(l)) : monitor.lines;
-		const pre = $('mon');
-		pre.textContent = src.slice(-MON_SHOW).join('\n');
-		if ($('autoScroll').checked) pre.scrollTop = pre.scrollHeight;
-	}
-	requestAnimationFrame(renderMonitor);
+	updateButtons();
 }
 
 //==================================================================
@@ -291,18 +263,17 @@ async function connect() {
 		: '';
 	setState();
 	try {
-		await monitorStart();
-		await monitorReset();    // 起動ログから版とパネルを読む
+		await detectDevice();
 	} catch (e) {
 		flashMsg(`ポートを開けません: ${e.message} — ほかのソフトが使っていないか確認してください`, 'err');
 		port = null;
+		reading = false;
 		setState();
 	}
 	updateButtons();
 }
 
 async function disconnect() {
-	await monitorStop();
 	port = null;
 	device = { version: null, panel: null };
 	$('portInfo').textContent = '';
@@ -410,7 +381,6 @@ async function flash() {
 		files.push({ address: L.app, data: await fetchChecked(v.panels[panel]) });
 		flog(`取得: ${files.map((f) => `0x${f.address.toString(16)} ${f.data.length}B`).join(' / ')}`);
 
-		await monitorStop();
 		let lastErr = null;
 		for (const baud of FLASH_BAUDS) {
 			try {
@@ -427,28 +397,27 @@ async function flash() {
 		if (lastErr) throw lastErr;
 
 		// 起動ログで書いた版になったかを確かめる
-		device = { version: null, panel: null };
+		flashMsg('書き込み完了。起動を確かめています…');
+		reading = true;
 		setState();
-		const booted = new Promise((res) => {
-			bootWaiter = res;
-			setTimeout(() => res(null), 10000);
-		});
-		await monitorStart();
-		await monitorReset();
-		const got = await booted;
-		bootWaiter = null;
+		try {
+			device = await readBootInfo();
+		} finally {
+			reading = false;
+		}
+		setState();
+		showVersion();
+		const got = device.version;
 		if (got === v.version) {
 			flashMsg(`✓ v${v.version} で起動しました`, 'ok');
 		} else if (got) {
 			flashMsg(`書き込みは完了しましたが、起動したのは v${got} でした`, 'warn');
 		} else {
-			flashMsg('書き込みは完了しました (起動ログを確認できませんでした。モニターで確認してください)', 'warn');
+			flashMsg('書き込みは完了しました (起動の確認はできませんでした。本体の画面で版を確かめてください)', 'warn');
 		}
 	} catch (e) {
 		flashMsg(`書き込みに失敗しました: ${e.message}`, 'err');
 		flog(String(e.stack || e), 'err');
-		// モニターを戻しておく (失敗後も状態を見られるように)
-		try { if (port && !monitor.running) await monitorStart(); } catch { /* 抜かれた */ }
 	} finally {
 		window.removeEventListener('beforeunload', onLeave);
 		busy = false;
@@ -464,31 +433,9 @@ $('btnDisconnect').onclick = disconnect;
 $('btnFlash').onclick = flash;
 $('selVer').onchange = showVersion;
 for (const r of document.querySelectorAll('input[name=panel]')) r.onchange = checkPanel;
-$('btnMon').onclick = async () => {
-	try {
-		if (monitor.running) await monitorStop();
-		else await monitorStart();
-	} catch (e) {
-		flashMsg(`モニターを開けません: ${e.message}`, 'err');
-	}
-	updateButtons();
-};
-$('btnReset').onclick = () => monitorReset();
-$('btnClear').onclick = () => { monitor.lines = []; monitor.dirty = true; };
-$('btnSave').onclick = () => {
-	const blob = new Blob([monitor.lines.join('\n') + '\n'], { type: 'text/plain' });
-	const a = document.createElement('a');
-	a.href = URL.createObjectURL(blob);
-	a.download = `cwdecoder-log-${new Date().toISOString().replace(/[:.]/g, '-')}.txt`;
-	a.click();
-	URL.revokeObjectURL(a.href);
-};
-$('hideScope').onchange = () => { monitor.dirty = true; };
-
 if ('serial' in navigator) {
 	navigator.serial.addEventListener('disconnect', (e) => {
 		if (e.target === port && !busy) {
-			monitor.running = false;
 			port = null;
 			device = { version: null, panel: null };
 			$('portInfo').textContent = '';
@@ -503,5 +450,4 @@ if ('serial' in navigator) {
 
 setState();
 updateButtons();
-requestAnimationFrame(renderMonitor);
 loadIndex();
