@@ -263,10 +263,35 @@ uint8_t clock_zone(void)
 	return zone_sel;
 }
 
+//	選択中のゾーンは NVS に保存し、次の起動でも同じ国の時刻を出す
+static void zone_save(void)
+{
+	Preferences prefs;
+	if (prefs.begin("cwdec", false)) {
+		prefs.putUChar("zone", zone_sel);
+		prefs.end();
+	}
+}
+
+static void zone_load(void)
+{
+	Preferences prefs;
+	if (prefs.begin("cwdec", false)) {
+		if (prefs.isKey("zone")) {
+			uint8_t z = prefs.getUChar("zone", CLOCK_ZONE_HOME);
+			if (z < CLOCK_ZONE_N) {
+				zone_sel = z;
+			}
+		}
+		prefs.end();
+	}
+}
+
 void clock_set_zone(uint8_t idx)
 {
-	if (idx < CLOCK_ZONE_N) {
+	if (idx < CLOCK_ZONE_N && idx != zone_sel) {
 		zone_sel = idx;
+		zone_save();
 	}
 }
 
@@ -659,6 +684,7 @@ bool clock_zone_touch(int32_t tx, int32_t ty)
 		return false;
 	}
 	zone_sel = i;
+	zone_save();
 	draw_zones(true);               // 選択枠を描き直す
 	clock_tm_t tm;
 	clock_break(clock_zone_now(zone_sel), &tm);
@@ -740,6 +766,7 @@ void clock_init(LGFX *lcd_)
 	epoch_base = build_epoch();
 	base_ms = millis();
 	summer_time_load();
+	zone_load();
 }
 
 //	共有バッファは解放しない (デコーダ画面が使う)。描画だけ止める

@@ -31,13 +31,30 @@ class LGFX : public lgfx::LGFX_Device {
 	// パネルの回転オフセットを打ち消した後のタッチの向き (ST7789 実機基準)
 	static constexpr uint8_t TOUCH_ROT_BASE = 2;
 
+	// タッチの既定の補正値 (XPT2046 の生値。SETUP のタッチパネル調整を
+	// していないときに使う)。x はタッチ素子の素の向きの短辺 (画面の縦方向)
+	struct TouchRange { uint16_t x_min, x_max, y_min, y_max; };
+	// ILI9341 基板の値 (従来の既定)
+	static constexpr TouchRange TOUCH_ILI9341 = { 300, 3900, 3700, 200 };
+	// ST7789 基板の値。実機で 2 回校正した四隅の生値の平均
+	// (1226,2886 1439,44 4003,3071 4095,229 / 1140,2994 1406,43 3971,3147 4095,196)。
+	// ILI9341 の値のままだと短辺方向が約 1000 ずれ、触った位置より下で反応した
+	static constexpr TouchRange TOUCH_ST7789 = { 1300, 4040, 3030, 130 };
+
 	// 使うパネルを決めて初期化する。パネルの offset_rotation を打ち消す値を
-	// タッチへ入れてから init() するので、どちらのパネルでもタッチの向きは同じ
-	bool use_panel(lgfx::Panel_LCD* p, const char* name) {
+	// タッチへ入れてから init() するので、どちらのパネルでもタッチの向きは同じ。
+	// 補正の既定値もパネルごとに入れ、setTouch() で LovyanGFX の補正行列を
+	// 作り直す (行列はコンストラクタの setTouch() 時点の値で作られているため)
+	bool use_panel(lgfx::Panel_LCD* p, const char* name, const TouchRange& r) {
 		auto cfg = _touch_instance.config();
 		cfg.offset_rotation =
 			(uint8_t)((TOUCH_ROT_BASE + 4 - p->config().offset_rotation) & 3);
+		cfg.x_min = r.x_min;
+		cfg.x_max = r.x_max;
+		cfg.y_min = r.y_min;
+		cfg.y_max = r.y_max;
 		_touch_instance.config(cfg);
+		p->setTouch(&_touch_instance);
 		_panel_name = name;
 		setPanel(p);
 		return init();
@@ -93,13 +110,13 @@ public:
 		}
 		{
 			// タッチ (XPT2046, LCDとは別SPI)
-			// キャリブレーション値はボード個体差あり: ズレる場合は
-			// x_min/x_max/y_min/y_max を調整すること
+			// キャリブレーション値はボード個体差あり。既定値はパネルごとに
+			// use_panel() で入れ直す (TOUCH_ST7789 / TOUCH_ILI9341)
 			auto cfg = _touch_instance.config();
-			cfg.x_min = 300;
-			cfg.x_max = 3900;
-			cfg.y_min = 3700;
-			cfg.y_max = 200;
+			cfg.x_min = TOUCH_ST7789.x_min;
+			cfg.x_max = TOUCH_ST7789.x_max;
+			cfg.y_min = TOUCH_ST7789.y_min;
+			cfg.y_max = TOUCH_ST7789.y_max;
 			cfg.pin_int = -1;   // INT配線の個体差に依存しないようSPIポーリングで検出
 			cfg.bus_shared = false;
 			// offset_rotation は init_auto() がパネルに合わせて入れ直す
@@ -122,12 +139,12 @@ public:
 	// 強制指定するビルドフラグがあればそれを優先。
 	bool init_auto(void) {
 #if defined(PANEL_ILI9341)
-		return use_panel(&_panel_ili9341, "ILI9341");
+		return use_panel(&_panel_ili9341, "ILI9341", TOUCH_ILI9341);
 #elif defined(PANEL_ST7789)
-		return use_panel(&_panel_st7789, "ST7789");
+		return use_panel(&_panel_st7789, "ST7789", TOUCH_ST7789);
 #else
 		// まず ST7789 として初期化 (SLPOUT/COLMOD/DISPON 等は両者共通)
-		if (!use_panel(&_panel_st7789, "ST7789")) {
+		if (!use_panel(&_panel_st7789, "ST7789", TOUCH_ST7789)) {
 			return false;
 		}
 		// ID4(0xD3) を読む。dummy_read_bits=1 は両パネル共通なので
@@ -137,7 +154,7 @@ public:
 		// 判定できないので -DPANEL_ILI9341 で明示指定すること。
 		uint32_t id = _panel_st7789.readCommand(0xD3, 0, 3);
 		if (((id >> 8) & 0xFFFF) == 0x4193) {
-			return use_panel(&_panel_ili9341, "ILI9341");
+			return use_panel(&_panel_ili9341, "ILI9341", TOUCH_ILI9341);
 		}
 		return true;
 #endif

@@ -55,12 +55,17 @@ static float lock_hold = 0.0f;
 // 35Hz にすると飛びが消え、正解率 97% → 99% (他の条件に退行なし)
 #define DSP_AUTO_NEAR_HZ 35          // これ以下のズレはゲートOFF時に無条件で追従
 #define DSP_AUTO_STEAL_RATIO 1.5f    // 遠くへ乗り換える条件: 候補 > ホールド x これ
+// 付け替えの不感帯: ずれがこれ以下なら同調先を動かさない
+#define DSP_AUTO_DEADBAND_HZ 5
+// ゲート ON (受信中) でも許す微修正の幅
+#define DSP_AUTO_ON_TRACK_HZ 25
 static uint16_t peak_cand_hz = 0;
 static uint8_t peak_cand_cnt = 0;
 
 static int16_t sample_ring[512];
 static int16_t ale_ring[512];           // ALE の出力 y を sample_ring と同じ位置に積む
-static volatile uint8_t det_mode = DSP_DET_GOERTZEL;
+static uint8_t det_mode = DSP_DET_GOERTZEL;            // DSP タスクが使う方式
+static volatile uint8_t det_req = DSP_DET_GOERTZEL;    // 切替要求 (次のブロックで反映)
 // ALE のタップ数 L と予測遅延 D。DSP_DET_ALE_AMP の評価で決めた値
 // (L=128 は 40WPM の短点をなまらせて 94% → 75%、L=64 で A と同等)
 static uint16_t ale_taps = 64;
@@ -470,17 +475,18 @@ static void ale_reset(void)
 	ale_peak = 0.0f;
 }
 
+//	切替は要求だけ出し、DSP タスクが次のブロックの頭で反映する。
+//	ESP32 ではタッチ処理 (Core 1) から呼ばれるので、ここで ALE の状態を
+//	初期化すると Core 0 で処理中の ale_sample() と競合する
 void dsp_set_det_mode(uint8_t m)
 {
 	if (m > DSP_DET_ALE_AMP) m = DSP_DET_GOERTZEL;
-	ale_reset();
-	side_ema_started = 0;
-	det_mode = m;
+	det_req = m;
 }
 
 uint8_t dsp_det_mode(void)
 {
-	return det_mode;
+	return det_req;
 }
 
 void dsp_set_ale_param(uint16_t taps, uint16_t delay, float mu, float r_on, float r_off)
@@ -698,7 +704,8 @@ static void process_spectrum(void)
 				uint8_t steal_ok = (diff <= DSP_AUTO_NEAR_HZ) ||
 				                   (lock_hold < (float)DSP_AUTO_MIN_MAG) ||
 				                   (bm > lock_hold * DSP_AUTO_STEAL_RATIO);
-				if (diff > 5 && (diff <= 25 || (!decoder_gate() && steal_ok))) {
+				if (diff > DSP_AUTO_DEADBAND_HZ &&
+				    (diff <= DSP_AUTO_ON_TRACK_HZ || (!decoder_gate() && steal_ok))) {
 					if (diff > 100) {
 						side_ema_started = 0;
 					}
@@ -788,6 +795,12 @@ void dsp_step(void)
 		size_t got = audio_read(raw, DSP_HOP);
 		if (got == 0) continue;
 		samples_total += got;
+
+		if (det_req != det_mode) {
+			ale_reset();
+			side_ema_started = 0;
+			det_mode = det_req;
+		}
 
 		int16_t mn = 32767, mx = -32768;
 		for (size_t i = 0; i < got; i++) {
