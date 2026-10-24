@@ -63,9 +63,13 @@ static uint16_t peak_cand_hz = 0;
 static uint8_t peak_cand_cnt = 0;
 
 static int16_t sample_ring[512];
-static int16_t ale_ring[512];           // ALE の出力 y を sample_ring と同じ位置に積む
+// ALE の出力 y を sample_ring と同じ位置に積む。float で持つ: int16 に丸めると
+// 入力が小さいとき (ピーク 5〜10%) に y が数カウントしかなく、量子化で
+// 中心ビンの精度が落ちて弱い信号の正解率が下がった (合成 -5dB で 92% → 71%)
+static float ale_ring[512];
 static uint8_t det_mode = DSP_DET_GOERTZEL;            // DSP タスクが使う方式
 static volatile uint8_t det_req = DSP_DET_GOERTZEL;    // 切替要求 (次のブロックで反映)
+#define DSP_ALE_LIMIT_FLOOR 40    // E での振幅しきい値の絶対床 (dsp_step 参照)
 // ALE のタップ数 L と予測遅延 D。DSP_DET_ALE_AMP の評価で決めた値
 // (L=128 は 40WPM の短点をなまらせて 94% → 75%、L=64 で A と同等)
 static uint16_t ale_taps = 64;
@@ -306,7 +310,7 @@ static int32_t process_gate(void)
 	uint16_t base_raw = (uint16_t)((sample_pos + 1024 - n - lag) % 512);
 	for (int i = 0; i < n; i++) {
 		win[i] = (float)sample_ring[(base_raw + i) % 512];
-		win_a[i] = use_ale ? (float)ale_ring[(base + i) % 512] : 0.0f;
+		win_a[i] = use_ale ? ale_ring[(base + i) % 512] : 0.0f;
 		mean += win[i];
 		mean_a += win_a[i];
 	}
@@ -800,6 +804,14 @@ void dsp_step(void)
 			ale_reset();
 			side_ema_started = 0;
 			det_mode = det_req;
+			// 振幅しきい値の絶対床。従来方式 (A) の 140 は、入力が小さいときだけ
+			// 隠れたスケルチとして効く (局間の弱い信号を落とし、音量を上げると
+			// 正解率が下がる原因)。E は ALE でノイズ床が下がっていて、この床が
+			// 小音量の弱い信号を削るだけなので下げる。40 で入力レベル 5〜140% の
+			// 正解率が一定になり、ノイズだけの入力の偽文字は 140 と同じ
+			// (0.3〜1% でも 0)。1 まで下げると極小入力で偽文字が出始める
+			decoder_set_limit_floor((det_mode == DSP_DET_ALE_AMP) ? DSP_ALE_LIMIT_FLOOR
+			                                                     : DEC_LIMIT_FLOOR);
 		}
 
 		int16_t mn = 32767, mx = -32768;
@@ -810,8 +822,7 @@ void dsp_step(void)
 			sample_ring[sample_pos] = s;
 			if (det_mode != DSP_DET_GOERTZEL) {
 				float y = ale_sample((float)s);
-				ale_ring[sample_pos] = (int16_t)((y > 32767.0f) ? 32767.0f :
-				                                 ((y < -32768.0f) ? -32768.0f : y));
+				ale_ring[sample_pos] = y;
 			}
 			sample_pos = (uint16_t)((sample_pos + 1) % 512);
 			if (s < mn) mn = s;

@@ -1,18 +1,19 @@
 //
 //	セットアップ画面
 //
-//	2列 x 5行のグリッド (9項目、最終行の右列は空き)。
+//	2列 x 5行のグリッド (10項目)。
 //
 //	┌ SETUP                                [戻る] ┐
 //	│ [ WiFi設定 ]         [ 時刻合わせ ]         │
 //	│ [ FW更新 ]           [ 夏時間: ON ]         │
 //	│ [ FW自動更新: ON ]   [ タッチパネル調整 ]   │
 //	│ [ ログ出力: ON ]     [ 初期化 ]             │
-//	│ [ About ]                                   │
+//	│ [ About ]            [ NR: ON ]             │
 //	└─────────────────────────────────────────────┘
 //
 //	FW更新 → ota (SoftAP+ブラウザで手動アップロード)
 //	タッチパネル調整 → touchcal / About → about_run
+//	NR → トーン検出方式の切替 (ON = ALE によるノイズ低減、dsp.h の DSP_DET_ALE_AMP)
 //
 //	「自動更新」は起動時 (スプラッシュ表示中) に WiFi 経由で新しい
 //	ファームウェアを自動チェックするかどうかの ON/OFF (fwupdate.cpp)。
@@ -32,6 +33,7 @@
 #include "touchcal.h"
 #include "display.h"
 #include <esp_ota_ops.h>
+#include <Preferences.h>
 
 #define C_BG      lgfx::color565(14, 17, 22)
 #define C_TITLEBG lgfx::color565(26, 34, 46)
@@ -50,13 +52,13 @@
 #define BACK_W 64
 #define BACK_H 26
 
-// 2列 x 5行のグリッド (9項目、最終行の右列だけ空き)
+// 2列 x 5行のグリッド (10項目)
 #define ITEM_COL_W 138
 #define ITEM_COL_GAP 12
 #define ITEM_H 34
 #define ITEM_Y0 40
 #define ITEM_PITCH 38
-#define ITEM_N 9
+#define ITEM_N 10
 #define ITEM_COL_X(c) (16 + (c) * (ITEM_COL_W + ITEM_COL_GAP))
 #define ITEM_ROW_Y(r) (ITEM_Y0 + ITEM_PITCH * (r))
 
@@ -74,6 +76,43 @@ static void item_pos(int idx, int *x, int *y)
 #define ABOUT_BACK_H 28
 
 static LGFX *lcd;
+
+//==================================================================
+//	NR (ノイズ低減) の ON/OFF。ON は検出方式 E (振幅しきい値に ALE の
+//	出力を使う)、OFF は従来の A。設定は NVS に保存して次の起動でも使う。
+//	既定は ON: 実録音・合成・実ノイズのどれでも A 以上で、A と違って
+//	入力レベルで正解率が変わらない (A は振幅しきい値の絶対床が小音量の
+//	ときだけ隠れたスケルチとして効くので、音量を上げると局間の弱い
+//	信号を拾って悪化する)
+//==================================================================
+#define NVS_NS_DEC "cwdec"
+#define NVS_KEY_NR "nr"
+
+static bool nr_enabled(void)
+{
+	return dsp_det_mode() == DSP_DET_ALE_AMP;
+}
+
+static void nr_set(bool on)
+{
+	dsp_set_det_mode(on ? DSP_DET_ALE_AMP : DSP_DET_GOERTZEL);
+	Preferences prefs;
+	if (prefs.begin(NVS_NS_DEC, false)) {
+		prefs.putUChar(NVS_KEY_NR, on ? 1 : 0);
+		prefs.end();
+	}
+}
+
+void setup_nr_load(void)
+{
+	Preferences prefs;
+	if (prefs.begin(NVS_NS_DEC, false)) {
+		dsp_set_det_mode(prefs.getUChar(NVS_KEY_NR, 1) ? DSP_DET_ALE_AMP : DSP_DET_GOERTZEL);
+		prefs.end();
+	} else {
+		dsp_set_det_mode(DSP_DET_ALE_AMP);
+	}
+}
 
 static bool hit(int tx, int ty, int x, int y, int w, int h)
 {
@@ -167,10 +206,11 @@ static void draw_screen(void)
 	draw_button(BACK_X, BACK_Y, BACK_W, BACK_H, "戻る", C_BTN_BG, C_BTN_BD, C_BTN_TX,
 	            &fonts::lgfxJapanGothicP_16);
 
-	char summer[40], scope[40], upd[40];
+	char summer[40], scope[40], upd[40], nr[24];
 	snprintf(summer, sizeof(summer), "夏時間: %s", clock_summer_time() ? "ON" : "OFF");
 	snprintf(scope, sizeof(scope), "ログ出力: %s", scopelog_enabled() ? "ON" : "OFF");
 	snprintf(upd, sizeof(upd), "FW自動更新: %s", fwupdate_check_enabled() ? "ON" : "OFF");
+	snprintf(nr, sizeof(nr), "NR: %s", nr_enabled() ? "ON" : "OFF");
 	const struct { const char *label; bool on; } items[ITEM_N] = {
 		{ "WiFi設定", false },
 		{ "時刻合わせ", false },
@@ -181,6 +221,7 @@ static void draw_screen(void)
 		{ scope, scopelog_enabled() != 0 },
 		{ "初期化", false },
 		{ "About", false },
+		{ nr, nr_enabled() },
 	};
 	for (int i = 0; i < ITEM_N; i++) {
 		int x, y;
@@ -274,8 +315,11 @@ void setup_run(LGFX *lcd_)
 				netsync_clear_wifi();
 			}
 			break;
-		default:
+		case 8:
 			about_run();
+			break;
+		default:                    // NR (ノイズ低減) ON/OFF
+			nr_set(!nr_enabled());
 			break;
 		}
 		draw_screen();

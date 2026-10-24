@@ -17,6 +17,9 @@ void decoder_process_block(int32_t magnitude, int32_t tone_mag, int32_t side_mag
                            int32_t jitter);
 // ALE 判定用: ON/OFF を外で決めて渡し、タイミング処理だけを使う (評価中)
 void decoder_process_key(int32_t magnitude, int32_t limit, uint8_t tone_on, uint8_t tone_off);
+// 振幅しきい値の絶対床 (正規化後のマグニチュード)。既定は DEC_LIMIT_FLOOR
+#define DEC_LIMIT_FLOOR 140
+void decoder_set_limit_floor(int32_t floor);
 uint16_t decoder_wpm(void);
 uint8_t decoder_gate(void);       // filtered key state (0/1)
 int32_t decoder_maglimit(void);   // 適応振幅しきい値 (診断用)

@@ -1,11 +1,11 @@
 //
 //	画面構成 (320x240 横):
-//	  y   0..26  ステータス行 (US/JP / TONE / NR ボタン / xxWPM / 時計 HH:MM:SS)
+//	  y   0..26  ステータス行 (US/JP / TONE / SETUP ボタン / xxWPM / 時計 HH:MM:SS)
 //	  y  28..171 デコード文字エリア 16列 x 6行 (24x24 全角フォント、ピッチ20px)
 //	  y 173..239 左: FFTスペクトラム(PK表示) / 右: オシロスコープ(波形ON/OFFボタン)
 //	オシロは生波形(min/maxバンド)・トーンエンベロープ・キー判定を
 //	同一時間軸(1列=WPM追従の数hop)で色分け重畳する。
-//	文字エリア中央付近のタップで時計画面、長押しで SETUP 画面へ切り替わる (main.cpp)。
+//	文字エリア中央付近のタップで時計画面へ切り替わる (main.cpp)。
 //	時計表示中は visible=0 で描画を止め、受信文字はグリッドに溜める。
 //
 #include <Arduino.h>
@@ -107,7 +107,6 @@ static uint8_t visible = 1;             // 0=他画面表示中 (描画抑止)
 static uint8_t status_dirty = 1;        // 1=ステータス行を強制描画
 static void (*center_tap_fn)(void) = NULL;
 static void (*setup_tap_fn)(void) = NULL;
-static void (*nr_tap_fn)(void) = NULL;
 
 static uint16_t grid[TEXT_ROWS][TEXT_COLS];
 static uint8_t cur_row = 0;
@@ -339,13 +338,12 @@ static void draw_panel_button(LGFX_Sprite *spr, int x, int y, int w, int h,
 	                on ? C_BTN_TX : C_BTN_OFF_TX);
 }
 
-// ステータス行のレイアウト: [US/JP] [TONE] [NR] xxWPM ... HH:MM:SS
-// (SETUP は文字エリア中央の長押しへ移した)
+// ステータス行のレイアウト: [US/JP] [TONE] [SETUP] xxWPM ... HH:MM:SS
 #define ST_BTN_W 64
 #define ST_BTN_H 23
 #define ST_MODE_X 2
 #define ST_TONE_X 68
-#define ST_NR_X 134
+#define ST_SETUP_X 134
 #define ST_WPM_X 204
 #define ST_CLOCK_RIGHT 318        // 時計の右端
 
@@ -355,22 +353,20 @@ static void draw_status(void)
 	static uint8_t s_mode = 0xFF;
 	static uint8_t s_tone = 0xFF;
 	static uint16_t s_thz = 0xFFFF;
-	static uint8_t s_nr = 0xFF;
 	static uint32_t s_sec = 0xFFFFFFFF;
 
 	uint16_t wpm = decoder_wpm();
 	uint8_t mode = decoder_mode();
 	uint8_t tone = dsp_tone_index();
 	uint16_t thz = dsp_tone_hz();
-	uint8_t nr = (dsp_det_mode() == DSP_DET_ALE_AMP) ? 1 : 0;
 	uint32_t now = clock_zone_now(clock_zone());   // 選択中の国の時刻
 
-	if (!status_dirty && now == s_sec && wpm == s_wpm && mode == s_mode &&
-	    tone == s_tone && thz == s_thz && nr == s_nr) {
+	if (!status_dirty && now == s_sec &&
+	    wpm == s_wpm && mode == s_mode && tone == s_tone && thz == s_thz) {
 		return;
 	}
 	status_dirty = 0;
-	s_wpm = wpm; s_mode = mode; s_tone = tone; s_thz = thz; s_nr = nr; s_sec = now;
+	s_wpm = wpm; s_mode = mode; s_tone = tone; s_thz = thz; s_sec = now;
 
 	char buf[24];
 	status_spr.fillSprite(C_STATUS_BG);
@@ -393,14 +389,8 @@ static void draw_status(void)
 		draw_panel_button(&status_spr, ST_TONE_X, 2, ST_BTN_W, ST_BTN_H, buf, 1);
 	}
 
-	// NR ボタン: ON で ALE (適応型ラインエンハンサ) を使う検出方式 E、
-	// OFF で従来の Goertzel (A)。ON は AUTO と同じ配色で目立たせる
-	if (nr) {
-		draw_button_col(&status_spr, ST_NR_X, 2, ST_BTN_W, ST_BTN_H, "NR",
-		                C_BTN_BG, C_BTN_BD, C_GATE);
-	} else {
-		draw_panel_button(&status_spr, ST_NR_X, 2, ST_BTN_W, ST_BTN_H, "NR", 0);
-	}
+	// SETUP ボタン (時刻合わせ / OTA / WiFi設定 / スコープログ)
+	draw_panel_button(&status_spr, ST_SETUP_X, 2, ST_BTN_W, ST_BTN_H, "SETUP", 1);
 
 	// 速度表示
 	status_spr.setFont(&fonts::AsciiFont8x16);
@@ -946,11 +936,6 @@ void display_set_setup_tap(void (*fn)(void))
 	setup_tap_fn = fn;
 }
 
-void display_set_nr_tap(void (*fn)(void))
-{
-	nr_tap_fn = fn;
-}
-
 //	共有バッファは起動時に一度だけ DMA 対応メモリから確保し、以後解放しない。
 //	LovyanGFX のスプライトは DMA 対応内部メモリから取るため、WiFi を使った
 //	あとは断片化で 21KB の連続領域が取れず作り直しに失敗する (実機で発生)。
@@ -1080,43 +1065,15 @@ static void flush_tone_pending(void)
 	dsp_set_tone(best);
 }
 
-// 文字エリア中央の長押し (SETUP 画面へ) の判定時間。BOOT ボタンの長押しと同じ
-#define CENTER_LONG_MS 800
-// 長押し中の「離した」判定に要る連続未検出回数。抵抗膜式は押し続けていても
-// 一瞬だけ未検出になることがあり、1 回で離したとみなすと長押しが時計画面へ化ける
-#define CENTER_RELEASE_POLLS 2
-
 static void poll_touch(void)
 {
 	static uint8_t touching = 0;
 	static uint32_t last_act_ms = 0;
-	// 中央の押下中: タップ (時計画面) か長押し (SETUP) かは離すか時間が
-	// 来るまで決まらないので、押した時点では何もしない
-	static uint8_t center_hold = 0;
-	static uint32_t center_ms = 0;
-	static uint8_t center_miss = 0;
 
 	flush_tone_pending();
 
 	int32_t x, y;
 	uint8_t now = (lcd.getTouch(&x, &y) > 0);
-
-	if (center_hold) {
-		if (now) {
-			center_miss = 0;
-			if ((millis() - center_ms) >= CENTER_LONG_MS) {
-				center_hold = 0;
-				if (setup_tap_fn) setup_tap_fn();
-				last_act_ms = millis();
-			}
-		} else if (++center_miss >= CENTER_RELEASE_POLLS) {
-			center_hold = 0;
-			if (center_tap_fn) center_tap_fn();
-			last_act_ms = millis();
-		}
-		touching = now;
-		return;
-	}
 
 #if TOUCH_DEBUG
 	if (now) {
@@ -1143,18 +1100,19 @@ static void poll_touch(void)
 					// TONE ボタン: AUTO → 600 → ... → 1000 → AUTO
 					dsp_set_tone((uint8_t)((dsp_tone_index() + 1) % (DSP_TONE_COUNT + 1)));
 					last_act_ms = t;
-				} else if (x >= ST_NR_X - 2 && x < ST_NR_X + ST_BTN_W + 4) {
-					if (nr_tap_fn) {
-						nr_tap_fn();
+				} else if (x >= ST_SETUP_X - 2 && x < ST_SETUP_X + ST_BTN_W + 4) {
+					if (setup_tap_fn) {
+						setup_tap_fn();
 						last_act_ms = t;
 					}
 				}
 			} else if (y >= CENTER_Y0 && y < CENTER_Y1 &&
 			           x >= CENTER_X0 && x < CENTER_X1) {
-				// 文字エリア中央付近: タップで時計画面、長押しで SETUP 画面
-				center_hold = 1;
-				center_ms = t;
-				center_miss = 0;
+				// 文字エリア中央付近: 時計画面へ
+				if (center_tap_fn) {
+					center_tap_fn();
+					last_act_ms = t;
+				}
 			} else if (y >= PANEL_TOP) {
 				// 下段パネル。スコープ側にオシロの波形ON/OFFボタンがある。
 				// それ以外の場所はダブルタップで全幅表示を切り替える。

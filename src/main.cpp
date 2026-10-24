@@ -15,16 +15,15 @@
 //	    ステータス行の TONE ボタン     = AUTO→600→700→800→900→1000 の順送り
 //	      (AUTO = 500〜1000Hz の最強信号へ自動同調。デフォルト)
 //	    FFT パネル内タップ             = タップ位置に最も近いトーンを手動選択
-//	    ステータス行の NR ボタン       = 検出方式の切替 (ON = ALE によるノイズ低減)
+//	    ステータス行の SETUP ボタン    = SETUP 画面へ
 //	    文字エリア中央付近タップ       = 時計画面へ (時計中央タップで戻る)
-//	    文字エリア中央付近を長押し     = SETUP 画面へ
 //	  BOOTボタン(GPIO0) でも操作可: 短押し=トーン切替 / 長押し=モード切替
 //	  BOOTボタンを押したまま電源投入 = タッチ調整を消して既定値へ戻す
 //	  (SETUP のタッチ調整でズレて操作不能になったときの逃げ道)
 //
 //	画面遷移 (デコーダの動作に影響を与えないことを最優先):
 //	  デコーダ画面 (既定)
-//	    ├ SETUP ...... (文字エリア中央の長押し) 時刻合わせ / ファームウェアアップデート (OTA) /
+//	    ├ SETUP ...... NR (ノイズ低減) / 時刻合わせ / ファームウェアアップデート (OTA) /
 //	    │              WiFi設定 / WiFi初期化 / スコープログ / タッチ調整。
 //	    │              OTA・WiFi設定は受信を止めて AP を立て、
 //	    │              [キャンセル] または保存/更新完了で戻る
@@ -93,7 +92,7 @@ static void probe_i2c_touch(void)
 enum { SCR_DECODER = 0, SCR_CLOCK };
 static uint8_t screen = SCR_DECODER;
 static uint8_t clock_requested = 0;     // デコーダ画面の中央タップで立つ
-static uint8_t setup_requested = 0;     // 文字エリア中央の長押しで立つ
+static uint8_t setup_requested = 0;     // ステータス行の SETUP ボタンで立つ
 
 // 時計画面: パタパタのカード部分をタップするとデコーダ画面へ戻る
 // (下段は世界時計のボタンなので、そこは clock_zone_touch が処理する)
@@ -121,35 +120,6 @@ static void on_center_tap(void)
 static void on_setup_tap(void)
 {
 	setup_requested = 1;
-}
-
-//	NR (ノイズ低減) の ON/OFF。ON は検出方式 E (振幅しきい値に ALE の
-//	出力を使う)、OFF は従来の A。設定は NVS に保存して次の起動でも使う。
-//	既定は ON: 実録音・合成・実ノイズのどれでも A 以上で、A と違って
-//	入力レベルで正解率が変わらない (A は振幅しきい値の絶対床が小音量の
-//	ときだけ隠れたスケルチとして効くので、音量を上げると局間の弱い
-//	信号を拾って悪化する)
-#define NVS_NS_DEC "cwdec"
-#define NVS_KEY_NR "nr"
-
-static void on_nr_tap(void)
-{
-	uint8_t on = (dsp_det_mode() != DSP_DET_ALE_AMP);
-	dsp_set_det_mode(on ? DSP_DET_ALE_AMP : DSP_DET_GOERTZEL);
-	Preferences prefs;
-	if (prefs.begin(NVS_NS_DEC, false)) {
-		prefs.putUChar(NVS_KEY_NR, on);
-		prefs.end();
-	}
-}
-
-static void nr_load(void)
-{
-	Preferences prefs;
-	if (prefs.begin(NVS_NS_DEC, false)) {
-		dsp_set_det_mode(prefs.getUChar(NVS_KEY_NR, 1) ? DSP_DET_ALE_AMP : DSP_DET_GOERTZEL);
-		prefs.end();
-	}
 }
 
 //	SETUP 画面 (デコーダ画面から開く)。DSP は動いたままで、受信文字は溜まる
@@ -284,7 +254,6 @@ void setup()
 	display_splash();
 	display_set_center_tap(on_center_tap);
 	display_set_setup_tap(on_setup_tap);
-	display_set_nr_tap(on_nr_tap);
 
 	// 時計 / NTP 設定の読み込み (WiFi はここでは起動しない)
 	netsync_init();
@@ -303,7 +272,7 @@ void setup()
 	decoder_set_emit(display_enqueue);
 
 	audio_init();
-	nr_load();                      // DSP の最初のブロックから反映される
+	setup_nr_load();                // NR の設定。DSP の最初のブロックから反映される
 	dsp_start();
 
 	// スコープログは既定で ON (SETUP で切れる)。送出は表示ループからの

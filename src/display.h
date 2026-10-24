@@ -43,7 +43,5 @@ void display_set_visible(uint8_t visible);
 void display_redraw(void);
 // 文字エリア中央付近をタップしたときのコールバック (時計画面へ切替用)
 void display_set_center_tap(void (*fn)(void));
-// 文字エリア中央付近を長押ししたときのコールバック (SETUP 画面へ)
+// ステータス行の SETUP ボタンをタップしたときのコールバック
 void display_set_setup_tap(void (*fn)(void));
-// ステータス行の NR ボタンをタップしたときのコールバック (検出方式の切替)
-void display_set_nr_tap(void (*fn)(void));

@@ -10,3 +10,4 @@
 #include "lgfx_config.h"
 
 void setup_run(LGFX *lcd);      // 「戻る」が押されると復帰する
+void setup_nr_load(void);       // NR (ノイズ低減) の設定を NVS から読んで DSP へ反映 (起動時)

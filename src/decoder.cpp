@@ -48,8 +48,8 @@
 static const uint8_t KEY_LOW = 0;
 static const uint8_t KEY_HIGH = 1;
 
-static int32_t magnitudelimit = 140;
-static int32_t magnitudelimit_low = 140;
+static int32_t magnitudelimit = DEC_LIMIT_FLOOR;
+static int32_t magnitudelimit_low = DEC_LIMIT_FLOOR;
 // 振幅しきい値 (magnitudelimit) の追従係数: 立ち上がりは速く (1/6 = τ44ms)、
 // 下降は遅く (1/48 = τ0.35s) してピークホールド的に振る舞わせる。
 // 対称 1/6 だと文字間ギャップで limit がノイズ床まで崩落して振幅条件が
@@ -452,6 +452,11 @@ void decoder_init(void)
 void decoder_set_emit(void (*fn)(uint8_t ch))
 {
 	emit_fn = fn;
+}
+
+void decoder_set_limit_floor(int32_t floor)
+{
+	magnitudelimit_low = floor;
 }
 
 uint16_t decoder_wpm(void)
