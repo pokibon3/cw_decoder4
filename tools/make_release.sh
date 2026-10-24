@@ -16,6 +16,9 @@
 #
 #	OTA でアップロードするのはこの firmware.bin だけでよい
 #	(bootloader.bin / partitions.bin は USB 書き込みでしか更新されない)。
+#	USB 書き込みツール (web/flasher/) 用に bootloader.bin / partitions.bin /
+#	boot_app0.bin も tools/v<版>/ に置く (両パネル共通。無い版は tools/common/
+#	を使う。tools/make_versions.py 参照)。
 #
 #	焼くパネルと一致しない bin を入れると表示の基準面が 180° ずれ、
 #	タッチの回転補正も連動して狂う。ファイル名で取り違えないようにするのが
@@ -40,6 +43,14 @@ pio run -e esp32dev -e esp32dev_ili9341
 mkdir -p "$OUT"
 cp "$ROOT/.pio/build/esp32dev/firmware.bin"          "$OUT/firmware_ST7789.bin"
 cp "$ROOT/.pio/build/esp32dev_ili9341/firmware.bin"  "$OUT/firmware_ILI9341.bin"
+cp "$ROOT/.pio/build/esp32dev/bootloader.bin"        "$OUT/bootloader.bin"
+cp "$ROOT/.pio/build/esp32dev/partitions.bin"        "$OUT/partitions.bin"
+BOOT_APP0="${PLATFORMIO_CORE_DIR:-$HOME/.platformio}/packages/framework-arduinoespressif32/tools/partitions/boot_app0.bin"
+if [ ! -f "$BOOT_APP0" ]; then
+	echo "boot_app0.bin が見つかりません: $BOOT_APP0" >&2
+	exit 1
+fi
+cp "$BOOT_APP0" "$OUT/boot_app0.bin"
 chmod 644 "$OUT"/*.bin
 
 echo
@@ -85,4 +96,4 @@ echo
 echo "=== $WEB/latest.txt ==="
 sed 's/^/  /' "$WEB/latest.txt"
 echo
-echo "公開するには tools/v$VER/ と web/firmware/latest.txt を commit して push すること"
+echo "公開するには tools/v$VER/ (bin 5 本) と web/firmware/latest.txt を commit して push すること"

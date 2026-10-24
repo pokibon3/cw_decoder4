@@ -10,8 +10,14 @@
 # web/firmware/latest.txt (tools/make_release.sh が作る)、bin はそこに
 # 書かれた版の tools/v<版>/ から取る (リポジトリに二重で持たせないため)。
 #
+# USB 書き込みツール (web/flasher/) 用に、tools/v<版>/ の全版と共通の
+# ブートローダー類 (tools/common/)、版の目録 versions.json も配る
+# (tools/make_versions.py)。目録の日付は git の履歴から取るので、
+# checkout は履歴ごと取る。
+#
 # 公開後の URL: https://pokibon3.github.io/cw_decoder4/
 #               https://pokibon3.github.io/cw_decoder4/firmware/latest.txt
+#               https://pokibon3.github.io/cw_decoder4/flasher/
 name: Deploy web to Pages
 
 on:
@@ -19,6 +25,10 @@ on:
     branches: [main]
     paths:
       - 'web/**'
+      - 'tools/v*/**'
+      - 'tools/common/**'
+      - 'tools/make_versions.py'
+      - 'README.md'
       - '.github/workflows/pages.yml'
   workflow_dispatch:        # 手動実行も可
 
@@ -37,6 +47,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0    # versions.json の日付 (bin を追加したコミット) に要る
 
       - name: 配布物を組み立てる
         run: |
@@ -46,6 +58,11 @@ jobs:
           # 単一ファイル版も置く (他所へ 1 枚だけ持っていきたいとき用)
           python3 web/bundle.py
           cp web/cw-decoder.html _site/
+          # USB 書き込みツールと、それが読む全版の bin・目録
+          mkdir -p _site/flasher/vendor
+          cp web/flasher/index.html web/flasher/flasher.js web/flasher/md5.js _site/flasher/
+          cp -R web/flasher/vendor/esptool-js-* _site/flasher/vendor/
+          python3 tools/make_versions.py _site
           # 本体の「自動更新」が見にくる配布物。bin はリポジトリに二重で
           # 持たせず、latest.txt に書かれた版の tools/v<版>/ から配る
           if [ -f web/firmware/latest.txt ]; then

@@ -24,3 +24,9 @@ web/tools/*.aac
 web/tools/*.flac
 web/tools/*.ogg
 web/tools/*.opus
+
+# USB 書き込みツールを手元で試すときの生成物 (python3 tools/make_versions.py web)。
+# 公開時は pages.yml が _site に作る
+web/firmware/v*/
+web/firmware/common/
+web/firmware/versions.json

@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Cache-Control" content="no-cache, must-revalidate">
+<title>CW Decoder 書き込みツール</title>
+<style>
+:root {
+  --bg: #0b0f14;
+  --panel: #111823;
+  --panel2: #0a1018;
+  --line: #28374b;
+  --tx: #d8dee6;
+  --dim: #8b94a3;
+  --accent: #5a96d2;
+  --amber: #fac775;
+  --green: #5adc78;
+  --red: #ff9a8f;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0 auto; padding: 10px 12px 20px; max-width: 980px;
+  background: var(--bg); color: var(--tx);
+  font: 13px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", "Hiragino Sans", "Noto Sans JP", sans-serif;
+  display: flex; flex-direction: column; gap: 10px;
+}
+h1 { font-size: 15px; margin: 0; font-weight: 600; display: flex; align-items: baseline; gap: 8px; }
+h1 a {
+  margin-left: auto; font-size: 12px; font-weight: 400; color: var(--accent);
+  border: 1px solid var(--line); border-radius: 5px; padding: 2px 10px; text-decoration: none;
+}
+h2 { font-size: 13px; margin: 0 0 6px; font-weight: 600; color: var(--amber); }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; }
+.row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.row + .row { margin-top: 8px; }
+.dim { color: var(--dim); }
+.ok { color: var(--green); }
+.warn { color: var(--amber); }
+.err { color: var(--red); }
+button, select {
+  font: inherit; color: var(--tx); background: #1a2331;
+  border: 1px solid var(--line); border-radius: 6px; height: 32px; padding: 0 12px; cursor: pointer;
+}
+button:hover:not(:disabled), select:hover { border-color: #47607f; }
+button:disabled, select:disabled { opacity: .4; cursor: default; }
+button.primary { background: #16324a; color: #cfe7ff; }
+button.big { height: 38px; padding: 0 22px; font-weight: 600; }
+label.opt { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; }
+label.opt input { accent-color: var(--accent); }
+fieldset { border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px 8px; margin: 0; }
+legend { color: var(--dim); padding: 0 4px; }
+.erase label.opt { display: flex; align-items: flex-start; gap: 6px; margin: 3px 0; }
+.erase label.opt small { color: var(--dim); }
+#state b { font: 600 14px/1 ui-monospace, Menlo, monospace; color: var(--amber); }
+#notes { margin: 6px 0 0; padding-left: 18px; color: var(--dim); max-height: 140px; overflow-y: auto; }
+#bar { flex: 1 1 200px; height: 12px; border: 1px solid var(--line); border-radius: 3px; background: #060a10; overflow: hidden; }
+#barFill { height: 100%; width: 0; background: #2dc878; transition: width .1s linear; }
+#flog, #mon {
+  margin: 0; background: var(--panel2); border: 1px solid var(--line); border-radius: 6px;
+  padding: 6px 8px; overflow-y: auto; white-space: pre-wrap; word-break: break-all;
+  font: 12px/1.45 ui-monospace, "SF Mono", Menlo, Consolas, monospace; color: #c9d3c3;
+}
+#flog { height: 110px; }
+#mon { height: 320px; }
+#unsupported { display: none; border-color: #7a3a33; }
+.help { color: var(--dim); font-size: 12px; }
+.help li { margin: 2px 0; }
+a { color: var(--accent); }
+</style>
+</head>
+<body>
+
+<h1>CW Decoder 書き込みツール <span class="dim" style="font-weight:400;font-size:12px">USB 接続 / ESP32 版</span>
+  <a href="../">デコーダ (Web 版) へ</a>
+</h1>
+
+<div class="card" id="unsupported">
+  <b class="err">このブラウザは USB シリアル (Web Serial) に対応していません。</b><br>
+  パソコン (Mac / Windows) の <b>Chrome</b> か <b>Edge</b> で開いてください。Safari と Firefox は使えません。
+</div>
+
+<div class="card">
+  <h2>1. 接続</h2>
+  <div class="row">
+    <button id="btnConnect" class="primary">ポートを選んで接続</button>
+    <button id="btnDisconnect" disabled>切断</button>
+    <label class="opt dim" title="一覧に本体が出てこないときに。Bluetooth などのポートも並ぶので選び間違えに注意">
+      <input type="checkbox" id="allPorts"> すべてのポートを表示</label>
+    <span id="portInfo" class="dim"></span>
+  </div>
+  <div class="row" id="state"><span class="dim">本体を USB で接続して「ポートを選んで接続」を押してください。</span></div>
+</div>
+
+<div class="card">
+  <h2>2. 書き込む内容</h2>
+  <div class="row">
+    <label class="dim">バージョン</label>
+    <select id="selVer" disabled><option>読み込み中…</option></select>
+    <span id="verWarn" class="warn"></span>
+  </div>
+  <ul id="notes"></ul>
+  <div class="row">
+    <fieldset>
+      <legend>パネル (LCD)</legend>
+      <label class="opt"><input type="radio" name="panel" value="ST7789"> ST7789</label>
+      <label class="opt"><input type="radio" name="panel" value="ILI9341"> ILI9341</label>
+      <span id="panelHint" class="dim"></span>
+    </fieldset>
+  </div>
+  <div class="row">
+    <fieldset class="erase">
+      <legend>設定 (NVS) と消去</legend>
+      <label class="opt"><input type="radio" name="erase" value="keep" checked>
+        <span>設定を残す <small>— タッチ補正・WiFi・時計の地域・NR などはそのまま (通常はこれ)</small></span></label>
+      <label class="opt"><input type="radio" name="erase" value="nvs">
+        <span>設定を初期化する <small>— 上の設定をすべて既定値に戻す。タッチ位置がおかしくなったときなど</small></span></label>
+      <label class="opt"><input type="radio" name="erase" value="all">
+        <span>フラッシュ全体を消してから書く <small>— 原因のわからない不調のとき。設定もすべて消える</small></span></label>
+    </fieldset>
+  </div>
+  <div class="row">
+    <button id="btnFlash" class="primary big" disabled>書き込み</button>
+    <div id="bar"><div id="barFill"></div></div>
+    <span id="pct" class="dim" style="min-width:42px">0%</span>
+  </div>
+  <div class="row"><span id="flashMsg" class="dim"></span></div>
+  <div class="row" style="margin-top:6px"><pre id="flog" style="flex:1 1 auto"></pre></div>
+</div>
+
+<div class="card">
+  <h2>シリアルモニター <span class="dim" style="font-weight:400">115200bps</span></h2>
+  <div class="row">
+    <button id="btnMon" disabled>モニター開始</button>
+    <button id="btnReset" disabled title="本体を再起動して起動ログを表示する">本体をリセット</button>
+    <button id="btnClear">クリア</button>
+    <button id="btnSave">ログを保存</button>
+    <label class="opt dim" title="スコープ画面の元データ (S/T/C/W/E/L/H/X で始まる行)。SETUP の「ログ出力」が ON だと毎秒大量に流れる">
+      <input type="checkbox" id="hideScope" checked> スコープログを隠す</label>
+    <label class="opt dim"><input type="checkbox" id="autoScroll" checked> 自動スクロール</label>
+  </div>
+  <div class="row" style="margin-top:6px"><pre id="mon" style="flex:1 1 auto"></pre></div>
+</div>
+
+<div class="card help">
+  <h2>うまくいかないとき</h2>
+  <ul>
+    <li><b>ポートが一覧に出ない</b>: USB ケーブルが充電専用でないか確認する。
+      Windows でドライバが入っていない場合は
+      <a href="https://www.wch-ic.com/downloads/CH341SER_EXE.html" target="_blank" rel="noopener">CH340 ドライバ (WCH)</a> を入れる。
+      最近の macOS は追加のドライバなしで認識する。</li>
+    <li><b>「接続できません」になる</b>: ほかのソフト (Arduino IDE / PlatformIO のモニター等) がポートを開いていないか確認する。
+      それでもだめなら、本体の <b>BOOT ボタンを押したまま</b>「書き込み」を押し、「接続中」の表示が出たら離す。</li>
+    <li><b>パネルを間違えて書いた</b>: 表示が上下逆になりタッチもずれるが、正しいパネルで書き直せば戻る。</li>
+    <li><b>タッチ位置がおかしい</b>: 同じバージョンを「設定を初期化する」で書き直すと、タッチ補正が既定値に戻る。</li>
+  </ul>
+</div>
+
+<script type="module" src="flasher.js"></script>
+</body>
+</html>
