@@ -24,7 +24,7 @@
 }
 * { box-sizing: border-box; }
 body {
-  margin: 0 auto; padding: 10px 12px 20px; max-width: 980px;
+  margin: 0 auto; padding: 10px 12px 8px; max-width: 980px;
   background: var(--bg); color: var(--tx);
   font: 13px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", "Hiragino Sans", "Noto Sans JP", sans-serif;
   display: flex; flex-direction: column; gap: 10px;
@@ -34,7 +34,15 @@ h1 a {
   margin-left: auto; font-size: 12px; font-weight: 400; color: var(--accent);
   border: 1px solid var(--line); border-radius: 5px; padding: 2px 10px; text-decoration: none;
 }
-h1 .ver { color: var(--dim); font-weight: 400; font-size: 12px; font-family: ui-monospace, monospace; }
+/* 一番下のステータス欄: 左に状態、右端にバージョン (デコーダの状態行と同じ形) */
+html { height: 100%; }
+body { min-height: 100%; }
+#statusbar {
+  margin-top: auto; padding-top: 5px; border-top: 1px solid var(--line);
+  display: flex; gap: 12px; white-space: nowrap; font-size: 12px; color: var(--dim);
+}
+#statusbar #flashMsg { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+#statusbar .ver { flex: 0 0 auto; font-family: ui-monospace, monospace; }
 h2 { font-size: 13px; margin: 0 0 6px; font-weight: 600; color: var(--amber); }
 .card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; }
 .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
@@ -73,8 +81,6 @@ a { color: var(--accent); }
 <body>
 
 <h1>CW Decoder 書き込みツール <span class="dim" style="font-weight:400;font-size:12px">USB 接続 / ESP32 版</span>
-  <!-- 配布中の最新版 (firmware/versions.json の latest)。flasher.js が入れる -->
-  <span class="ver" id="toolVer"></span>
   <a href="help.html" target="_blank" rel="noopener">ヘルプ</a>
   <a href="#" id="btnInstall" hidden style="margin-left:0" title="アプリとしてインストールする (Chrome / Edge)">インストール</a>
 </h1>
@@ -125,10 +131,13 @@ a { color: var(--accent); }
     <div id="bar"><div id="barFill"></div></div>
     <span id="pct" class="dim" style="min-width:42px">0%</span>
   </div>
-  <div class="row"><span id="flashMsg" class="dim"></span></div>
   <div class="row" style="margin-top:6px"><pre id="flog" style="flex:1 1 auto"></pre></div>
 </div>
 
+
+<div id="statusbar"><span id="flashMsg" class="dim"></span>
+  <!-- 配布中の最新版 (firmware/versions.json の latest)。flasher.js が入れる -->
+  <span class="ver" id="toolVer"></span></div>
 
 <script type="module" src="flasher.js"></script>
 <script type="module">

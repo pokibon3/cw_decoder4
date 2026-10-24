@@ -80,8 +80,10 @@ function flog(s, cls) {
 }
 
 function flashMsg(s, cls = 'dim') {
+	// 一番下のステータス欄に出す。長いと省略されるので、全文はポインタを当てると出る
 	$('flashMsg').className = cls;
 	$('flashMsg').textContent = s;
+	$('flashMsg').title = s;
 }
 
 function progress(frac) {
