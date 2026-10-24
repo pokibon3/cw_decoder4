@@ -41,7 +41,7 @@ h1 .manual {
   border: 1px solid var(--line); border-radius: 5px; padding: 2px 10px; text-decoration: none;
 }
 h1 .manual:hover { border-color: var(--accent); }
-h1 .ver { color: var(--dim); font-weight: 400; font-size: 12px; font-family: ui-monospace, monospace; }
+
 
 .card {
   background: var(--panel); border: 1px solid var(--line);
@@ -121,8 +121,11 @@ button.tp { font-size: 15px; line-height: 1; min-width: 44px; }
 #statusbar {
   flex: 0 0 auto; color: var(--dim); font-size: 11.5px; line-height: 1.5;
   border-top: 1px solid var(--line); padding-top: 5px;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  display: flex; gap: 12px; white-space: nowrap;
 }
+/* 状態の文は長いと省略し、右端のバージョンは常に見せる */
+#statusbar #state { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+#statusbar .ver { flex: 0 0 auto; font-family: ui-monospace, monospace; }
 .err { color: #ff9a8f; }
 </style>
 </head>
@@ -131,9 +134,6 @@ button.tp { font-size: 15px; line-height: 1; min-width: 44px; }
 <h1>CW Decoder 4
   <a class="manual" href="manual.html">使い方</a>
   <a class="manual" href="#" id="btnInstall" hidden style="margin-left:0" title="アプリとしてインストールする (Chrome / Edge)">インストール</a>
-  <!-- バージョンはファームウェア (src/version.h の FW_VERSION) と揃える。
-       上げるときは manual.html の先頭の表示も一緒に直す -->
-  <span class="ver">v3.4</span>
 </h1>
 
 <!-- ============ 入力元 ============ -->
@@ -271,7 +271,10 @@ button.tp { font-size: 15px; line-height: 1; min-width: 44px; }
 </div>
 
 <!-- 一番下のステータス行。動作状態とエラーはここに出す -->
-<div id="statusbar"><span id="state">停止中</span></div>
+<div id="statusbar"><span id="state">停止中</span>
+  <!-- バージョンはファームウェア (src/version.h の FW_VERSION) と揃える。
+       上げるときは manual.html の先頭の表示も一緒に直す -->
+  <span class="ver">v3.4</span></div>
 
 <script>
 // app.js を読み込む。localhost のときだけキャッシュを外す (開発用)。
@@ -286,7 +289,7 @@ button.tp { font-size: 15px; line-height: 1; min-width: 44px; }
 </script>
 <script type="module">
 import { setupPwa } from './pwa.js';
-setupPwa(document.getElementById('btnInstall'));
+setupPwa(document.getElementById('btnInstall'), 'manual.html#install');
 </script>
 </body>
 </html>
