@@ -31,6 +31,7 @@ ol, ul { padding-left: 22px; }
 b { color: #fff; }
 a { color: var(--accent); }
 .dim { color: var(--dim); }
+h3 { font-size: 13.5px; margin: 14px 0 4px; color: #fff; }
 table { border-collapse: collapse; width: 100%; margin: 6px 0; }
 th, td { border: 1px solid var(--line); padding: 4px 8px; text-align: left; vertical-align: top; }
 th { background: var(--panel); font-weight: 600; }
@@ -94,6 +95,41 @@ th { background: var(--panel); font-weight: 600; }
     本体が起動時に WiFi へつなぐときの電流で、給電が足りずに USB が切れることがあります。</li>
   <li><b>タッチ位置がおかしい</b>: 同じバージョンを「設定を初期化する」で書き直すと、タッチ補正が既定値に戻ります。
     PC が無いときは、本体の BOOT ボタンを押したまま電源を入れ、2 秒押し続けてもタッチ補正だけを消せます。</li>
+</ul>
+
+<h2 id="install">アプリとしてインストールする</h2>
+
+<p>この書き込みツールは、インストールすると、ブラウザのタブではなく独立したウィンドウのアプリとして開けます。
+パソコン (Mac / Windows) の <strong>Chrome</strong> か <strong>Edge</strong> で行います (Safari・Firefox は不可)。</p>
+
+<h3>いちばん簡単な方法: 画面の「インストール」ボタン</h3>
+<ol>
+  <li>このアプリのページを Chrome か Edge で開きます。</li>
+  <li>画面上部 (タイトルの行) の右側に<strong>「インストール」</strong>ボタンが出ていれば、それを押します。</li>
+  <li>確認の画面で「インストール」を押せば完了です。</li>
+</ol>
+<p>ボタンが出ていないときは、すでにインストール済みか、ページが古いままです。
+キーボードで <strong>Mac は Command + Shift + R</strong>、<strong>Windows は Ctrl + F5</strong> を押して
+読み込み直してから、もう一度見てください。それでも出ないときは下のメニューから行います。</p>
+
+<h3>メニューから行う方法</h3>
+<table>
+  <tr><th>ブラウザ</th><th>操作</th></tr>
+  <tr><td>Chrome</td>
+      <td>ウィンドウ右上の <strong>︙</strong> (縦に点が 3 つ) を押す →
+          <strong>「キャスト、保存、共有」</strong> → <strong>「ページをアプリとしてインストール」</strong><br>
+          <span class="dim">(Chrome の版によっては ︙ のすぐ下に「○○ をインストール」と出ます)</span></td></tr>
+  <tr><td>Edge</td>
+      <td>ウィンドウ右上の <strong>…</strong> (横に点が 3 つ) を押す →
+          <strong>「アプリ」</strong> → <strong>「このサイトをアプリとしてインストール」</strong></td></tr>
+</table>
+
+<h3>インストールした後</h3>
+<ul>
+  <li>Mac は Launchpad や「アプリケーション」フォルダ、Windows はスタートメニューから起動できます。</li>
+  <li>ネットにつながっていなくても開けます (ただし書き込みには、ファームウェアを取りに行くためネット接続が必要です)。新しい版を公開したときは、次にネットにつながった状態で開いたときに自動で入れ替わります。</li>
+  <li>デコーダ・書き込みツール・スコープビューアは別々のアプリです。使うものだけ入れてください。</li>
+  <li>やめるときは、アプリのウィンドウ右上の ︙ (Edge は …) → 「アンインストール」を選びます。</li>
 </ul>
 
 </body>

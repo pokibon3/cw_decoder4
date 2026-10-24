@@ -24,6 +24,7 @@ h2 {
   border-bottom: 1px solid var(--line);
 }
 h3 { font-size: 14px; margin: 20px 0 6px; color: var(--amber); }
+.dim { color: var(--dim); }
 p, li { margin: 0 0 8px; }
 ul, ol { padding-left: 22px; }
 code {
@@ -83,6 +84,7 @@ footer {
     <li><a href="#control">操作</a></li>
     <li><a href="#trouble">うまく読めないとき</a></li>
     <li><a href="#note">仕様と制限</a></li>
+    <li><a href="#install">アプリとしてインストールする</a></li>
   </ol>
 </nav>
 
@@ -294,6 +296,41 @@ footer {
       音響結合 (スピーカーの音をマイクで拾う) になります</li>
   <li>デコードの中核は ESP32 版ファームウェアと<strong>同一のソース</strong>を
       WebAssembly にしたものです。時計・WiFi・OTA など実機固有の機能はありません</li>
+</ul>
+
+<h2 id="install">7. アプリとしてインストールする</h2>
+
+<p>この CW Decoder (Web 版) は、インストールすると、ブラウザのタブではなく独立したウィンドウのアプリとして開けます。
+パソコン (Mac / Windows) の <strong>Chrome</strong> か <strong>Edge</strong> で行います (Safari・Firefox は不可)。</p>
+
+<h3>いちばん簡単な方法: 画面の「インストール」ボタン</h3>
+<ol>
+  <li>このアプリのページを Chrome か Edge で開きます。</li>
+  <li>画面上部 (タイトルの行) の右側に<strong>「インストール」</strong>ボタンが出ていれば、それを押します。</li>
+  <li>確認の画面で「インストール」を押せば完了です。</li>
+</ol>
+<p>ボタンが出ていないときは、すでにインストール済みか、ページが古いままです。
+キーボードで <strong>Mac は Command + Shift + R</strong>、<strong>Windows は Ctrl + F5</strong> を押して
+読み込み直してから、もう一度見てください。それでも出ないときは下のメニューから行います。</p>
+
+<h3>メニューから行う方法</h3>
+<table>
+  <tr><th>ブラウザ</th><th>操作</th></tr>
+  <tr><td>Chrome</td>
+      <td>ウィンドウ右上の <strong>︙</strong> (縦に点が 3 つ) を押す →
+          <strong>「キャスト、保存、共有」</strong> → <strong>「ページをアプリとしてインストール」</strong><br>
+          <span class="dim">(Chrome の版によっては ︙ のすぐ下に「○○ をインストール」と出ます)</span></td></tr>
+  <tr><td>Edge</td>
+      <td>ウィンドウ右上の <strong>…</strong> (横に点が 3 つ) を押す →
+          <strong>「アプリ」</strong> → <strong>「このサイトをアプリとしてインストール」</strong></td></tr>
+</table>
+
+<h3>インストールした後</h3>
+<ul>
+  <li>Mac は Launchpad や「アプリケーション」フォルダ、Windows はスタートメニューから起動できます。</li>
+  <li>ネットにつながっていなくても開けます。新しい版を公開したときは、次にネットにつながった状態で開いたときに自動で入れ替わります。</li>
+  <li>デコーダ・書き込みツール・スコープビューアは別々のアプリです。使うものだけ入れてください。</li>
+  <li>やめるときは、アプリのウィンドウ右上の ︙ (Edge は …) → 「アンインストール」を選びます。</li>
 </ul>
 
 <footer>
