@@ -60,7 +60,7 @@ jobs:
           cp web/cw-decoder.html _site/
           # USB 書き込みツールと、それが読む全版の bin・目録
           mkdir -p _site/flasher/vendor
-          cp web/flasher/index.html web/flasher/flasher.js web/flasher/md5.js _site/flasher/
+          cp web/flasher/index.html web/flasher/help.html web/flasher/flasher.js web/flasher/md5.js _site/flasher/
           cp -R web/flasher/vendor/esptool-js-* _site/flasher/vendor/
           python3 tools/make_versions.py _site
           # 本体の「自動更新」が見にくる配布物。bin はリポジトリに二重で

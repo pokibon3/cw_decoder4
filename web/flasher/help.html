@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>書き込みツールの使い方</title>
+<style>
+:root {
+  --bg: #0b0f14;
+  --panel: #111823;
+  --line: #28374b;
+  --tx: #d8dee6;
+  --dim: #8b94a3;
+  --accent: #5a96d2;
+  --amber: #fac775;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0 auto; padding: 12px 14px 28px; max-width: 820px;
+  background: var(--bg); color: var(--tx);
+  font: 14px/1.75 -apple-system, BlinkMacSystemFont, "Segoe UI", "Hiragino Sans", "Noto Sans JP", sans-serif;
+}
+h1 { font-size: 17px; margin: 0 0 12px; display: flex; align-items: baseline; gap: 8px; }
+h1 a {
+  margin-left: auto; font-size: 12px; font-weight: 400; color: var(--accent);
+  border: 1px solid var(--line); border-radius: 5px; padding: 2px 10px; text-decoration: none;
+}
+h2 { font-size: 14px; color: var(--amber); margin: 22px 0 6px; padding-bottom: 3px; border-bottom: 1px solid var(--line); }
+p, li { margin: 4px 0; }
+ol, ul { padding-left: 22px; }
+b { color: #fff; }
+a { color: var(--accent); }
+.dim { color: var(--dim); }
+table { border-collapse: collapse; width: 100%; margin: 6px 0; }
+th, td { border: 1px solid var(--line); padding: 4px 8px; text-align: left; vertical-align: top; }
+th { background: var(--panel); font-weight: 600; }
+</style>
+</head>
+<body>
+
+<h1>書き込みツールの使い方 <a href="./">書き込みツールへ戻る</a></h1>
+
+<p>CW Decoder (ESP32 版) の本体を USB で PC につなぎ、ファームウェアを書き込むツールです。
+本体の自動更新や SETUP の「FW更新」(WiFi 経由) とは別の手段で、過去の版への書き戻しや、
+設定の初期化、WiFi が使えない状態からの復旧に使います。</p>
+
+<h2>使えるパソコンとブラウザ</h2>
+<ul>
+  <li>Mac または Windows の <b>Chrome</b> か <b>Edge</b>。Safari と Firefox は使えません (USB シリアルに対応していないため)。</li>
+  <li>本体の USB シリアルは CH340 です。最近の macOS は追加のドライバなしで認識します。
+    Windows でポートが出てこないときは
+    <a href="https://www.wch-ic.com/downloads/CH341SER_EXE.html" target="_blank" rel="noopener">CH340 ドライバ (WCH)</a> を入れてください。</li>
+</ul>
+
+<h2>書き込みの手順</h2>
+<ol>
+  <li>本体を USB ケーブルで PC につなぎます (充電専用のケーブルは使えません)。</li>
+  <li>「ポートを選んで接続」を押し、一覧から本体のポートを選びます。<br>
+    <span class="dim">一覧に出ないときは「すべてのポートを表示」に印を付けてから押します。</span></li>
+  <li>本体が再起動し、いまの版とパネル (ST7789 / ILI9341) が表示されます。パネルは自動で選ばれます。</li>
+  <li>書き込む<b>バージョン</b>を選びます。最新版が選ばれています。選んだ版の変更点が下に出ます。</li>
+  <li><b>設定 (NVS) と消去</b>を選びます (下の表)。ふだんは「設定を残す」のままで構いません。</li>
+  <li>「書き込み」を押し、確認の内容を見て OK を押します。1 分ほどかかります。書き込み中は USB を抜かないでください。</li>
+  <li>終わると本体が再起動し、「✓ v○○ で起動しました」と出れば完了です。</li>
+</ol>
+
+<h2>設定 (NVS) と消去の選び方</h2>
+<table>
+  <tr><th>選択肢</th><th>どうなるか</th><th>使う場面</th></tr>
+  <tr><td>設定を残す</td><td>タッチ補正・WiFi・夏時間・時計の地域・NR などはそのまま</td><td>ふだんの更新、過去の版への書き戻し</td></tr>
+  <tr><td>設定を初期化する</td><td>上の設定をすべて既定値に戻す</td><td>タッチ位置がおかしくなって画面から操作できないとき、設定をやり直したいとき</td></tr>
+  <tr><td>フラッシュ全体を消してから書く</td><td>本体の中身をすべて消してから書く。設定も消える</td><td>原因のわからない不調のとき</td></tr>
+</table>
+
+<h2>パネル (ST7789 / ILI9341)</h2>
+<p>本体の LCD の種類です。接続時に本体から読み取って自動で選びます。
+違うパネル用を書くと、表示が上下逆になりタッチもずれますが、正しいパネル用で書き直せば元に戻ります。</p>
+
+<h2>シリアルモニター</h2>
+<p>本体が USB に出しているログ (115200bps) を表示します。接続すると自動で始まります。</p>
+<ul>
+  <li><b>本体をリセット</b>: 本体を再起動して起動ログを表示します。</li>
+  <li><b>スコープログを隠す</b>: 本体の「ログ出力」(SETUP) が ON のときに大量に流れる波形データの行を隠します。</li>
+  <li><b>ログを保存</b>: 表示しているログをテキストファイルに保存します。不具合の報告に使えます。</li>
+</ul>
+
+<h2>うまくいかないとき</h2>
+<ul>
+  <li><b>ポートが一覧に出ない</b>: ケーブルが充電専用でないか確認します。Windows はドライバ (上記) を確認します。</li>
+  <li><b>「ポートを開けません」と出る</b>: ほかのソフト (Arduino IDE や PlatformIO のシリアルモニターなど) が本体のポートを開いていないか確認し、閉じてから接続し直します。</li>
+  <li><b>書き込みで「接続できません」と出る</b>: 本体の <b>BOOT ボタンを押したまま</b>「書き込み」を押し、
+    「本体に接続中」の表示が出たら離します。</li>
+  <li><b>接続後に勝手に切断される</b>: 別の USB ケーブルや、PC 本体のポート (ハブを通さない) で試してください。
+    本体が起動時に WiFi へつなぐときの電流で、給電が足りずに USB が切れることがあります。</li>
+  <li><b>タッチ位置がおかしい</b>: 同じバージョンを「設定を初期化する」で書き直すと、タッチ補正が既定値に戻ります。
+    PC が無いときは、本体の BOOT ボタンを押したまま電源を入れ、2 秒押し続けてもタッチ補正だけを消せます。</li>
+</ul>
+
+</body>
+</html>
