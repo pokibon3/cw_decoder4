@@ -1,0 +1,26 @@
+{
+ "id": "./",
+ "name": "CW Decoder 書き込みツール",
+ "short_name": "CW 書き込み",
+ "description": "CW Decoder (ESP32 版) へ USB でファームウェアを書き込む",
+ "lang": "ja",
+ "start_url": "./",
+ "scope": "./",
+ "display": "standalone",
+ "background_color": "#0b0f14",
+ "theme_color": "#0b0f14",
+ "icons": [
+  {
+   "src": "../icons/flasher-192.png",
+   "sizes": "192x192",
+   "type": "image/png",
+   "purpose": "any maskable"
+  },
+  {
+   "src": "../icons/flasher-512.png",
+   "sizes": "512x512",
+   "type": "image/png",
+   "purpose": "any maskable"
+  }
+ ]
+}

@@ -18,6 +18,8 @@
 # 公開後の URL: https://pokibon3.github.io/cw_decoder4/
 #               https://pokibon3.github.io/cw_decoder4/firmware/latest.txt
 #               https://pokibon3.github.io/cw_decoder4/flasher/
+#               https://pokibon3.github.io/cw_decoder4/scope/
+# 3 つともインストール (PWA) できる。マニフェストとサービスワーカーは各ディレクトリに
 name: Deploy web to Pages
 
 on:
@@ -55,14 +57,21 @@ jobs:
           mkdir -p _site
           # 実行に要るものだけを置く (C ソースやビルド用スクリプトは配らない)
           cp web/index.html web/manual.html web/app.js web/cw-worklet.js web/cwcore.wasm _site/
+          # インストール (PWA) 用: マニフェスト・サービスワーカー・アイコン
+          cp web/manifest.webmanifest web/sw.js web/pwa.js _site/
+          cp -R web/icons _site/
           # 単一ファイル版も置く (他所へ 1 枚だけ持っていきたいとき用)
           python3 web/bundle.py
           cp web/cw-decoder.html _site/
           # USB 書き込みツールと、それが読む全版の bin・目録
           mkdir -p _site/flasher/vendor
-          cp web/flasher/index.html web/flasher/help.html web/flasher/flasher.js web/flasher/md5.js _site/flasher/
+          cp web/flasher/index.html web/flasher/help.html web/flasher/flasher.js web/flasher/md5.js \
+             web/flasher/manifest.webmanifest web/flasher/sw.js _site/flasher/
           cp -R web/flasher/vendor/esptool-js-* _site/flasher/vendor/
           python3 tools/make_versions.py _site
+          # スコープビューア (本体のスコープログをシリアルで受けて表示する)
+          mkdir -p _site/scope
+          cp web/scope/index.html web/scope/manifest.webmanifest web/scope/sw.js _site/scope/
           # 本体の「自動更新」が見にくる配布物。bin はリポジトリに二重で
           # 持たせず、latest.txt に書かれた版の tools/v<版>/ から配る
           if [ -f web/firmware/latest.txt ]; then

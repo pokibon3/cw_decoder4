@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- スコープビューア: エンベロープとキー判定バー -->
+  <rect width="512" height="512" fill="#020810"/>
+  <g stroke="#1c2a3c" stroke-width="4">
+    <path d="M110 160h292M110 230h292M110 300h292M110 370h292"/>
+  </g>
+  <path d="M110 330 L140 330 L150 190 L210 190 L220 330 L250 330 L260 190 L280 190 L290 330 L320 330 L330 190 L390 190 L400 330 L402 330"
+        stroke="#fac775" stroke-width="14" fill="none" stroke-linejoin="round" stroke-linecap="round"/>
+  <g fill="#5adc78">
+    <rect x="150" y="352" width="60" height="18" rx="4"/>
+    <rect x="260" y="352" width="20" height="18" rx="4"/>
+    <rect x="330" y="352" width="60" height="18" rx="4"/>
+  </g>
+</svg>

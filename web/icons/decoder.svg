@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- CW Decoder: 「CW」と、C (-.-.) の符号。maskable 用に絵柄は中央 6 割に収める -->
+  <rect width="512" height="512" fill="#0b0f14"/>
+  <text x="256" y="268" text-anchor="middle" font-family="Helvetica, Arial, sans-serif"
+        font-weight="700" font-size="150" fill="#e6edf3" letter-spacing="6">CW</text>
+  <g fill="#5adc78">
+    <rect x="132" y="312" width="78" height="26" rx="6"/>
+    <rect x="226" y="312" width="26" height="26" rx="6"/>
+    <rect x="268" y="312" width="78" height="26" rx="6"/>
+    <rect x="362" y="312" width="26" height="26" rx="6"/>
+  </g>
+</svg>

@@ -112,6 +112,9 @@ async function loadIndex() {
 		flashMsg(`版の一覧 (firmware/versions.json) を読めません: ${e.message}`, 'err');
 		return;
 	}
+	// 見出しの版表示は Web 版デコーダ (FW_VERSION を手書き) と違い、配布中の
+	// 最新版から取る。リリースのたびに書き換えなくても食い違わない
+	$('toolVer').textContent = index.latest ? `v${index.latest}` : '';
 	const sel = $('selVer');
 	sel.innerHTML = '';
 	for (const v of index.versions) {

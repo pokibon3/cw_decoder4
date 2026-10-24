@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- 書き込みツール: チップへ下向きの矢印 -->
+  <rect width="512" height="512" fill="#0b0f14"/>
+  <g stroke="#5a96d2" stroke-width="12" fill="none" stroke-linecap="round">
+    <rect x="166" y="250" width="180" height="120" rx="12" fill="#16324a"/>
+    <path d="M196 250v-22M236 250v-22M276 250v-22M316 250v-22M196 370v22M236 370v22M276 370v22M316 370v22"/>
+  </g>
+  <path d="M256 118v104M214 182l42 42 42-42" stroke="#fac775" stroke-width="26" fill="none"
+        stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

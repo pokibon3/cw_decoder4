@@ -8,6 +8,10 @@
      この index.html 自体はそれができないのでヘッダで指定する -->
 <meta http-equiv="Cache-Control" content="no-cache, must-revalidate">
 <title>CW Decoder 4</title>
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#0b0f14">
+<link rel="icon" type="image/png" href="icons/decoder-192.png">
+<link rel="apple-touch-icon" href="icons/decoder-192.png">
 <style>
 :root {
   --bg: #0b0f14;
@@ -127,6 +131,7 @@ button.tp { font-size: 15px; line-height: 1; min-width: 44px; }
 <h1>CW Decoder 4
   <a class="manual" href="flasher/" title="本体 (ESP32 版) へ USB でファームウェアを書き込む。過去の版への書き戻しや設定の初期化も">書き込みツール</a>
   <a class="manual" href="manual.html" style="margin-left:0">使い方</a>
+  <a class="manual" href="#" id="btnInstall" hidden style="margin-left:0" title="アプリとしてインストールする (Chrome / Edge)">インストール</a>
   <!-- バージョンはファームウェア (src/version.h の FW_VERSION) と揃える。
        上げるときは manual.html の先頭の表示も一緒に直す -->
   <span class="ver">v3.4</span>
@@ -203,15 +208,8 @@ button.tp { font-size: 15px; line-height: 1; min-width: 44px; }
     <span id="bpfNow" class="metric" style="min-width:54px;display:inline-block"
           title="実際に効いている BPF の中心周波数"></span>
     <label class="chk" title="帯域幅 = 700/Q。Q を上げすぎるとフィルタ自身が中心とサイドビンの落差を作り、デコーダの純音判定がノイズに対して誤動作する (Q=5 以上で偽符号が出始める)"> Q <input type="range" id="bpfQ" min="1" max="8" step="0.5" value="3" style="width:80px"><span id="bpfQV" class="metric">3.0</span></label>
-    <label class="chk" title="トーン検出方式 (評価中)。A=現行の Goertzel、B=ALE (適応型ラインエンハンサ) の出力を Goertzel へ、C=ALE の出力/誤差の電力比だけで判定">検出
-      <select id="detSel">
-        <option value="0" selected>A Goertzel</option>
-        <option value="1">B ALE→Goertzel</option>
-        <option value="2">C ALE 電力比</option>
-        <option value="3">D 振幅=生 / 純音=ALE</option>
-        <option value="4">E 振幅=ALE / 純音=生</option>
-      </select>
-    </label>
+    <label class="chk" title="ノイズ低減 (実機の SETUP の NR と同じ)。ON で適応型ラインエンハンサ (ALE) を使い、弱い信号の感度を上げつつノイズの偽文字を減らす">
+      <input type="checkbox" id="nrOn" checked> NR</label>
     <label class="chk">ch
       <select id="chSel" title="ステレオ入力のどの系統をデコードに使うか。片チャンネルだけ繋いでいるときは L か R を選ぶ">
         <option value="L">L</option>
@@ -286,6 +284,10 @@ button.tp { font-size: 15px; line-height: 1; min-width: 44px; }
   s.src = dev ? `app.js?t=${Date.now()}` : 'app.js';
   document.body.appendChild(s);
 })();
+</script>
+<script type="module">
+import { setupPwa } from './pwa.js';
+setupPwa(document.getElementById('btnInstall'));
 </script>
 </body>
 </html>

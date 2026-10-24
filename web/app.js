@@ -189,7 +189,14 @@ async function ensureEngine() {
 			}
 		}, 10);
 	});
-	node.port.postMessage({ type: 'det', mode: +$('detSel').value });
+	sendNr();
+}
+
+//	NR (ノイズ低減) の ON/OFF。実機の SETUP の NR と同じく、ON は検出方式 E
+//	(dsp.h の DSP_DET_ALE_AMP = 4)、OFF は従来の A (0)。評価用の B〜D は
+//	画面からは選べない (方式の比較は web/tools/aletest.mjs で行う)
+function sendNr() {
+	node?.port.postMessage({ type: 'det', mode: $('nrOn').checked ? 4 : 0 });
 }
 
 function stopSource() {
@@ -1024,7 +1031,7 @@ $('micStart').onclick = guard(startMic);
 // チャンネル切替と BPF の ON/OFF は再生中でもその場で繋ぎ替える (止めずに比べられる)
 $('chSel').onchange = () => wireChain();
 $('bpfOn').onchange = () => wireChain();
-$('detSel').onchange = () => node?.port.postMessage({ type: 'det', mode: +$('detSel').value });
+$('nrOn').onchange = sendNr;
 $('bpfCenter').onchange = () => updateBpf();
 $('bpfQ').oninput = () => { $('bpfQV').textContent = (+$('bpfQ').value).toFixed(1); updateBpf(); };
 $('micRescan').onclick = guard(async () => { await ensureEngine(); await listMics(); });

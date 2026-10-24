@@ -5,6 +5,10 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta http-equiv="Cache-Control" content="no-cache, must-revalidate">
 <title>CW Decoder 書き込みツール</title>
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#0b0f14">
+<link rel="icon" type="image/png" href="../icons/flasher-192.png">
+<link rel="apple-touch-icon" href="../icons/flasher-192.png">
 <style>
 :root {
   --bg: #0b0f14;
@@ -30,6 +34,7 @@ h1 a {
   margin-left: auto; font-size: 12px; font-weight: 400; color: var(--accent);
   border: 1px solid var(--line); border-radius: 5px; padding: 2px 10px; text-decoration: none;
 }
+h1 .ver { color: var(--dim); font-weight: 400; font-size: 12px; font-family: ui-monospace, monospace; }
 h2 { font-size: 13px; margin: 0 0 6px; font-weight: 600; color: var(--amber); }
 .card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; }
 .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
@@ -69,8 +74,10 @@ a { color: var(--accent); }
 <body>
 
 <h1>CW Decoder 書き込みツール <span class="dim" style="font-weight:400;font-size:12px">USB 接続 / ESP32 版</span>
+  <!-- 配布中の最新版 (firmware/versions.json の latest)。flasher.js が入れる -->
+  <span class="ver" id="toolVer"></span>
   <a href="help.html" target="_blank" rel="noopener">ヘルプ</a>
-  <a href="../" style="margin-left:0">デコーダ (Web 版) へ</a>
+  <a href="#" id="btnInstall" hidden style="margin-left:0" title="アプリとしてインストールする (Chrome / Edge)">インストール</a>
 </h1>
 
 <div class="card" id="unsupported">
@@ -138,5 +145,9 @@ a { color: var(--accent); }
 </div>
 
 <script type="module" src="flasher.js"></script>
+<script type="module">
+import { setupPwa } from '../pwa.js';
+setupPwa(document.getElementById('btnInstall'));
+</script>
 </body>
 </html>

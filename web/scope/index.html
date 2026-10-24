@@ -4,6 +4,10 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>CW Decoder 4 Scope Viewer</title>
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#0e1116">
+<link rel="icon" type="image/png" href="../icons/scope-192.png">
+<link rel="apple-touch-icon" href="../icons/scope-192.png">
 <style>
   :root {
     --bg: #0e1116;
@@ -70,7 +74,8 @@
 </head>
 <body>
 
-<h1>CW Decoder 4 &mdash; Scope Viewer <small>SETUP の「スコープログ」を ON にして接続してください</small></h1>
+<h1>CW Decoder 4 &mdash; Scope Viewer <small>SETUP の「スコープログ」を ON にして接続してください</small>
+  <button id="btnInstall" hidden style="float:right;font-size:12px;font-weight:400" title="アプリとしてインストールする (Chrome / Edge)">インストール</button></h1>
 
 <div class="bar">
   <button id="connect" class="primary">シリアル接続</button>
@@ -823,6 +828,10 @@ function frame(now) {
 resetData();
 setFollowing(true);
 requestAnimationFrame(frame);
+</script>
+<script type="module">
+import { setupPwa } from '../pwa.js';
+setupPwa(document.getElementById('btnInstall'));
 </script>
 </body>
 </html>
