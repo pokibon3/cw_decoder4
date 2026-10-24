@@ -9,6 +9,13 @@
 //	    説明 helpUrl を開く。ボタンが出たり出なかったりすると、どこから
 //	    入れるのか分からなくなるため
 //
+//	各 manifest.webmanifest の id は「/cw_decoder4/…」と絶対パスで書くこと。
+//	id はページではなくオリジン (https://pokibon3.github.io/) を基準に解釈
+//	されるので、"./" と書くと 3 つのアプリも、同じオリジンにある別のアプリ
+//	(FTX-1 Controller など) もすべて同じ id になる。実際に CW Decoder を
+//	インストールしたら、既にあった FTX-1 Controller が「同じアプリの更新」と
+//	みなされ、名前はそのままで開く URL だけ CW Decoder に書き換わった
+//
 export function setupPwa(btn, helpUrl) {
 	if ('serviceWorker' in navigator && location.protocol !== 'file:') {
 		navigator.serviceWorker.register('sw.js').catch(() => { /* 開発中のサーバー等 */ });

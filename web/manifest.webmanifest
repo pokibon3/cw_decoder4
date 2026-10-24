@@ -1,5 +1,5 @@
 {
- "id": "./",
+ "id": "/cw_decoder4/",
  "name": "CW Decoder",
  "short_name": "CW Decoder",
  "description": "CW (モールス) を音声からデコードする",

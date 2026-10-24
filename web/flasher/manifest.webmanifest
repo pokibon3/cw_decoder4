@@ -1,5 +1,5 @@
 {
- "id": "./",
+ "id": "/cw_decoder4/flasher/",
  "name": "CW Decoder 書き込みツール",
  "short_name": "CW 書き込み",
  "description": "CW Decoder (ESP32 版) へ USB でファームウェアを書き込む",
