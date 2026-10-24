@@ -16,6 +16,11 @@
 //	インストールしたら、既にあった FTX-1 Controller が「同じアプリの更新」と
 //	みなされ、名前はそのままで開く URL だけ CW Decoder に書き換わった
 //
+//	デコーダの scope は ./ ではなく index.html にしてある。./ だと書き込みツール
+//	(flasher/) とスコープビューア (scope/) までデコーダのアプリの範囲に入り、
+//	デコーダを入れたあとはその 2 つをインストールできなくなる (Chrome は
+//	インストール済みアプリの範囲内のページにはインストールを出さない)
+//
 export function setupPwa(btn, helpUrl) {
 	if ('serviceWorker' in navigator && location.protocol !== 'file:') {
 		navigator.serviceWorker.register('sw.js').catch(() => { /* 開発中のサーバー等 */ });
