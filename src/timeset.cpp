@@ -6,8 +6,11 @@
 //	 2026    08    16    10    55
 //	  ▼     ▼    ▼    ▼    ▼
 //	  [夏時間: ON]     [NTP同期]
-//	  [キャンセル]     [決定]
+//	───────────┬───────────
+//	   キャンセル  │    決定          ← 下端のバー (画面幅いっぱい)
 //
+//	キャンセル / 決定は角の丸いボタンにせず、下端のバーにする。上の
+//	トグル (ON で緑) と形で見分けられるように。
 //	秒は「決定」を押した瞬間に 0 にする。
 //	▲▼ は長押しでリピートする。
 //	夏時間はその場で切り替えて保存し、表示中の値も新しい時差に合わせて動かす。
@@ -41,13 +44,16 @@
 #define VAL_H   36
 #define DN_Y    120
 #define OPT_Y   156
-#define BTN_Y   198
 #define BTN_H   36
 
-// 下 2 段のボタン (夏時間 / NTP同期、キャンセル / 決定) の列
+// 夏時間 / NTP同期 の列
 #define BTN_L_X 30
 #define BTN_R_X 180
 #define BTN_W   110
+
+// 下端のバー (左半分 = キャンセル、右半分 = 決定)
+#define BAR_Y   202
+#define BAR_H   (240 - BAR_Y)
 
 #define FIELD_N 5
 
@@ -192,8 +198,17 @@ static void draw_screen(void)
 	}
 	draw_summer();
 	draw_ntp();
-	draw_button(BTN_L_X, BTN_Y, BTN_W, BTN_H, "キャンセル", C_BTN_BG, C_BTN_BD, C_BTN_TX);
-	draw_button(BTN_R_X, BTN_Y, BTN_W, BTN_H, "決定", C_OK_BG, C_OK_BD, C_BTN_TX);
+
+	lcd->fillRect(0, BAR_Y, 320, BAR_H, C_TITLEBG);
+	lcd->drawFastHLine(0, BAR_Y, 320, C_BTN_BD);
+	lcd->drawFastVLine(160, BAR_Y + 6, BAR_H - 12, C_BTN_BD);
+	lcd->setFont(&fonts::lgfxJapanGothicP_16);
+	lcd->setTextDatum(lgfx::textdatum_t::middle_center);
+	lcd->setTextColor(C_BTN_TX, C_TITLEBG);
+	lcd->drawString("キャンセル", 80, BAR_Y + BAR_H / 2);
+	lcd->setTextColor(C_TITLETX, C_TITLEBG);
+	lcd->drawString("決定", 240, BAR_Y + BAR_H / 2);
+	lcd->setTextDatum(lgfx::textdatum_t::top_left);
 }
 
 //	夏時間の切替。入力途中の値は捨てず、切替前後のローカル時刻の差だけ動かす
@@ -236,13 +251,13 @@ bool timeset_run(LGFX *lcd_)
 		}
 
 		// 決定 / キャンセル
-		if (hit(tx, ty, BTN_R_X, BTN_Y, BTN_W, BTN_H)) {
+		if (hit(tx, ty, 160, BAR_Y, 160, BAR_H)) {
 			while (lcd->getTouch(&tx, &ty)) delay(10);
 			tm.sec = 0;
 			clock_set_zone_time(clock_zone(), clock_make(&tm));
 			return true;
 		}
-		if (hit(tx, ty, BTN_L_X, BTN_Y, BTN_W, BTN_H)) {
+		if (hit(tx, ty, 0, BAR_Y, 160, BAR_H)) {
 			while (lcd->getTouch(&tx, &ty)) delay(10);
 			return false;
 		}
