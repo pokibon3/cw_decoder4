@@ -5,14 +5,19 @@
 //	  ▲     ▲    ▲    ▲    ▲
 //	 2026    08    16    10    55
 //	  ▼     ▼    ▼    ▼    ▼
-//	      [キャンセル]      [決定]
+//	  [夏時間: ON]     [NTP同期]
+//	  [キャンセル]     [決定]
 //
 //	秒は「決定」を押した瞬間に 0 にする。
 //	▲▼ は長押しでリピートする。
+//	夏時間はその場で切り替えて保存し、表示中の値も新しい時差に合わせて動かす。
+//	NTP同期は WiFi を登録したときだけ押せる。成功したら秒まで合っているので
+//	そのまま SETUP へ戻る (「決定」で秒を 0 にしてしまわないように)。
 //
 #include <Arduino.h>
 #include "timeset.h"
 #include "clock.h"
+#include "netsync.h"
 
 #define C_BG      lgfx::color565(14, 17, 22)
 #define C_TITLEBG lgfx::color565(26, 34, 46)
@@ -26,15 +31,23 @@
 #define C_BTN_TX  lgfx::color565(190, 206, 226)
 #define C_OK_BG   lgfx::color565(24, 54, 42)
 #define C_OK_BD   lgfx::color565(90, 200, 140)
+#define C_OFF_BD  lgfx::color565(44, 54, 68)
+#define C_OFF_TX  lgfx::color565(84, 96, 112)
 
-#define LABEL_Y 34
+#define LABEL_Y 35
 #define UP_Y    52
-#define ARROW_H 34
-#define VAL_Y   90
-#define VAL_H   38
-#define DN_Y    130
-#define BTN_Y   186
-#define BTN_H   40
+#define ARROW_H 28
+#define VAL_Y   82
+#define VAL_H   36
+#define DN_Y    120
+#define OPT_Y   156
+#define BTN_Y   198
+#define BTN_H   36
+
+// 下 2 段のボタン (夏時間 / NTP同期、キャンセル / 決定) の列
+#define BTN_L_X 30
+#define BTN_R_X 180
+#define BTN_W   110
 
 #define FIELD_N 5
 
@@ -135,6 +148,20 @@ static void bump(int idx, int dir)
 	}
 }
 
+static void draw_summer(void)
+{
+	const bool on = clock_summer_time() != 0;
+	draw_button(BTN_L_X, OPT_Y, BTN_W, BTN_H, on ? "夏時間: ON" : "夏時間: OFF",
+	            on ? C_OK_BG : C_BTN_BG, on ? C_OK_BD : C_BTN_BD, C_BTN_TX);
+}
+
+static void draw_ntp(void)
+{
+	const bool ok = netsync_has_wifi();
+	draw_button(BTN_R_X, OPT_Y, BTN_W, BTN_H, "NTP同期",
+	            C_BTN_BG, ok ? C_BTN_BD : C_OFF_BD, ok ? C_BTN_TX : C_OFF_TX);
+}
+
 static void draw_screen(void)
 {
 	lcd->fillScreen(C_BG);
@@ -163,8 +190,27 @@ static void draw_screen(void)
 		draw_value(i);
 		draw_arrow(i, false);
 	}
-	draw_button(30, BTN_Y, 110, BTN_H, "キャンセル", C_BTN_BG, C_BTN_BD, C_BTN_TX);
-	draw_button(180, BTN_Y, 110, BTN_H, "決定", C_OK_BG, C_OK_BD, C_BTN_TX);
+	draw_summer();
+	draw_ntp();
+	draw_button(BTN_L_X, BTN_Y, BTN_W, BTN_H, "キャンセル", C_BTN_BG, C_BTN_BD, C_BTN_TX);
+	draw_button(BTN_R_X, BTN_Y, BTN_W, BTN_H, "決定", C_OK_BG, C_OK_BD, C_BTN_TX);
+}
+
+//	夏時間の切替。入力途中の値は捨てず、切替前後のローカル時刻の差だけ動かす
+static void toggle_summer(void)
+{
+	const uint32_t before = clock_zone_now(clock_zone());
+	clock_set_summer_time(!clock_summer_time());
+	const int32_t diff = (int32_t)(clock_zone_now(clock_zone()) - before);
+	if (diff) {
+		uint8_t sec = tm.sec;
+		clock_break(clock_make(&tm) + diff, &tm);
+		tm.sec = sec;
+		for (int i = 0; i < FIELD_N; i++) {
+			draw_value(i);
+		}
+	}
+	draw_summer();
 }
 
 bool timeset_run(LGFX *lcd_)
@@ -190,15 +236,35 @@ bool timeset_run(LGFX *lcd_)
 		}
 
 		// 決定 / キャンセル
-		if (hit(tx, ty, 180, BTN_Y, 110, BTN_H)) {
+		if (hit(tx, ty, BTN_R_X, BTN_Y, BTN_W, BTN_H)) {
 			while (lcd->getTouch(&tx, &ty)) delay(10);
 			tm.sec = 0;
 			clock_set_zone_time(clock_zone(), clock_make(&tm));
 			return true;
 		}
-		if (hit(tx, ty, 30, BTN_Y, 110, BTN_H)) {
+		if (hit(tx, ty, BTN_L_X, BTN_Y, BTN_W, BTN_H)) {
 			while (lcd->getTouch(&tx, &ty)) delay(10);
 			return false;
+		}
+
+		// 夏時間 / NTP同期 (WiFi 未登録なら NTP同期は押しても何もしない)
+		if (hit(tx, ty, BTN_L_X, OPT_Y, BTN_W, BTN_H)) {
+			while (lcd->getTouch(&tx, &ty)) delay(10);
+			toggle_summer();
+			held = -1;
+			continue;
+		}
+		if (hit(tx, ty, BTN_R_X, OPT_Y, BTN_W, BTN_H)) {
+			while (lcd->getTouch(&tx, &ty)) delay(10);
+			held = -1;
+			if (!netsync_has_wifi()) {
+				continue;
+			}
+			if (netsync_sync_now(false)) {
+				return true;
+			}
+			draw_screen();          // 失敗: トーストを消して入力途中の値のまま続ける
+			continue;
 		}
 
 		// ▲▼ (押し始めで1回、長押しでリピート)

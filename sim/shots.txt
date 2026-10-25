@@ -38,11 +38,11 @@ wait 2
 tap 235 57
 wait 2
 shot esp32-timeset.png
-tap 85 206
+tap 85 216
 wait 2
 
 # タッチパネル調整 → キャンセル
-tap 235 133
+tap 85 171
 wait 2
 shot esp32-touchcal.png
 tap 56 209
@@ -59,7 +59,7 @@ tap 256 212
 wait 2
 
 # About → どこかをタップで戻る
-tap 85 209
+tap 235 209
 wait 2
 shot esp32-about.png
 tap 160 120

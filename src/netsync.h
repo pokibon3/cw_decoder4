@@ -15,7 +15,10 @@
 
 void netsync_init(void);
 void netsync_poll(void);                    // loop から呼ぶ (期限が来たら同期)
-bool netsync_sync_now(void);                // 即時同期 (WiFiを一時的にONにする)
+// 即時同期 (WiFiを一時的にONにする)。経過は画面中央のトーストに出し、
+// 終わったら時計画面を描き直す。時計以外の画面から呼ぶときは
+// redraw_clock = false にして、呼び出し側で自分の画面を描き直す
+bool netsync_sync_now(bool redraw_clock = true);
 
 bool netsync_has_wifi(void);
 void netsync_save_wifi(const char *ssid, const char *pass);

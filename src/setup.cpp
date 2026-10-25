@@ -1,16 +1,17 @@
 //
 //	セットアップ画面
 //
-//	2列 x 5行のグリッド (10項目)。
+//	2列 x 5行のグリッド (9項目、左下は空き)。
 //
 //	┌ SETUP                                [戻る] ┐
 //	│ [ WiFi設定 ]         [ 時刻合わせ ]         │
-//	│ [ FW更新 ]           [ 夏時間: ON ]         │
-//	│ [ FW自動更新: ON ]   [ タッチパネル調整 ]   │
-//	│ [ ログ出力: ON ]     [ 初期化 ]             │
-//	│ [ About ]            [ NR: ON ]             │
+//	│ [ FW更新 ]           [ FW自動更新: ON ]     │
+//	│ [ NR(ALE): ON ]      [ ログ出力: ON ]       │
+//	│ [ タッチパネル調整 ] [ 初期化 ]             │
+//	│                      [ About ]              │
 //	└─────────────────────────────────────────────┘
 //
+//	時刻合わせ → timeset (夏時間の ON/OFF と NTP 同期もここ)
 //	FW更新 → ota (SoftAP+ブラウザで手動アップロード)
 //	タッチパネル調整 → touchcal / About → about_run
 //	NR → トーン検出方式の切替 (ON = ALE によるノイズ低減、dsp.h の DSP_DET_ALE_AMP)
@@ -52,7 +53,7 @@
 #define BACK_W 64
 #define BACK_H 26
 
-// 2列 x 5行のグリッド (10項目)
+// 2列 x 5行のグリッド (10枠。ラベルが NULL の枠は空き)
 #define ITEM_COL_W 138
 #define ITEM_COL_GAP 12
 #define ITEM_H 34
@@ -206,24 +207,26 @@ static void draw_screen(void)
 	draw_button(BACK_X, BACK_Y, BACK_W, BACK_H, "戻る", C_BTN_BG, C_BTN_BD, C_BTN_TX,
 	            &fonts::lgfxJapanGothicP_16);
 
-	char summer[40], scope[40], upd[40], nr[24];
-	snprintf(summer, sizeof(summer), "夏時間: %s", clock_summer_time() ? "ON" : "OFF");
+	char scope[40], upd[40], nr[24];
 	snprintf(scope, sizeof(scope), "ログ出力: %s", scopelog_enabled() ? "ON" : "OFF");
 	snprintf(upd, sizeof(upd), "FW自動更新: %s", fwupdate_check_enabled() ? "ON" : "OFF");
-	snprintf(nr, sizeof(nr), "NR: %s", nr_enabled() ? "ON" : "OFF");
+	snprintf(nr, sizeof(nr), "NR(ALE): %s", nr_enabled() ? "ON" : "OFF");
 	const struct { const char *label; bool on; } items[ITEM_N] = {
 		{ "WiFi設定", false },
 		{ "時刻合わせ", false },
 		{ "FW更新", false },
-		{ summer, clock_summer_time() != 0 },
 		{ upd, fwupdate_check_enabled() },
-		{ "タッチパネル調整", false },
-		{ scope, scopelog_enabled() != 0 },
-		{ "初期化", false },
-		{ "About", false },
 		{ nr, nr_enabled() },
+		{ scope, scopelog_enabled() != 0 },
+		{ "タッチパネル調整", false },
+		{ "初期化", false },
+		{ NULL, false },
+		{ "About", false },
 	};
 	for (int i = 0; i < ITEM_N; i++) {
+		if (!items[i].label) {
+			continue;
+		}
 		int x, y;
 		item_pos(i, &x, &y);
 		draw_button(x, y, ITEM_COL_W, ITEM_H, items[i].label,
@@ -296,17 +299,17 @@ void setup_run(LGFX *lcd_)
 				ap_mode_leave();
 			}
 			break;
-		case 3:
-			clock_set_summer_time(!clock_summer_time());
-			break;
-		case 4:                     // 起動時アップデートチェック ON/OFF
+		case 3:                     // 起動時アップデートチェック ON/OFF
 			fwupdate_set_check_enabled(!fwupdate_check_enabled());
 			break;
+		case 4:                     // NR (ノイズ低減) ON/OFF
+			nr_set(!nr_enabled());
+			break;
 		case 5:
-			touchcal_run(lcd);      // タッチの四隅校正 (DSP は動いたまま)
+			scopelog_set_enabled(!scopelog_enabled());
 			break;
 		case 6:
-			scopelog_set_enabled(!scopelog_enabled());
+			touchcal_run(lcd);      // タッチの四隅校正 (DSP は動いたまま)
 			break;
 		case 7:
 			if (display_confirm(lcd, "設定を初期化します",
@@ -315,12 +318,11 @@ void setup_run(LGFX *lcd_)
 				netsync_clear_wifi();
 			}
 			break;
-		case 8:
+		case 9:
 			about_run();
 			break;
-		default:                    // NR (ノイズ低減) ON/OFF
-			nr_set(!nr_enabled());
-			break;
+		default:                    // 8 は空き
+			continue;
 		}
 		draw_screen();
 	}

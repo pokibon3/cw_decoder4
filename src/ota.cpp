@@ -215,10 +215,10 @@ static void draw_screen(void)
 	// 右: WiFi接続用QR (スマホのカメラで読むとAPに参加できる)
 	String wifi_qr = String("WIFI:T:WPA;S:") + OTA_AP_SSID + ";P:" + OTA_AP_PASS + ";;";
 	lcd->qrcode(wifi_qr.c_str(), 206, 34, 106, 3);
-	lcd->setFont(&fonts::DejaVu12);
+	lcd->setFont(&fonts::lgfxJapanGothicP_16);  // QR の幅 (106px) に収まる短さにする
 	lcd->setTextColor(C_LABEL, C_BG);
 	lcd->setTextDatum(lgfx::textdatum_t::top_center);
-	lcd->drawString("scan: join & open page", 259, 144);
+	lcd->drawString("QRで接続", 259, 144);
 	lcd->setTextDatum(lgfx::textdatum_t::top_left);
 
 	// [キャンセル] は両モード共通 (右下)。OTA モードでは進捗バーをその左に置く

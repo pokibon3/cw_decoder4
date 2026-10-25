@@ -296,7 +296,7 @@ static uint32_t synced_epoch = 0;
 
 void netsync_init(void) { }
 void netsync_poll(void) { }
-bool netsync_sync_now(void) { return false; }
+bool netsync_sync_now(bool redraw_clock) { (void)redraw_clock; return false; }
 bool netsync_has_wifi(void) { return false; }
 void netsync_save_wifi(const char *ssid, const char *pass) { (void)ssid; (void)pass; }
 void netsync_clear_wifi(void) { }

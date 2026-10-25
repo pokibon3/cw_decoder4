@@ -99,7 +99,7 @@ void netsync_save_wifi(const char *new_ssid, const char *new_pass)
 	Serial.printf("[sync] wifi saved: %s\n", ssid.c_str());
 }
 
-bool netsync_sync_now(void)
+bool netsync_sync_now(bool redraw_clock)
 {
 	if (!netsync_has_wifi()) {
 		clock_toast("WiFi未設定のため同期しません", C_DIM);
@@ -164,7 +164,9 @@ bool netsync_sync_now(void)
 		clock_toast("同期失敗 1時間後に再試行", C_ERR);
 	}
 	delay(1500);            // 結果を読ませてから時計へ戻す
-	clock_redraw();
+	if (redraw_clock) {
+		clock_redraw();
+	}
 	return ok;
 }
 
