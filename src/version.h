@@ -7,7 +7,7 @@
 //
 #pragma once
 
-#define FW_VERSION "3.5"
+#define FW_VERSION "3.6"
 
 extern const char FW_BUILD[];       // 例: "Sep 16 2026 12:34:56"
 
