@@ -410,8 +410,8 @@ void fwupdate_check_on_boot(LGFX *lcd_)
 	lcd = lcd_;
 
 	draw_status("WiFi に接続しています ...", C_ACCENT);
-	Serial.printf("[upd] connect to %s (heap=%u)\n", netsync_ssid().c_str(),
-	              (unsigned)ESP.getFreeHeap());
+	Serial.printf("[upd] connect to %s (heap=%u max_block=%u)\n", netsync_ssid().c_str(),
+	              (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMaxAllocHeap());
 
 	WiFi.persistent(false);         // 資格情報を NVS に書かない
 	WiFi.mode(WIFI_STA);

@@ -65,8 +65,9 @@ static uint8_t peak_cand_cnt = 0;
 static int16_t sample_ring[512];
 // ALE の出力 y を sample_ring と同じ位置に積む。float で持つ: int16 に丸めると
 // 入力が小さいとき (ピーク 5〜10%) に y が数カウントしかなく、量子化で
-// 中心ビンの精度が落ちて弱い信号の正解率が下がった (合成 -5dB で 92% → 71%)
-static float ale_ring[512];
+// 中心ビンの精度が落ちて弱い信号の正解率が下がった (合成 -5dB で 92% → 71%)。
+// 実体は dsp_alloc() で確保する
+static float *ale_ring;
 static uint8_t det_mode = DSP_DET_GOERTZEL;            // DSP タスクが使う方式
 static volatile uint8_t det_req = DSP_DET_GOERTZEL;    // 切替要求 (次のブロックで反映)
 #define DSP_ALE_LIMIT_FLOOR 40    // E での振幅しきい値の絶対床 (dsp_step 参照)
@@ -77,7 +78,7 @@ static uint16_t ale_delay = 16;
 static uint16_t sample_pos = 0;
 static int32_t dc_est = 2048 * 256;   // 生ADC値の直流分 (Q8)
 
-static scope_col_t scope_ring[SCOPE_RING_SIZE];
+static scope_col_t *scope_ring;         // [SCOPE_RING_SIZE]。dsp_alloc() で確保
 static uint16_t scope_pos = 0;
 static volatile uint32_t scope_total = 0;   // 生成したスコープ列の通し番号 (文字の時間軸位置用)
 // デコード中の文字の符号区間 (スコープ列番号): 前回の文字確定後、最初に
@@ -166,6 +167,11 @@ uint16_t dsp_scope_period_q8(void)
 int dsp_get_scope_since(uint32_t from_idx, scope_col_t *out, int max,
                         uint32_t *first, uint32_t *lost)
 {
+	if (!scope_ring) {
+		*first = from_idx;
+		*lost = 0;
+		return 0;
+	}
 	taskENTER_CRITICAL(&dsp_mux);
 	uint32_t total = scope_total;
 	uint32_t oldest = (total > SCOPE_RING_SIZE) ? total - SCOPE_RING_SIZE : 0;
@@ -193,6 +199,7 @@ void dsp_scope_char_span(uint32_t *start, uint32_t *end)
 
 int dsp_get_scope(scope_col_t *out, int n)
 {
+	if (!scope_ring) return 0;
 	if (n > SCOPE_RING_SIZE) n = SCOPE_RING_SIZE;
 	taskENTER_CRITICAL(&dsp_mux);
 	uint16_t pos = scope_pos;
@@ -452,8 +459,8 @@ static float ale_mu = 0.01f;
 // 合成 -6dB / 実ノイズの偽文字の釣り合いで決めた (web/tools/aletest.mjs)
 static float ale_r_on = 0.45f;          // ON: Py / Pe_slow がこれを超える
 static float ale_r_off = 0.25f;         // OFF: これを下回る
-static float ale_w[ALE_TAPS_MAX];
-static float ale_x[ALE_HIST];
+static float *ale_w;                    // [ALE_TAPS_MAX]
+static float *ale_x;                    // [ALE_HIST]
 static uint16_t ale_pos = 0;
 static float ale_pow = 0.0f;            // 入力電力の長時間平均 (サンプル当たり)
 static float ale_hop_y = 0.0f, ale_hop_e = 0.0f;   // 現ホップの二乗和
@@ -464,11 +471,47 @@ static uint8_t ale_e_started = 0;
 static volatile float ale_last_ratio = 0.0f;
 static float ale_peak = 0.0f;           // 比の振幅 (sqrt) のピーク追従
 
+//	大きい配列 (スコープのリング 7KB、ALE の ale_w / ale_x / ale_ring 計 5KB) の
+//	置き場所。ESP32 では静的配列にせず、dsp_start() でヒープから取る。起動時の
+//	アップデートチェック (fwupdate.cpp) は dsp_start() より前に TLS を張り、
+//	mbedTLS はヒープをぎりぎりまで使う。静的配列だと電源投入時からその分が
+//	ヒープから引かれる。v3.4 では ALE の 5KB が増えただけで latest.txt の取得が
+//	-32512 (SSL のメモリ確保失敗) で毎回失敗し、オンライン更新が止まっていた。
+//	Web 版 (wasm) には malloc が無いので静的配列のまま
+#if defined(ESP_PLATFORM)
+static bool dsp_alloc(void)
+{
+	if (!scope_ring) {
+		scope_ring = (scope_col_t *)malloc(SCOPE_RING_SIZE * sizeof(scope_col_t));
+	}
+	if (!ale_ring) {
+		ale_ring = (float *)malloc(512 * sizeof(float));
+		ale_w = (float *)malloc(ALE_TAPS_MAX * sizeof(float));
+		ale_x = (float *)malloc(ALE_HIST * sizeof(float));
+	}
+	return scope_ring != NULL;      // ALE が取れなかったときは NR を止めて動かす
+}
+#else
+static bool dsp_alloc(void)
+{
+	static scope_col_t scope[SCOPE_RING_SIZE];
+	static float ring[512], w[ALE_TAPS_MAX], x[ALE_HIST];
+	scope_ring = scope;
+	ale_ring = ring;
+	ale_w = w;
+	ale_x = x;
+	return true;
+}
+#endif
+
 static void ale_reset(void)
 {
-	memset(ale_w, 0, sizeof(ale_w));
-	memset(ale_x, 0, sizeof(ale_x));
-	memset(ale_ring, 0, sizeof(ale_ring));
+	if (!ale_ring) {
+		return;                     // dsp_start() 前。確保したときに 0 で始まる
+	}
+	memset(ale_w, 0, ALE_TAPS_MAX * sizeof(float));
+	memset(ale_x, 0, ALE_HIST * sizeof(float));
+	memset(ale_ring, 0, 512 * sizeof(float));
 	memset(ale_win_y, 0, sizeof(ale_win_y));
 	ale_pos = 0;
 	ale_pow = 0.0f;
@@ -800,7 +843,8 @@ void dsp_step(void)
 		if (got == 0) continue;
 		samples_total += got;
 
-		if (det_req != det_mode) {
+		// ALE の配列が無いとき (ale_alloc() 失敗) は ALE を使う方式へ切り替えない
+		if (det_req != det_mode && (det_req == DSP_DET_GOERTZEL || ale_ring)) {
 			ale_reset();
 			side_ema_started = 0;
 			det_mode = det_req;
@@ -1043,7 +1087,19 @@ void dsp_start(void)
 	for (int i = 0; i < DSP_SPEC_N; i++) {
 		hann[i] = 0.5f * (1.0f - cosf(2.0f * (float)M_PI * (float)i / (float)(DSP_SPEC_N - 1)));
 	}
-	memset(scope_ring, 0, sizeof(scope_ring));
+	if (!dsp_alloc()) {
+		Serial.println("[dsp] scope alloc failed");
+		return;                     // 起動直後の 7KB が取れないなら動かしようがない
+	}
+	memset(scope_ring, 0, SCOPE_RING_SIZE * sizeof(scope_col_t));
 	memset(spec_mag, 0, sizeof(spec_mag));
+	if (ale_ring && ale_w && ale_x) {
+		ale_reset();
+	} else {
+		// ALE が確保できなければ NR は使えない。従来方式に固定する
+		Serial.println("[dsp] ALE alloc failed, NR off");
+		ale_ring = NULL;
+		det_req = det_mode = DSP_DET_GOERTZEL;
+	}
 	xTaskCreatePinnedToCore(dsp_task, "dsp", 8192, NULL, 3, NULL, 0);
 }

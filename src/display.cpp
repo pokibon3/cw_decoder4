@@ -632,10 +632,18 @@ static void draw_fft_panel(void)
 //==================================================================
 static void draw_scope_panel(void)
 {
-	static scope_col_t cols[SCOPE_COLS_WIDE];
+	// 8.6KB あるので静的配列にせず初回に取る (起動時のアップデートチェックの
+	// TLS にヒープを残すため。dsp.cpp の dsp_alloc() 参照)
+	static scope_col_t *cols = NULL;
 	static float raw_max = 100.0f;
 	static float env_max = 500.0f;
 
+	if (!cols) {
+		cols = (scope_col_t *)malloc(SCOPE_COLS_WIDE * sizeof(scope_col_t));
+		if (!cols) {
+			return;
+		}
+	}
 	const int pw = panel_w(PANEL_WIDE_SCOPE);
 	const int ncol = (panel_wide == PANEL_WIDE_SCOPE) ? SCOPE_COLS_WIDE : SCOPE_COLS;
 	dsp_get_scope(cols, ncol);
