@@ -30,3 +30,8 @@ web/tools/*.opus
 web/firmware/v*/
 web/firmware/common/
 web/firmware/versions.json
+
+# PC シミュレータ (sim/) のビルド生成物と、手元で動かしたときの設定・撮影
+sim/build/
+sim/nvs.txt
+sim/shots/

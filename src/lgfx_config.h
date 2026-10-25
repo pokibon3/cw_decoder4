@@ -17,6 +17,12 @@
 //	  タッチへ与え、どちらのパネルでも合成後の回転が同じになるようにする。
 //
 #pragma once
+
+#if defined(CWDEC_SIM)
+// PC シミュレータ (sim/) では LCD の代わりに SDL のウィンドウへ描く
+#include "../sim/sim_lgfx.h"
+#else
+
 #define LGFX_USE_V1
 #include <LovyanGFX.hpp>
 
@@ -162,3 +168,5 @@ public:
 
 	const char* panel_name(void) const { return _panel_name; }
 };
+
+#endif  // CWDEC_SIM

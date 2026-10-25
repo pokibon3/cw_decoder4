@@ -1,0 +1,74 @@
+# 取扱説明書 (docs/manual.md) に貼るスクリーンショットの台本 (make shots で使う)
+# 座標は画面の論理座標 (320x240 横)。命令は sim_main.cpp の run_script() を参照
+# cwsim-hd は字形を初めて描くときに時間がかかるので、画面を開いたあとは 2 秒待つ
+
+# 起動画面 (実機では起動時のアップデートチェックの間に出ている)
+wait 0.4
+shot esp32-splash.png
+
+# 起動直後の数文字は速度推定が落ち着く前なので、6 行が流れきるまで待つ
+wait 75
+shot esp32-decoder.png
+
+# FFT / オシロをダブルタップして全幅表示、もう一度で戻す
+dtap 80 205
+wait 3
+shot esp32-fft-wide.png
+dtap 160 205
+wait 2
+dtap 240 205
+wait 4
+shot esp32-scope-wide.png
+dtap 160 205
+wait 2
+
+# SETUP 画面と、そこから開く画面
+tap 160 13
+wait 2
+shot esp32-setup.png
+
+# WiFi設定 (AP の情報と QR コード) → キャンセル
+tap 85 57
+wait 3
+shot esp32-wifi.png
+tap 256 212
+wait 2
+
+# 時刻合わせ → キャンセル
+tap 235 57
+wait 2
+shot esp32-timeset.png
+tap 85 206
+wait 2
+
+# タッチパネル調整 → キャンセル
+tap 235 133
+wait 2
+shot esp32-touchcal.png
+tap 56 209
+wait 2
+
+# FW更新: 確認ダイアログ → 開始 → OTA モードの画面 → キャンセル
+tap 85 95
+wait 2
+shot esp32-ota-confirm.png
+tap 224 156
+wait 3
+shot esp32-ota.png
+tap 256 212
+wait 2
+
+# About → どこかをタップで戻る
+tap 85 209
+wait 2
+shot esp32-about.png
+tap 160 120
+wait 2
+
+# SETUP を閉じ、文字エリアの中央をタップして時計画面へ
+tap 280 17
+wait 2
+tap 160 100
+wait 3
+shot esp32-clock.png
+quit
