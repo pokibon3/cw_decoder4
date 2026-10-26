@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="210" viewBox="0 0 640 210" font-family="'Hiragino Sans','Yu Gothic','Noto Sans JP',sans-serif">
+  <rect x="0" y="0" width="640" height="210" fill="#ffffff"/>
+  <text x="20" y="22" font-size="14" fill="#333">本体背面</text>
+  <!-- パネル -->
+  <rect x="20" y="34" width="600" height="104" rx="8" fill="#e6e6e6" stroke="#555" stroke-width="2"/>
+
+  <!-- ボリューム -->
+  <circle cx="80" cy="86" r="30" fill="#3a3a3a" stroke="#222" stroke-width="2"/>
+  <line x1="80" y1="86" x2="80" y2="62" stroke="#ffffff" stroke-width="3" stroke-linecap="round"/>
+
+  <!-- AUDIO IN -->
+  <circle cx="200" cy="86" r="22" fill="#bdbdbd" stroke="#555" stroke-width="2"/>
+  <circle cx="200" cy="86" r="10" fill="#1e1e1e"/>
+
+  <!-- AUDIO OUT -->
+  <circle cx="320" cy="86" r="22" fill="#bdbdbd" stroke="#555" stroke-width="2"/>
+  <circle cx="320" cy="86" r="10" fill="#1e1e1e"/>
+
+  <!-- 電源 SW -->
+  <circle cx="440" cy="86" r="22" fill="#2b2b2b" stroke="#111" stroke-width="2"/>
+  <circle cx="440" cy="86" r="14" fill="#d0d0d0" stroke="#888" stroke-width="2"/>
+
+  <!-- DC ジャック -->
+  <circle cx="560" cy="86" r="24" fill="#2b2b2b" stroke="#111" stroke-width="2"/>
+  <circle cx="560" cy="86" r="12" fill="#111"/>
+  <circle cx="560" cy="86" r="4" fill="#c9a24a"/>
+
+  <!-- ラベル -->
+  <g font-size="15" fill="#222" text-anchor="middle" font-weight="bold">
+    <text x="80" y="164">ボリューム</text>
+    <text x="200" y="164">AUDIO IN</text>
+    <text x="320" y="164">AUDIO OUT</text>
+    <text x="440" y="164">電源 SW</text>
+    <text x="560" y="164">DC ジャック</text>
+  </g>
+  <g font-size="12" fill="#555" text-anchor="middle">
+    <text x="80" y="184">入力レベル</text>
+    <text x="200" y="184">3.5mm</text>
+    <text x="320" y="184">3.5mm</text>
+    <text x="440" y="184">プッシュ式</text>
+    <text x="560" y="184">DC 9〜12V</text>
+  </g>
+</svg>
