@@ -104,6 +104,7 @@ shots: build/cwsim-hd build/fonts/ipag.ttf
 	rm -f build/shots-nvs.txt
 	./build/cwsim-hd --nvs build/shots-nvs.txt --shots ../docs/images \
 		--text "$(SHOT_TEXT_JP)" --script @shots-jp.txt
+	sips -r 270 ../docs/images/esp32-touchcal-cross.png >/dev/null
 
 clean:
 	rm -f build/cwsim build/cwsim-hd $(OBJS) $(HD_OBJS)

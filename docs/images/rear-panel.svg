@@ -30,7 +30,7 @@
     <text x="80" y="164">ボリューム</text>
     <text x="200" y="164">AUDIO IN</text>
     <text x="320" y="164">AUDIO OUT</text>
-    <text x="440" y="164">電源 SW</text>
+    <text x="440" y="164">電源スイッチ</text>
     <text x="560" y="164">DC ジャック</text>
   </g>
   <g font-size="12" fill="#555" text-anchor="middle">

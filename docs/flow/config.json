@@ -1,0 +1,15 @@
+{
+  "theme": "base",
+  "themeVariables": {
+    "fontSize": "22px",
+    "primaryColor": "#ffffff",
+    "primaryBorderColor": "#222222",
+    "primaryTextColor": "#000000",
+    "lineColor": "#222222",
+    "clusterBkg": "#f2f2f2",
+    "clusterBorder": "#555555",
+    "titleColor": "#000000",
+    "edgeLabelBackground": "#ffffff"
+  },
+  "flowchart": { "nodeSpacing": 24, "rankSpacing": 36, "padding": 10, "wrappingWidth": 400, "subGraphTitleMargin": { "top": 6, "bottom": 14 } }
+}

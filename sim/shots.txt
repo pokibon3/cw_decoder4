@@ -41,10 +41,31 @@ shot esp32-timeset.png
 tap 85 216
 wait 2
 
-# タッチパネル調整 → キャンセル
+# タッチパネル調整: 開始画面 → 開始 → 4 点の十字 → 確認画面 (3 点とも当てる) → やり直す → キャンセル
+# 十字の画面はパネル素の向き (縦) で撮れるので、make shots の最後で横に回す
 tap 85 171
 wait 2
 shot esp32-touchcal.png
+tap 264 209
+wait 2
+shot esp32-touchcal-cross.png
+hold 40 209 0.6
+wait 0.5
+hold 279 209 0.6
+wait 0.5
+hold 40 30 0.6
+wait 0.5
+hold 279 30 0.6
+wait 2
+tap 52 90
+wait 1
+tap 268 90
+wait 1
+tap 160 158
+wait 2
+shot esp32-touchcal-verify.png
+tap 85 209
+wait 2
 tap 56 209
 wait 2
 

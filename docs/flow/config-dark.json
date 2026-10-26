@@ -1,0 +1,17 @@
+{
+  "theme": "base",
+  "themeVariables": {
+    "darkMode": true,
+    "background": "#0d1117",
+    "fontSize": "22px",
+    "primaryColor": "#1c2430",
+    "primaryBorderColor": "#c9d1d9",
+    "primaryTextColor": "#e6edf3",
+    "lineColor": "#c9d1d9",
+    "clusterBkg": "#161b22",
+    "clusterBorder": "#8b949e",
+    "titleColor": "#e6edf3",
+    "edgeLabelBackground": "#0d1117"
+  },
+  "flowchart": { "nodeSpacing": 24, "rankSpacing": 36, "padding": 10, "wrappingWidth": 400, "subGraphTitleMargin": { "top": 6, "bottom": 14 } }
+}
