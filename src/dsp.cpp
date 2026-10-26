@@ -14,7 +14,9 @@
 #include "decoder.h"
 #include "float_fft.h"
 
-#define SCOPE_RING_SIZE 256
+// 全幅オシロ (display.cpp の SCOPE_COLS_WIDE = 310 列) 以上にすること。
+// 足りないと dsp_get_scope() が打ち切り、右端に未初期化の列が描かれる
+#define SCOPE_RING_SIZE 320
 // スコープ掃引はWPM追従: 1列のhop数 = 60/WPM (Q8の分数蓄積でリニアに)。
 // 20WPM=3.0hop(18ms/列)、40WPM=1.5hop(9ms/列)。範囲外はクランプ。
 #define SCOPE_HOPS_Q8_MIN 768   // 3.0 hop = 11ms (40WPM)

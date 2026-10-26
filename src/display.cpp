@@ -1157,6 +1157,11 @@ static void poll_touch(void)
 						tone_pending = 1;
 						tone_pending_hz = eq_hz_of_x((int)x);
 						tone_pending_ms = t;
+					} else {
+						// スコープ側のタップ: 境目付近でのダブルタップの 1 打目が
+						// FFT 側に入り DTAP_DIST を外れたとき、それがトーン選択に
+						// 化けて帯域端に固定されデコードが止まるのを防ぐ
+						tone_pending = 0;
 					}
 				}
 			}
