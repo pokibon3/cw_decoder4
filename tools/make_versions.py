@@ -15,7 +15,7 @@
 #	(tools/make_release.sh は今後の版でそれも書き出す)。
 #
 #	版ごとの日付は tools/v<版>/ の bin を追加したコミットの日付 (git が要る)、
-#	変更の要約は README.md の変更履歴 (「- V3.4」の項) から取る。配布しなかった版
+#	変更の要約は README.md の変更履歴 (「- v3.4」の項) から取る。配布しなかった版
 #	(v3.3 など) の変更は、その次に配布した版の要約に含める。
 #
 #	使い方:
@@ -59,7 +59,7 @@ def git_date(path):
 		return None
 
 
-#	README の変更履歴を [(下限, 上限, [要約…])] で返す。「- V2.6〜V2.9 (…)」の
+#	README の変更履歴を [(下限, 上限, [要約…])] で返す。「- v2.6〜v2.9」の
 #	ような範囲の項は下限と上限が異なる。各項目は最初の一文だけ
 def readme_notes():
 	notes = {}
@@ -68,7 +68,7 @@ def readme_notes():
 			lines = f.read().split('\n')
 	except OSError:
 		return []
-	head = re.compile(r'^- V(\d+(?:\.\d+)+)(?:〜V(\d+(?:\.\d+)+))?')
+	head = re.compile(r'^- [Vv](\d+(?:\.\d+)+)(?:〜[Vv](\d+(?:\.\d+)+))?')
 	cur = None
 	items = []
 
