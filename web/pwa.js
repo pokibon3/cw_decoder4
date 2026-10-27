@@ -19,7 +19,9 @@
 //	デコーダの scope は ./ ではなく index.html にしてある。./ だと書き込みツール
 //	(flasher/) とスコープビューア (scope/) までデコーダのアプリの範囲に入り、
 //	デコーダを入れたあとはその 2 つをインストールできなくなる (Chrome は
-//	インストール済みアプリの範囲内のページにはインストールを出さない)
+//	インストール済みアプリの範囲内のページにはインストールを出さない)。
+//	その代わり …/cw_decoder4/ で開いたページは範囲外になり、インストールが
+//	出ない。index.html の先頭で index.html 付きの URL に置き換えている
 //
 export function setupPwa(btn, helpUrl) {
 	if ('serviceWorker' in navigator && location.protocol !== 'file:') {

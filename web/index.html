@@ -7,6 +7,13 @@
      localhost のとき app.js 側でクエリを付けて外しているが、入口である
      この index.html 自体はそれができないのでヘッダで指定する -->
 <meta http-equiv="Cache-Control" content="no-cache, must-revalidate">
+<!-- アプリの scope は index.html (pwa.js 参照)。…/cw_decoder4/ で開くと
+     scope の外になり、Chrome がインストールを出さない (「インストール」が
+     説明を開くだけになる) ので、index.html を付けた URL に置き換える -->
+<script>
+if (location.pathname.endsWith('/') && location.protocol !== 'file:')
+  location.replace('index.html' + location.search + location.hash);
+</script>
 <title>CW Decoder 4</title>
 <link rel="manifest" href="manifest.webmanifest">
 <meta name="theme-color" content="#0b0f14">
