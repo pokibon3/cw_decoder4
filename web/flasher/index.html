@@ -103,18 +103,21 @@ a { color: var(--accent); }
 </div>
 
 <div class="card">
-  <h2>2. 書き込む内容</h2>
+  <h2>2. バージョン</h2>
   <div class="row">
-    <label class="dim">バージョン</label>
     <select id="selVer" disabled><option>読み込み中…</option></select>
     <span id="verWarn" class="warn"></span>
   </div>
   <ul id="notes"></ul>
+</div>
+
+<div class="card">
+  <h2>3. 書き込み設定</h2>
   <div class="row">
     <fieldset>
       <legend>パネル (LCD)</legend>
       <label class="opt"><input type="radio" name="panel" value="ST7789"> ST7789</label>
-      <label class="opt"><input type="radio" name="panel" value="ILI9341"> ILI9341</label>
+      <label class="opt"><input type="radio" name="panel" value="ILI9341" checked> ILI9341</label>
       <span id="panelHint" class="dim"></span>
     </fieldset>
   </div>

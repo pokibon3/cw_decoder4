@@ -240,7 +240,8 @@ async function detectDevice() {
 	} finally {
 		reading = false;
 	}
-	if (device.panel) document.querySelector(`input[name=panel][value=${device.panel}]`).checked = true;
+	// 読み取れなかったときは ILI9341 を既定にする
+	document.querySelector(`input[name=panel][value=${device.panel || 'ILI9341'}]`).checked = true;
 	setState();
 	showVersion();
 	updateButtons();
