@@ -20,6 +20,7 @@
 #include "version.h"
 #include "clock.h"
 #include "scopelog.h"
+#include "rawcap.h"
 #include "touchcal.h"
 
 #define STATUS_H 27
@@ -1176,6 +1177,9 @@ static void poll_touch(void)
 void display_update(void)
 {
 	scopelog_poll();                // ログ送出 (Core 1、非ブロッキング)
+#if RAWCAP
+	rawcap_poll();                  // 診断ビルドのみ (rawcap.h)
+#endif
 	if (!visible) {
 		// 他画面表示中: 受信文字だけグリッドへ取り込む (描画しない)
 		uint8_t ch;

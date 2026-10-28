@@ -8,6 +8,7 @@
 #include <soc/soc_caps.h>
 #include "audio.h"
 #include "dsp.h"
+#include "rawcap.h"
 
 #define AUDIO_OVERSAMPLE 4
 #define AUDIO_ADC_SAMPLE_RATE (DSP_SAMPLE_RATE * AUDIO_OVERSAMPLE)
@@ -83,10 +84,12 @@ size_t audio_read(uint16_t *dst, size_t n)
 			if (result->type1.channel != ADC_CHANNEL_7) continue;
 			uint16_t v = result->type1.data;
 			if (v <= 4 || v >= 4090) audio_clips++;   // ハードクリップ検出
+			RAWCAP_SAMPLE(v);                         // 診断ビルドのみ (rawcap.h)
 			sum += v;
 			if (++sum_count == AUDIO_OVERSAMPLE) {
 				dst[produced++] = (uint16_t)((sum + AUDIO_OVERSAMPLE / 2) /
 				                             AUDIO_OVERSAMPLE);
+				RAWCAP_DECIMATED(dst[produced - 1]);  // 診断ビルドのみ
 				sum = 0;
 				sum_count = 0;
 				if (produced == n) break;

@@ -52,6 +52,7 @@
 #include "netsync.h"
 #include "fwupdate.h"
 #include "scopelog.h"
+#include "rawcap.h"
 #include "touchcal.h"
 
 const char FW_BUILD[] = __DATE__ " " __TIME__;
@@ -235,7 +236,11 @@ static void touchcal_escape(void)
 void setup()
 {
 	Serial.setTxBufferSize(4096);   // スコープログ用 (送出側は非ブロッキング)
+#if RAWCAP
+	Serial.begin(RAWCAP_BAUD);      // 診断ビルド: 生サンプルの連続送出用 (rawcap.h)
+#else
 	Serial.begin(115200);
+#endif
 	pinMode(PIN_BUTTON, INPUT_PULLUP);
 
 #if TOUCH_DIAG
