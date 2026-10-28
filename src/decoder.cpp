@@ -110,6 +110,7 @@ static uint32_t lowtimesavg = 60;           // 起動時は hightimesavg と同�
 // 長さ (ms) のまま持つ。EMA 係数も 1/3 ではなく 1/4 にしてシフトで済ませる。
 #define GAP_UNIT_EMA_SHIFT 2                // EMA 係数 1/4
 static uint8_t nb_acc = 0;          // ノイズブランカの積分値 (0..nb_max)
+static uint8_t nb_hi_run = 0;       // realstate が HIGH の連続ブロック数
 
 static char code[20];
 static uint16_t stop_flag = KEY_LOW;
@@ -444,6 +445,7 @@ void decoder_init(void)
 	dec_ms = 0;
 	dec_samples = 0;
 	nb_acc = 0;
+	nb_hi_run = 0;
 	starttimehigh = 0;
 	startttimelow = 0;
 	code_pre_gap = 0;
@@ -638,8 +640,20 @@ static void key_step(void)
 		// 「長い無音のあとは即座に ON」の特例をここで使うと、その要素だけ
 		// 立ち上がりが遅れず立ち下がりだけ遅れるため n ブロック (20WPM で
 		// 22ms = 0.35単位) 長く測られ、文字群の先頭ごとに速度推定が上振れする
+		//
+		// ただし HIGH から下がりかけている途中は、ON が n ブロック続くまで
+		// カウンタを戻さない。符号内の隙間にトーン状のノイズが 2〜4 ブロック
+		// ずつ立つと、上下カウンタでは 0 まで下がりきる前に押し戻され、隙間が
+		// 埋まって短点 2 つが 1 本になる (実機入力で HAVING の I が T。隙間
+		// 45ms の中で realstate は 3 回 OFF になっていた)。n ブロック続く ON は
+		// 本物の再開とみなして、カウンタを満杯へ戻す
+		nb_hi_run = (realstate == KEY_HIGH) ? (uint8_t)(nb_hi_run + (nb_hi_run < 255)) : 0;
 		if (realstate == KEY_HIGH) {
-			if (nb_acc < (uint8_t)n) nb_acc++;
+			if (filteredstate == KEY_HIGH && nb_acc < (uint8_t)n) {
+				if (nb_hi_run >= (uint8_t)n) nb_acc = (uint8_t)n;
+			} else if (nb_acc < (uint8_t)n) {
+				nb_acc++;
+			}
 		} else if (nb_acc > 0) {
 			nb_acc--;
 		}
