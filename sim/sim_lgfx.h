@@ -82,6 +82,14 @@ public:
 	bool init_auto(void) { return init(); }
 	// About 画面に出る名前。画面写真を実機と同じ表記にするため ST7789 を名乗る
 	const char *panel_name(void) const { return "ST7789"; }
+	// 校正していないときの四隅の生値 (生値 = 画素座標なので設定範囲そのまま)
+	void touch_default(uint16_t *p) const {
+		auto c = touch()->config();
+		p[0] = c.x_min;  p[1] = c.y_min;
+		p[2] = c.x_min;  p[3] = c.y_max;
+		p[4] = c.x_max;  p[5] = c.y_min;
+		p[6] = c.x_max;  p[7] = c.y_max;
+	}
 	Panel_sim *sim_panel(void) { return &_panel_instance; }
 };
 
@@ -206,6 +214,7 @@ public:
 		return ok;
 	}
 	const char *panel_name(void) const { return LGFX_SimDevice::panel_name(); }
+	void touch_default(uint16_t *p) const { LGFX_SimDevice::touch_default(p); }
 	Panel_sim *sim_panel(void) { return LGFX_SimDevice::sim_panel(); }
 	void setBrightness(uint8_t b) { LGFX_SimDevice::setBrightness(b); }
 

@@ -72,19 +72,15 @@ static void wait_release(LGFX *lcd)
 	}
 }
 
-//	現在の設定 (= lgfx_config.h の x_min/x_max/y_min/y_max) から
-//	Panel_Device::touchCalibrate() と同じ並びの校正値を作る
+//	校正していないときの既定値 (lgfx_config.h のパネルごとの四隅の生値)。
+//	Panel_Device::touchCalibrate() と同じ並び
 static void params_default(LGFX *lcd, uint16_t *p)
 {
 	if (lcd->touch() == nullptr) {
 		memset(p, 0, PARAM_BYTES);
 		return;
 	}
-	auto cfg = lcd->touch()->config();
-	p[0] = cfg.x_min;  p[1] = cfg.y_min;
-	p[2] = cfg.x_min;  p[3] = cfg.y_max;
-	p[4] = cfg.x_max;  p[5] = cfg.y_min;
-	p[6] = cfg.x_max;  p[7] = cfg.y_max;
+	lcd->touch_default(p);
 }
 
 static bool params_read(uint16_t *p)

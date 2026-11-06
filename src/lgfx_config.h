@@ -37,33 +37,46 @@ class LGFX : public lgfx::LGFX_Device {
 	// パネルの回転オフセットを打ち消した後のタッチの向き (ST7789 実機基準)
 	static constexpr uint8_t TOUCH_ROT_BASE = 2;
 
-	// タッチの既定の補正値 (XPT2046 の生値。SETUP のタッチパネル調整を
-	// していないときに使う)。x はタッチ素子の素の向きの短辺 (画面の縦方向)
-	struct TouchRange { uint16_t x_min, x_max, y_min, y_max; };
-	// ILI9341 基板の値 (従来の既定)
-	static constexpr TouchRange TOUCH_ILI9341 = { 300, 3900, 3700, 200 };
+	// タッチの既定の補正値 (SETUP のタッチパネル調整をしていないときに使う)。
+	// setTouchCalibrate() に渡す並びの四隅の生値で、座標系はタッチ素子の
+	// 素の向き: index i -> x = (i>>1)&1 ? 右端 : 左端 / y = i&1 ? 下端 : 上端。
+	// x は短辺 (横画面の縦方向。右端 = 横画面の下端)
+	typedef uint16_t TouchCorners[8];
+	// ILI9341 基板の値 (従来の既定。x 300〜3900 / y 3700〜200 の長方形)
+	static constexpr TouchCorners TOUCH_ILI9341 =
+		{ 300, 3700, 300, 200, 3900, 3700, 3900, 200 };
 	// ST7789 基板の値。実機で 2 回校正した四隅の生値の平均
 	// (1226,2886 1439,44 4003,3071 4095,229 / 1140,2994 1406,43 3971,3147 4095,196)。
-	// ILI9341 の値のままだと短辺方向が約 1000 ずれ、触った位置より下で反応した
-	static constexpr TouchRange TOUCH_ST7789 = { 1300, 4040, 3030, 130 };
+	// 四隅は長方形ではなく平行四辺形で、左右の辺の x が上下で約 240 違う。
+	// 長方形に丸めると横画面の左下で反応位置が下へずれ、下段のボタンが
+	// 画面外 (y >= 240) 扱いになって押せなかった。
+	// 4 隅目は外挿が 4095 で頭打ちになっているので、平行四辺形の残りの
+	// 頂点 (隅1 + 隅2 - 隅0) から求めた (y は実測の平均 213 と一致する)
+	static constexpr TouchCorners TOUCH_ST7789 =
+		{ 1183, 2940, 1423, 44, 3987, 3109, 4227, 213 };
+	const uint16_t*     _touch_default = TOUCH_ST7789;
 
 	// 使うパネルを決めて初期化する。パネルの offset_rotation を打ち消す値を
 	// タッチへ入れてから init() するので、どちらのパネルでもタッチの向きは同じ。
-	// 補正の既定値もパネルごとに入れ、setTouch() で LovyanGFX の補正行列を
-	// 作り直す (行列はコンストラクタの setTouch() 時点の値で作られているため)
-	bool use_panel(lgfx::Panel_LCD* p, const char* name, const TouchRange& r) {
+	// 補正は init() の後に四隅の既定値で入れ直す (LovyanGFX は setTouch() の
+	// 時点で x_min/x_max/y_min/y_max の長方形から行列を作るため)。
+	// SETUP で校正済みなら、この後 touchcal_load() が上書きする
+	bool use_panel(lgfx::Panel_LCD* p, const char* name, const uint16_t* def) {
 		auto cfg = _touch_instance.config();
 		cfg.offset_rotation =
 			(uint8_t)((TOUCH_ROT_BASE + 4 - p->config().offset_rotation) & 3);
-		cfg.x_min = r.x_min;
-		cfg.x_max = r.x_max;
-		cfg.y_min = r.y_min;
-		cfg.y_max = r.y_max;
 		_touch_instance.config(cfg);
 		p->setTouch(&_touch_instance);
 		_panel_name = name;
+		_touch_default = def;
 		setPanel(p);
-		return init();
+		if (!init()) {
+			return false;
+		}
+		uint16_t c[8];
+		touch_default(c);
+		setTouchCalibrate(c);
+		return true;
 	}
 
 	// 両コントローラ共通のパネル設定 (解像度は同一)。
@@ -117,12 +130,13 @@ public:
 		{
 			// タッチ (XPT2046, LCDとは別SPI)
 			// キャリブレーション値はボード個体差あり。既定値はパネルごとに
-			// use_panel() で入れ直す (TOUCH_ST7789 / TOUCH_ILI9341)
+			// use_panel() で四隅の値を入れる (TOUCH_ST7789 / TOUCH_ILI9341)。
+			// ここの範囲は init() 前の仮の値 (ST7789 の四隅を囲む長方形)
 			auto cfg = _touch_instance.config();
-			cfg.x_min = TOUCH_ST7789.x_min;
-			cfg.x_max = TOUCH_ST7789.x_max;
-			cfg.y_min = TOUCH_ST7789.y_min;
-			cfg.y_max = TOUCH_ST7789.y_max;
+			cfg.x_min = 1300;
+			cfg.x_max = 4040;
+			cfg.y_min = 3030;
+			cfg.y_max = 130;
 			cfg.pin_int = -1;   // INT配線の個体差に依存しないようSPIポーリングで検出
 			cfg.bus_shared = false;
 			// offset_rotation は init_auto() がパネルに合わせて入れ直す
@@ -167,6 +181,9 @@ public:
 	}
 
 	const char* panel_name(void) const { return _panel_name; }
+
+	// 校正していないときの四隅の生値 (setTouchCalibrate() の並び)
+	void touch_default(uint16_t* p) const { memcpy(p, _touch_default, sizeof(TouchCorners)); }
 };
 
 #endif  // CWDEC_SIM
