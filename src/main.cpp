@@ -196,6 +196,63 @@ static void poll_button(void)
 	}
 }
 
+//	画面を押したまま電源を入れ、そのまま押し続けるとタッチ調整を始める。
+//	タッチの既定値が合わない個体 (補正が大きくずれて SETUP ボタンに
+//	届かない) のための入口。押されているかどうかは補正に関係なく判る。
+//	BOOT ボタンは筐体に入れると押せないので、こちらを使う
+#define CAL_HOLD_MS 2000
+
+static bool touch_down(LGFX *lcd)
+{
+	lgfx::touch_point_t tp;
+	return lcd->getTouchRaw(&tp, 1) > 0;
+}
+
+//	押していない状態が続いたら離したとみなす (押している途中の一瞬の
+//	未検出で離したと誤判定しないよう、連続 3 回の未検出で判定する)
+static bool touch_released(LGFX *lcd)
+{
+	for (int i = 0; i < 3; i++) {
+		if (touch_down(lcd)) {
+			return false;
+		}
+		delay(20);
+	}
+	return true;
+}
+
+static void touchcal_hold_start(void)
+{
+	LGFX *lcd = display_lcd();
+	if (!touch_down(lcd)) {
+		return;
+	}
+	lcd->fillScreen(TFT_BLACK);
+	lcd->setFont(&fonts::lgfxJapanGothicP_16);
+	lcd->setTextDatum(lgfx::textdatum_t::middle_center);
+	lcd->setTextColor(TFT_WHITE, TFT_BLACK);
+	lcd->drawString("そのまま押し続けると", 160, 100);
+	lcd->drawString("タッチ調整を始めます", 160, 124);
+
+	uint32_t t0 = millis();
+	while ((millis() - t0) < CAL_HOLD_MS) {
+		if (touch_released(lcd)) {          // 離したら何もしない
+			lcd->setTextDatum(lgfx::textdatum_t::top_left);
+			return;
+		}
+		delay(20);
+	}
+	lcd->fillScreen(TFT_BLACK);
+	lcd->drawString("指を離してください", 160, 112);
+	while (!touch_released(lcd)) {
+		delay(20);
+	}
+	lcd->setTextDatum(lgfx::textdatum_t::top_left);
+	Serial.println("[touch] calibration started by holding the screen at boot");
+	touchcal_run(lcd, true);
+	lcd->fillScreen(TFT_BLACK);
+}
+
 //	タッチ調整でズレて画面が操作できなくなったときの逃げ道。
 //	BOOT ボタンを押したまま電源を入れ、そのまま押し続けると校正値を消す
 #define ESCAPE_HOLD_MS 2000
@@ -250,6 +307,7 @@ void setup()
 
 	display_init();
 	touchcal_escape();              // BOOT 押しっぱなし起動 = 校正値の消去
+	touchcal_hold_start();          // 画面押しっぱなし起動 = タッチ調整
 	{
 		const esp_partition_t *run = esp_ota_get_running_partition();
 		Serial.printf("[boot] v%s build %s  running=%s @0x%06X  heap=%u\n",

@@ -97,6 +97,7 @@ static bool nr_enabled(void)
 static void nr_set(bool on)
 {
 	dsp_set_det_mode(on ? DSP_DET_ALE_AMP : DSP_DET_GOERTZEL);
+	DspFlashGuard guard;            // 書き込み中は ADC DMA を止める (dsp.h)
 	Preferences prefs;
 	if (prefs.begin(NVS_NS_DEC, false)) {
 		prefs.putUChar(NVS_KEY_NR, on ? 1 : 0);

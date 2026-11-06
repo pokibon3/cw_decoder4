@@ -35,6 +35,7 @@
 #include <Preferences.h>
 #include "clock.h"
 #include "display.h"
+#include "dsp.h"
 
 #define SCR_W 320
 #define SCR_H 240
@@ -266,6 +267,7 @@ uint8_t clock_zone(void)
 //	選択中のゾーンは NVS に保存し、次の起動でも同じ国の時刻を出す
 static void zone_save(void)
 {
+	DspFlashGuard guard;            // 書き込み中は ADC DMA を止める (dsp.h)
 	Preferences prefs;
 	if (prefs.begin("cwdec", false)) {
 		prefs.putUChar("zone", zone_sel);
@@ -303,6 +305,7 @@ uint8_t clock_summer_time(void)
 void clock_set_summer_time(uint8_t on)
 {
 	summer_time = on ? 1 : 0;
+	DspFlashGuard guard;            // 書き込み中は ADC DMA を止める (dsp.h)
 	Preferences prefs;
 	if (prefs.begin("cwdec", false)) {
 		prefs.putUChar("summer", summer_time);

@@ -78,6 +78,7 @@ void netsync_clear_wifi(void)
 	ssid = "";
 	pass = "";
 	last_epoch = 0;
+	DspFlashGuard guard;            // 書き込み中は ADC DMA を止める (dsp.h)
 	Preferences prefs;
 	if (prefs.begin(NVS_NS, false)) {
 		prefs.clear();
@@ -90,6 +91,7 @@ void netsync_save_wifi(const char *new_ssid, const char *new_pass)
 {
 	ssid = new_ssid;
 	pass = new_pass;
+	DspFlashGuard guard;            // 書き込み中は ADC DMA を止める (dsp.h)
 	Preferences prefs;
 	if (prefs.begin(NVS_NS, false)) {
 		prefs.putString("ssid", ssid);

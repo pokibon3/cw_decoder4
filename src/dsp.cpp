@@ -1083,6 +1083,22 @@ void dsp_set_paused(uint8_t paused)
 	}
 }
 
+uint8_t dsp_flash_begin(void)
+{
+	if (!dsp_alive || dsp_paused) {
+		return 0;
+	}
+	dsp_set_paused(1);
+	return 1;
+}
+
+void dsp_flash_end(uint8_t token)
+{
+	if (token) {
+		dsp_set_paused(0);
+	}
+}
+
 void dsp_start(void)
 {
 	gate_update_coeff();

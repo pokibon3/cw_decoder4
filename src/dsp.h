@@ -63,6 +63,23 @@ void dsp_step(void);
 // WiFi を起動すると割り込みウォッチドッグでリセットされる。
 // 無線ノイズがデコーダ状態に入らない効果も兼ねる
 void dsp_set_paused(uint8_t paused);
+// NVS などフラッシュを読み書きする間、ADC DMA を止める。
+// フラッシュ操作中はキャッシュが止まり、そこへ ADC DMA の割り込みが入ると、
+// 割り込みからフラッシュ上の ADC ドライバを呼んで落ちる
+// (Guru Meditation: Cache disabled but cached memory region accessed)。
+// DSP を始める前や、WiFi などで既に止めているときは何もしない。
+// 戻り値を dsp_flash_end() に渡す。普通は DspFlashGuard で囲む
+uint8_t dsp_flash_begin(void);
+void dsp_flash_end(uint8_t token);
+#ifdef __cplusplus
+struct DspFlashGuard {
+	uint8_t token;
+	DspFlashGuard(void) : token(dsp_flash_begin()) { }
+	~DspFlashGuard(void) { dsp_flash_end(token); }
+	DspFlashGuard(const DspFlashGuard &) = delete;
+	DspFlashGuard &operator=(const DspFlashGuard &) = delete;
+};
+#endif
 void dsp_set_tone(uint8_t idx);     // 0..4=手動 / DSP_TONE_AUTO=自動
 uint8_t dsp_tone_index(void);
 uint8_t dsp_tone_is_auto(void);

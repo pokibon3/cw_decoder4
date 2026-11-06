@@ -15,4 +15,6 @@
 bool touchcal_saved(void);          // 校正値が NVS にあるか
 bool touchcal_load(LGFX *lcd);      // あれば適用する (起動時に一度)
 void touchcal_reset(LGFX *lcd);     // 校正値を消して既定値へ戻す
-void touchcal_run(LGFX *lcd);       // SETUP から呼ぶ校正画面 (完了で保存)
+// 校正画面 (完了で保存)。SETUP からは direct=false で開始画面から。
+// direct=true は起動時の入口用で、開始画面を飛ばしてすぐ十字を出す
+void touchcal_run(LGFX *lcd, bool direct = false);

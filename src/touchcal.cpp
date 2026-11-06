@@ -5,6 +5,7 @@
 #include <Preferences.h>
 #include <string.h>
 #include "touchcal.h"
+#include "dsp.h"
 
 #define NVS_NS  "cwdec"
 #define NVS_KEY "touchcal"
@@ -83,8 +84,11 @@ static void params_default(LGFX *lcd, uint16_t *p)
 	lcd->touch_default(p);
 }
 
+//	読み書きとも、フラッシュ操作中は ADC DMA を止める (dsp.h の DspFlashGuard)。
+//	SETUP からの校正はデコードを動かしたまま呼ばれる
 static bool params_read(uint16_t *p)
 {
+	DspFlashGuard guard;
 	Preferences prefs;
 	if (!prefs.begin(NVS_NS, false)) {
 		return false;
@@ -99,6 +103,7 @@ static bool params_read(uint16_t *p)
 
 static bool params_write(const uint16_t *p)
 {
+	DspFlashGuard guard;
 	Preferences prefs;
 	if (!prefs.begin(NVS_NS, false)) {
 		Serial.println("[touch] NVS open failed");
@@ -155,6 +160,7 @@ bool touchcal_load(LGFX *lcd)
 
 void touchcal_reset(LGFX *lcd)
 {
+	DspFlashGuard guard;
 	Preferences prefs;
 	if (prefs.begin(NVS_NS, false)) {
 		prefs.remove(NVS_KEY);
@@ -471,7 +477,7 @@ static int ask_keep(LGFX *lcd)
 	}
 }
 
-void touchcal_run(LGFX *lcd)
+void touchcal_run(LGFX *lcd, bool direct)
 {
 	uint16_t before[PARAM_N];
 	if (!params_read(before)) {
@@ -479,18 +485,26 @@ void touchcal_run(LGFX *lcd)
 	}
 
 	for (;;) {
-		int act = ask_start(lcd);
-		if (act == START_CANCEL) {
-			return;
-		}
-		if (act == START_RESET) {
-			touchcal_reset(lcd);
-			params_default(lcd, before);
-			continue;
+		// direct: 起動時に画面を押し続けて入ったとき。補正が大きくずれていると
+		// 開始画面のボタンも押せないので、開始画面を出さずにすぐ十字を出す
+		// (十字の測定は生値なので補正に関係なく測れる)
+		if (!direct) {
+			int act = ask_start(lcd);
+			if (act == START_CANCEL) {
+				return;
+			}
+			if (act == START_RESET) {
+				touchcal_reset(lcd);
+				params_default(lcd, before);
+				continue;
+			}
 		}
 
 		uint16_t p[PARAM_N];
 		if (!sample_corners(lcd, p)) {
+			if (direct) {
+				return;             // 時間切れ: 何も変えずに起動を続ける
+			}
 			continue;               // 時間切れ: 何も変えずに開始画面へ
 		}
 		Serial.printf("[touch] raw corners %u,%u %u,%u %u,%u %u,%u\n",

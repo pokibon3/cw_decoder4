@@ -35,6 +35,7 @@
 #include "clock.h"
 #include "display.h"
 #include "version.h"
+#include "dsp.h"
 
 #define NVS_NS "cwdec"
 #define NVS_KEY "upd_chk"
@@ -91,6 +92,7 @@ bool fwupdate_check_enabled(void)
 void fwupdate_set_check_enabled(bool on)
 {
 	check_enabled = on;
+	DspFlashGuard guard;            // 書き込み中は ADC DMA を止める (dsp.h)
 	Preferences prefs;
 	if (prefs.begin(NVS_NS, false)) {
 		prefs.putUChar(NVS_KEY, on ? 1 : 0);
