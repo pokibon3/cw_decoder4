@@ -45,15 +45,16 @@ class LGFX : public lgfx::LGFX_Device {
 	// ILI9341 基板の値 (従来の既定。x 300〜3900 / y 3700〜200 の長方形)
 	static constexpr TouchCorners TOUCH_ILI9341 =
 		{ 300, 3700, 300, 200, 3900, 3700, 3900, 200 };
-	// ST7789 基板の値。実機で 2 回校正した四隅の生値の平均
-	// (1226,2886 1439,44 4003,3071 4095,229 / 1140,2994 1406,43 3971,3147 4095,196)。
-	// 四隅は長方形ではなく平行四辺形で、左右の辺の x が上下で約 240 違う。
-	// 長方形に丸めると横画面の左下で反応位置が下へずれ、下段のボタンが
-	// 画面外 (y >= 240) 扱いになって押せなかった。
-	// 4 隅目は外挿が 4095 で頭打ちになっているので、平行四辺形の残りの
-	// 頂点 (隅1 + 隅2 - 隅0) から求めた (y は実測の平均 213 と一致する)
+	// ST7789 基板の値。2026-11 に ST7789 の 3 台を実測した
+	// (タッチ調整の内側 4 点を各 3 回)。2 台はほぼ同じ特性で
+	// (四隅 300,3825 324,163 3844,3799 3868,137 / 249,3790 297,107 3798,3810 3846,127)、
+	// その平均を既定値にした (2 台とも誤差は約 2 px)。
+	// 残る 1 台は傾きが 2 割小さく斜めにもゆがんでいて
+	// (1165,2922 1469,27 3941,3091 4244,196)、既定値から約 70 px ずれる。
+	// そういう個体は SETUP のタッチパネル調整で合わせる。
+	// v3.4〜v3.8 の既定値 (x 1300〜4040 / y 3030〜130) はその 1 台の値だった
 	static constexpr TouchCorners TOUCH_ST7789 =
-		{ 1183, 2940, 1423, 44, 3987, 3109, 4227, 213 };
+		{ 275, 3808, 311, 135, 3821, 3805, 3857, 132 };
 	const uint16_t*     _touch_default = TOUCH_ST7789;
 
 	// 使うパネルを決めて初期化する。パネルの offset_rotation を打ち消す値を
@@ -181,6 +182,21 @@ public:
 	}
 
 	const char* panel_name(void) const { return _panel_name; }
+
+	// タッチ座標を画面内に収める。補正の誤差で画面の端を押したときに
+	// 画面の外 (例: 横画面で y >= 240) と判定され、端のボタンが反応しないのを防ぐ
+	using lgfx::LGFX_Device::getTouch;
+	template <typename T>
+	uint_fast8_t getTouch(T* x, T* y, uint_fast8_t index = 0) {
+		T tx, ty;
+		uint_fast8_t n = lgfx::LGFX_Device::getTouch(&tx, &ty, index);
+		if (n) {
+			const T w = (T)width(), h = (T)height();
+			if (x) *x = (tx < 0) ? 0 : (tx >= w) ? (w - 1) : tx;
+			if (y) *y = (ty < 0) ? 0 : (ty >= h) ? (h - 1) : ty;
+		}
+		return n;
+	}
 
 	// 校正していないときの四隅の生値 (setTouchCalibrate() の並び)
 	void touch_default(uint16_t* p) const { memcpy(p, _touch_default, sizeof(TouchCorners)); }

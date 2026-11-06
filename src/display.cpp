@@ -1098,6 +1098,15 @@ static void poll_touch(void)
 	}
 #endif
 	if (now && !touching) {
+		// タッチのずれを調べるときのために、押した位置を出す
+		// (USB 書き込みツールのモニターで見られる)
+		{
+			lgfx::touch_point_t tp;
+			if (lcd.getTouchRaw(&tp, 1)) {
+				Serial.printf("[touch] x=%d y=%d raw=%d,%d\n",
+				              (int)x, (int)y, (int)tp.x, (int)tp.y);
+			}
+		}
 		uint32_t t = millis();
 		if ((t - last_act_ms) >= 250) {
 			if (y < TEXT_TOP + 8) {

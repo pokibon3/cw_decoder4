@@ -224,10 +224,15 @@ static bool sample_point(LGFX *lcd, int32_t *rx, int32_t *ry)
 	return true;
 }
 
+//	四隅は画面の外側への外挿なので、生値の範囲 (0〜4095) を超えることがある。
+//	4095 で切ると隅の値が実際より小さくなり、その隅ほどずれる (実機で約 13 px)。
+//	上は切らずに保存する (uint16_t に収まる 8191 まで)。負は保存できないので 0
+#define RAW_EXTRAP_MAX 8191.0f
+
 static uint16_t clamp_raw(float v)
 {
 	if (v < 0.0f) return 0;
-	if (v > 4095.0f) return 4095;
+	if (v > RAW_EXTRAP_MAX) return (uint16_t)RAW_EXTRAP_MAX;
 	return (uint16_t)(v + 0.5f);
 }
 
@@ -288,6 +293,13 @@ static bool sample_corners(LGFX *lcd, uint16_t *p)
 	}
 
 	if (ok) {
+		// 個体差を調べるときのために、外挿前の実測値 (内側 4 点) も出す。
+		// 四隅の値は 0〜4095 で頭打ちになるので、こちらが元データになる
+		Serial.printf("[touch] inset %d,%d %d,%d", xl, yt, xr, yb);
+		for (int i = 0; i < 4; i++) {
+			Serial.printf(" %ld,%ld", (long)sx[i], (long)sy[i]);
+		}
+		Serial.printf(" (%dx%d)\n", w, h);
 		extrapolate(sx, xl, xr, yt, yb, w, h, p, 0);
 		extrapolate(sy, xl, xr, yt, yb, w, h, p, 1);
 	}

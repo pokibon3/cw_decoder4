@@ -675,6 +675,13 @@ bool clock_zone_touch(int32_t tx, int32_t ty)
 	}
 	int row = (ty - ZONE_Y) / ZONE_ROW_H;
 	int col = (tx - 1) / ZONE_W;
+	// 枠は y 238 まで、x 318 まで。画面の端 (239 / 319) は端の枠に含める
+	if (row >= CLOCK_ZONE_N / CLOCK_ZONE_COLS) {
+		row = CLOCK_ZONE_N / CLOCK_ZONE_COLS - 1;
+	}
+	if (col >= CLOCK_ZONE_COLS) {
+		col = CLOCK_ZONE_COLS - 1;
+	}
 	if (row < 0 || row >= CLOCK_ZONE_N / CLOCK_ZONE_COLS ||
 	    col < 0 || col >= CLOCK_ZONE_COLS) {
 		return false;
