@@ -645,6 +645,9 @@ function testSendOnce(count) {
 	testRun = { text, marks, ref: wpm, rate: 1, pos0: 0, tc: ctx.currentTime, started: ctx.currentTime,
 	            dur: buf.duration, count };
 	cmpStartRun(text, marks, unit, count === 1);
+	// LOOP の 2 周目以降はデコード結果を改行する。前の周の最後の文字は
+	// 周の区切り (開始 + BOUND 秒) までに届くので、改行もそこで入れる
+	if (count > 1) setTimeout(() => window.cwScope?.newline(), BOUND * 1000);
 	showTestState(count);
 	if (!testRaf) testRaf = requestAnimationFrame(testTick);
 }
@@ -1265,7 +1268,7 @@ function draw() {
       ctx.textBaseline = 'top';
       ctx.textAlign = 'center';
       for (const ch of chars) {
-        if (ch.ch === ' ') continue;                  // 語間は描かない
+        if (ch.ch === ' ' || ch.ch === '\n') continue;   // 語間と周の区切りは描かない
         if (ch.col < start - 2 || ch.col > end + 2) continue;
         ctx.fillText(ch.ch, m.x0 + (ch.col - start) * m.sx + m.sx / 2, 1);
       }
@@ -1401,7 +1404,7 @@ function buildAnalysis() {
            '  掃引=' + mc.toFixed(1) + 'ms/列');
   out.push('# 選択 col ' + r.a + '..' + r.b + '  ' + n + '列 / ' + (n * mc / 1000).toFixed(2) + '秒' +
            (ca && cb ? '  t=' + ca.t + '..' + cb.t + 'ms' : ''));
-  const cs = chars.filter(c => c.col >= r.a - 4 && c.col <= r.b + 4);
+  const cs = chars.filter(c => c.col >= r.a - 4 && c.col <= r.b + 4 && c.ch !== '\n');
   out.push('# 文字: ' + (cs.length ? cs.map(c => (c.ch === ' ' ? '_' : c.ch) + '(' + c.col + ')').join(' ') : '(なし)'));
 
   const es = elems.filter(e => e.col >= r.a && e.col <= r.b);
@@ -1552,6 +1555,16 @@ function updateStat() {
 //	デコード結果の「クリア」はこの列より後の文字だけを表示にする
 //	(オシロ上の文字や保存するログは消さない)
 let textClearCol = -Infinity;
+
+//	LOOP の周の区切りでデコード結果を改行する (送信側から呼ばれる)。
+//	オシロや保存するログには出ない (chars の中の印だけ)
+window.cwScope = {
+  newline() {
+    const last = chars[chars.length - 1];
+    if (!last || last.ch === '\n' || last.col <= textClearCol) return;   // 空行は作らない
+    chars.push({ col: maxCol ?? last.col, ch: '\n' });
+  },
+};
 document.getElementById('textClear').onclick = () => {
   textClearCol = maxCol ?? -Infinity;
   window.cwTester?.clear();
