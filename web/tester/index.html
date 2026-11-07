@@ -124,7 +124,7 @@ label { color: var(--dim); display: inline-flex; align-items: center; gap: 5px; 
 #fft { display: block; width: 100%; height: 110px; border-radius: 4px; }
 #text {
   background: #05080d; border: 1px solid var(--line); border-radius: 8px;
-  padding: 6px 12px; height: 80px; overflow-y: auto;    /* 3 行分で固定 (文字が増えたらスクロール) */
+  padding: 6px 12px; height: 80px; overflow-y: auto;    /* 狭い画面では 3 行分 (文字が増えたらスクロール) */
   font: 15px/1.5 "SF Mono", Menlo, Consolas, monospace;
   letter-spacing: .08em; color: #adff2f; word-break: break-all; white-space: pre-wrap;
 }
@@ -140,6 +140,14 @@ label { color: var(--dim); display: inline-flex; align-items: center; gap: 5px; 
 .cols { display: flex; flex-direction: column; gap: 10px; }
 @media (min-width: 1100px) {
   .cols { display: grid; grid-template-columns: minmax(340px, 400px) minmax(0, 1fr); align-items: stretch; }
+  /* 画面の高さに合わせる: 2 列の領域が画面の残りを埋め、右列で余った高さは
+     デコード結果の欄が使う (固定値で詰めると画面の大きさで過不足が出るため)。
+     中身が画面より高いときは縮めずにページごとスクロールする */
+  body { min-height: 100vh; }
+  .cols { flex: 1 0 auto; grid-template-rows: 1fr; }
+  #cmpCard { flex: 1 1 auto; display: flex; flex-direction: column; }
+  /* 基準 0 から伸ばす (auto だと文字が増えるたびに欄が伸びてスクロールしない) */
+  #cmpCard #text { flex: 1 1 0; height: auto; min-height: 80px; }
 }
 /* 送信側とスコープ側の区切り */
 .side { display: flex; flex-direction: column; gap: 6px; padding: 6px 10px 8px; border-radius: 10px; border: 1px solid; }
@@ -272,7 +280,7 @@ label { color: var(--dim); display: inline-flex; align-items: center; gap: 5px; 
   <pre id="analysis" style="display:none"></pre>
 </div>
 
-<div class="card">
+<div class="card" id="cmpCard">
   <h2>送信文 (赤 = 実機がデコードできなかった文字)
     <span class="grow"></span>
     <span>認識率 <span class="rate" id="rateNow">--</span> <span class="rateN" id="rateNowN"></span></span>
@@ -951,7 +959,7 @@ function drawFft() {
 	g.setTransform(dpr, 0, 0, dpr, 0, 0);
 	g.fillStyle = '#020810';
 	g.fillRect(0, 0, W, H);
-	const x0 = 34, x1 = W - 6, y0 = 6, y1 = H - 18;
+	const x0 = 34, x1 = W - 16, y0 = 6, y1 = H - 18;   // 右は末尾の目盛り (1100) が切れない幅を空ける
 	const hzToX = (hz) => x0 + (hz - FFT_LO) / (FFT_HI - FFT_LO) * (x1 - x0);
 	const dbToY = (db) => y0 + (DB_HI - db) / (DB_HI - DB_LO) * (y1 - y0);
 	g.font = '10px ui-monospace, monospace';
