@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- CW Player: 再生マークと短点・長点 -->
+  <rect width="512" height="512" fill="#0b0f14"/>
+  <path d="M176 112 L384 224 L176 336 Z" fill="#5a96d2" stroke="#5a96d2" stroke-width="24" stroke-linejoin="round"/>
+  <g fill="#fac775">
+    <rect x="112" y="380" width="96" height="36" rx="8"/>
+    <rect x="232" y="380" width="36" height="36" rx="8"/>
+    <rect x="292" y="380" width="96" height="36" rx="8"/>
+  </g>
+</svg>

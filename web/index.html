@@ -140,6 +140,7 @@ button.tp { font-size: 15px; line-height: 1; min-width: 44px; }
 
 <h1>CW Decoder 4
   <a class="manual" href="manual.html">使い方</a>
+  <a class="manual" href="player/" style="margin-left:0" title="音声ファイルとテスト信号を再生するだけのアプリ (実機に聞かせる用)">CW Player</a>
   <a class="manual" href="#" id="btnInstall" hidden style="margin-left:0" title="アプリとしてインストールする (Chrome / Edge)">インストール</a>
 </h1>
 
@@ -175,6 +176,7 @@ button.tp { font-size: 15px; line-height: 1; min-width: 44px; }
     <div class="row">
       <input type="file" id="fileInput" accept="audio/*">
       <span class="grow"></span>
+      <label class="chk" title="繰り返し再生"><input type="checkbox" class="loop"> LOOP</label>
       <label class="chk"><input type="checkbox" id="fileMonitor" checked> モニター音</label>
     </div>
     <div class="row" id="transport">
@@ -192,13 +194,14 @@ button.tp { font-size: 15px; line-height: 1; min-width: 44px; }
   <div class="srcpane" id="pane-test">
     <div class="row">
       <label class="chk">WPM <input type="range" id="tWpm" min="8" max="45" value="20"><span id="tWpmV" class="metric">20</span></label>
-      <label class="chk">トーン <input type="range" id="tHz" min="450" max="1050" step="10" value="700"><span id="tHzV" class="metric">700</span>Hz</label>
-      <label class="chk">S/N <input type="range" id="tSnr" min="-6" max="40" value="15"><span id="tSnrV" class="metric">15</span>dB</label>
+      <label class="chk">トーン <input type="range" id="tHz" min="450" max="1050" step="10" value="600"><span id="tHzV" class="metric">600</span>Hz</label>
+      <label class="chk">S/N <input type="range" id="tSnr" min="-15" max="40" value="15"><span id="tSnrV" class="metric">15</span>dB</label>
     </div>
     <div class="row">
-      <input type="text" id="tText" value="CQ CQ DE JA1QRP JA1QRP K" style="flex:1 1 300px;padding:0 8px;background:#0a121c;cursor:text">
+      <input type="text" id="tText" value="ALICE WAS BEGINNING TO GET VERY TIRED OF SITTING BY HER SISTER ON THE BANK, AND OF HAVING NOTHING TO DO: ONCE OR TWICE SHE HAD PEEPED INTO THE BOOK" style="flex:1 1 300px;padding:0 8px;background:#0a121c;cursor:text">
       <button id="testPlay" class="primary">送信</button>
       <button id="testStop" disabled>停止</button>
+      <label class="chk" title="繰り返し送信"><input type="checkbox" class="loop"> LOOP</label>
       <label class="chk"><input type="checkbox" id="testMonitor"> モニター音</label>
     </div>
   </div>

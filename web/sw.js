@@ -3,7 +3,7 @@
 //
 //	常にネットワークから取り直し (更新はすぐ反映される)、取れないとき
 //	(オフライン) だけ保存しておいた分を返す。保存するのはアプリ本体だけで、
-//	書き込みツール (flasher/)・スコープビューア (scope/) は各自のワーカーが、ファームウェアの配布物 (firmware/) はネットワークに任せる。
+//	書き込みツール (flasher/)・スコープビューア (scope/)・CW Player (player/)・CW Tester (tester/) は各自のワーカーが、ファームウェアの配布物 (firmware/) はネットワークに任せる。
 //	ASSETS を増減したら CACHE の番号を上げること (古い保存分を消すため)。
 //
 const CACHE = 'cwdec-decoder-1';
@@ -22,7 +22,7 @@ const ASSETS = [
 ];
 // 同じオリジンの別アプリ・配布物 (このワーカーでは触らない)
 const ROOT = new URL('./', self.registration.scope).pathname;
-const SKIP = ['flasher/', 'scope/', 'firmware/'].map((p) => ROOT + p);
+const SKIP = ['flasher/', 'scope/', 'player/', 'tester/', 'firmware/'].map((p) => ROOT + p);
 
 self.addEventListener('install', (e) => {
 	e.waitUntil(caches.open(CACHE).then((c) => c.addAll(ASSETS)).then(() => self.skipWaiting()));

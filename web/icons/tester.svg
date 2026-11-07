@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- CW Tester: 再生マークとエンベロープ・キー判定バー -->
+  <rect width="512" height="512" fill="#020810"/>
+  <path d="M120 96 L232 160 L120 224 Z" fill="#5a96d2" stroke="#5a96d2" stroke-width="20" stroke-linejoin="round"/>
+  <g stroke="#1c2a3c" stroke-width="4">
+    <path d="M100 280h312M100 350h312"/>
+  </g>
+  <path d="M100 380 L130 380 L140 270 L200 270 L210 380 L240 380 L250 270 L270 270 L280 380 L310 380 L320 270 L380 270 L390 380 L412 380"
+        stroke="#fac775" stroke-width="14" fill="none" stroke-linejoin="round" stroke-linecap="round"/>
+  <g fill="#5adc78">
+    <rect x="140" y="404" width="60" height="18" rx="4"/>
+    <rect x="250" y="404" width="20" height="18" rx="4"/>
+    <rect x="320" y="404" width="60" height="18" rx="4"/>
+  </g>
+  <rect x="290" y="112" width="120" height="96" rx="10" fill="none" stroke="#eb5a50" stroke-width="14"/>
+  <text x="350" y="182" font-family="Helvetica, Arial, sans-serif" font-size="64" font-weight="700" fill="#eb5a50" text-anchor="middle">%</text>
+</svg>

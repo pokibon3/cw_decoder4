@@ -1,0 +1,1644 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<!--
+	CW Tester — CW Player (送信) とスコープビューア (実機の受信) を 1 枚にまとめたもの。
+	テスト信号をスピーカーから実機に聞かせ、実機がスコープログで返すデコード文字と
+	送った文字を照合して、取りこぼした文字を赤で示し、認識率を出す。
+	元は web/player/ と web/scope/。両方を直したときはこちらにも反映すること
+-->
+<title>CW Tester</title>
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#0b0f14">
+<link rel="icon" type="image/png" href="../icons/tester-192.png">
+<link rel="apple-touch-icon" href="../icons/tester-192.png">
+<style>
+:root {
+  --bg: #0b0f14;
+  --panel: #111823;
+  --line: #28374b;
+  --tx: #d8dee6;
+  --dim: #8b94a3;
+  --accent: #5a96d2;
+  --amber: #fac775;
+  --green: #5adc78;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0; padding: 8px 10px;
+  background: var(--bg); color: var(--tx);
+  font: 13px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", "Hiragino Sans", "Noto Sans JP", sans-serif;
+  display: flex; flex-direction: column; gap: 7px; min-height: 100%;
+}
+h1 { font-size: 14px; margin: 0; font-weight: 600; letter-spacing: .04em; display: flex; align-items: baseline; gap: 8px; }
+h1 .link {
+  font-size: 12px; font-weight: 400; color: var(--accent);
+  border: 1px solid var(--line); border-radius: 5px; padding: 2px 10px; text-decoration: none;
+}
+h1 .link { margin-left: auto; }
+h1 .link:hover { border-color: var(--accent); }
+.card {
+  background: var(--panel); border: 1px solid var(--line);
+  border-radius: 8px; padding: 7px 10px;
+}
+.row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.row + .row { margin-top: 6px; }
+.grow { flex: 1 1 auto; }
+button, input[type=file]::file-selector-button, input[type=text], textarea {
+  font: inherit; color: var(--tx); background: #1a2331;
+  border: 1px solid var(--line); border-radius: 6px;
+  height: 32px; padding: 0 12px; cursor: pointer;
+}
+button, input[type=file]::file-selector-button {
+  display: inline-flex; align-items: center; justify-content: center;
+}
+button:hover:not(:disabled) { border-color: #47607f; }
+button:disabled { opacity: .4; cursor: default; }
+button.primary { background: #16324a; color: #cfe7ff; }
+label.chk { display: inline-flex; align-items: center; gap: 5px; color: var(--dim); cursor: pointer; }
+input[type=range] { accent-color: var(--accent); }
+.metric { font: 600 13px/1 ui-monospace, "SF Mono", Menlo, monospace; color: var(--amber); }
+
+.tabs { display: flex; gap: 4px; }
+.tabs button { border-radius: 6px 6px 0 0; border-bottom-color: transparent; }
+.tabs button[aria-selected=true] { background: #16324a; border-color: #2f6592; border-bottom-color: #2f6592; color: #cfe7ff; }
+.srcpane { display: none; }
+.srcpane.first { padding-top: 12px; border-top: 1px solid var(--line); margin-top: -1px; }
+.srcpane.active { display: block; }
+/* スライダー: ラベル / つまみ / 値 の 3 列にそろえる */
+.sl { display: grid; grid-template-columns: 56px minmax(0, 1fr) 76px; gap: 14px 12px; align-items: center; color: var(--dim); }
+.sl input[type=range] { width: 100%; margin: 0; }
+/* 送信電文は残りの高さをすべて使う (左右のペインの高さをそろえるため) */
+#playerCard { flex: 1 1 auto; display: flex; flex-direction: column; }
+.srcpane.msg.active { flex: 1 1 auto; display: flex; flex-direction: column; gap: 8px; margin-top: 14px; }
+.srcpane.msg textarea { flex: 1 1 auto; min-height: 140px; }
+
+button.tp { font-size: 15px; line-height: 1; min-width: 44px; }
+textarea {
+  width: 100%; height: auto; min-height: 84px; padding: 6px 8px; resize: vertical;
+  background: #0a121c; cursor: text;
+  font: 15px/1.5 ui-monospace, "SF Mono", Menlo, monospace; letter-spacing: .04em;
+}
+/* 送出中の文字の位置 */
+#tShow {
+  margin: 8px 0 0; min-height: 3em; padding: 6px 8px;
+  border: 1px solid var(--line); border-radius: 6px; background: #0a1018;
+  font: 15px/1.5 ui-monospace, "SF Mono", Menlo, monospace; letter-spacing: .04em;
+  white-space: pre-wrap; word-break: break-all; color: var(--dim);
+}
+#tShow .ok   { color: #e1e6dc; }
+#tShow .ng   { color: #fff; background: #b8322a; border-radius: 2px; }
+#tShow .wait { color: #e1e6dc; opacity: .75; }
+#tShow .cur  { color: #0b0f14; background: var(--green); border-radius: 2px; }
+
+#statusbar {
+  margin-top: auto; color: var(--dim); font-size: 11.5px; line-height: 1.5;
+  border-top: 1px solid var(--line); padding-top: 5px;
+  display: flex; gap: 12px; white-space: nowrap;
+}
+#statusbar #state, #statusbar #conn { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+#statusbar .ver { flex: 0 0 auto; font-family: ui-monospace, monospace; }
+.err { color: #ff9a8f; }
+
+h2 { font-size: 12.5px; margin: 0 0 6px; font-weight: 600; color: var(--dim); letter-spacing: .04em; }
+.card > h2 { display: flex; align-items: center; gap: 10px; }
+.sep { flex: 1; }
+select { font: inherit; color: var(--tx); background: #1a2331; border: 1px solid var(--line); border-radius: 6px; height: 32px; padding: 0 6px; }
+button.danger { background: #3a1f1f; }
+/* 実機のパネルボタンと同じ配色の KEY / ENV / RAW */
+button.trace { font-family: "SF Mono", Menlo, Consolas, monospace; font-weight: 600; min-width: 62px; }
+button.trace[aria-pressed="true"]  { background: #122d50; border-color: #5a96d2; color: #c8e6ff; }
+button.trace[aria-pressed="false"] { background: #08121e; border-color: #2d415a; color: #5a6e82; }
+label { color: var(--dim); display: inline-flex; align-items: center; gap: 5px; }
+.stat { display: flex; flex-wrap: wrap; gap: 4px 18px; margin-top: 6px; }
+.stat div { white-space: nowrap; }
+.stat b { color: var(--dim); font-weight: 400; margin-right: 6px; }
+.warn { color: #ff9a8f; }
+#wrap { margin-top: 6px; }
+#cv { display: block; width: 100%; border-radius: 4px; cursor: grab; touch-action: none; }
+#cv.drag { cursor: grabbing; }
+#scrub { width: 100%; margin-top: 6px; }
+#fft { display: block; width: 100%; height: 140px; border-radius: 4px; }
+#text {
+  background: #05080d; border: 1px solid var(--line); border-radius: 8px;
+  padding: 8px 12px; min-height: 60px; max-height: 150px; overflow-y: auto;
+  font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 15px;
+  letter-spacing: .08em; color: #adff2f; word-break: break-all; white-space: pre-wrap;
+}
+#analysis {
+  background: #05080d; border: 1px solid var(--line); border-radius: 8px;
+  padding: 10px 12px; margin: 6px 0 0; max-height: 260px; overflow: auto;
+  font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 12px; line-height: 1.45;
+  color: var(--tx); white-space: pre;
+}
+#selbar { margin-top: 6px; }
+#selbar b { color: var(--dim); font-weight: 400; }
+/* 横幅があるときは 送信 (左) / スコープ (右) の 2 列。狭いときは縦に並べる */
+.cols { display: flex; flex-direction: column; gap: 10px; }
+@media (min-width: 1100px) {
+  .cols { display: grid; grid-template-columns: minmax(340px, 400px) minmax(0, 1fr); align-items: stretch; }
+}
+/* 送信側とスコープ側の区切り */
+.side { display: flex; flex-direction: column; gap: 7px; padding: 8px 10px 10px; border-radius: 10px; border: 1px solid; }
+.side.send { border-color: #2f6592; background: #0d1622; }
+.side.recv { border-color: #3f6b3a; background: #0c150f; }
+.sidehead { display: flex; align-items: center; gap: 10px; color: var(--dim); font-size: 12px; }
+/* 枠の見出し (ボタンと紛れないよう、地の色を付けない文字だけにする) */
+.sidehead .ttl { font-weight: 700; font-size: 14px; letter-spacing: .1em; }
+.send .ttl { color: #8fc3f2; }
+.send .ttl.setup { color: #c9b27a; }
+.recv .ttl { color: #8fd68a; }
+.rate { font: 600 15px/1 ui-monospace, "SF Mono", Menlo, monospace; color: var(--green); }
+.rateN { color: var(--dim); font: 12px/1 ui-monospace, monospace; }
+</style>
+</head>
+<body>
+
+<h1>CW Tester
+  <a class="link" href="#" id="btnInstall" hidden title="アプリとしてインストールする (Chrome / Edge)">インストール</a>
+</h1>
+
+<div class="cols">
+<!-- ================= 送信 (Player) + SETUP ================= -->
+<section class="side send">
+<div class="sidehead"><span class="ttl">送信</span>PC のスピーカーから実機へ</div>
+<div class="card" id="playerCard">
+  <div class="tabs" role="tablist">
+    <button role="tab" data-src="test" aria-selected="true">テスト信号</button>
+    <button role="tab" data-src="file" aria-selected="false">音声ファイル</button>
+  </div>
+
+  <div class="srcpane first active" data-pane="test">
+    <div class="sl">
+      <span>WPM</span><input type="range" id="tWpm" min="5" max="45" value="20"><span><span id="tWpmV" class="metric">20</span></span>
+      <span>トーン</span><input type="range" id="tHz" min="450" max="1050" step="10" value="600"><span><span id="tHzV" class="metric">600</span> Hz</span>
+      <span>S/N</span><input type="range" id="tSnr" min="-15" max="40" value="15"><span><span id="tSnrV" class="metric">15</span> dB</span>
+    </div>
+  </div>
+<div class="srcpane first" data-pane="file">
+    <div class="row">
+      <input type="file" id="fileInput" accept="audio/*">
+      <span style="color:var(--dim)">(音声ファイルは送信文が分からないため照合しません)</span>
+    </div>
+    <div class="row">
+      <button id="fileHome"  class="tp" disabled title="先頭へ">&#9198;</button>
+      <button id="fileBack"  class="tp" disabled title="5 秒戻す">&#9194;</button>
+      <button id="filePlay"  class="tp primary" disabled title="再生 / 一時停止">&#9654;</button>
+      <button id="fileFwd"   class="tp" disabled title="5 秒進める">&#9193;</button>
+      <button id="fileEnd"   class="tp" disabled title="末尾へ">&#9197;</button>
+      <label class="chk" title="繰り返し再生"><input type="checkbox" class="loop"> LOOP</label>
+      <input type="range" id="fileSeek" min="0" max="1000" value="0" step="1" disabled
+             title="再生位置" style="flex:1 1 160px">
+      <span id="fileTime" class="metric" style="min-width:96px;text-align:right">--:-- / --:--</span>
+    </div>
+  </div>
+
+
+  <!-- 音量は両タブ共通。スライダーの並びをそろえるため同じ格子にする -->
+  <div class="sl" style="margin-top:12px">
+    <span>音量</span><input type="range" id="vol" min="-40" max="0" value="-6"><span id="volV" class="metric">-6 dB</span>
+  </div>
+
+  <div class="srcpane msg active" data-pane="test">
+    <textarea id="tText" spellcheck="false">ALICE WAS BEGINNING TO GET VERY TIRED OF SITTING BY HER SISTER ON THE BANK, AND OF HAVING NOTHING TO DO: ONCE OR TWICE SHE HAD PEEPED INTO THE BOOK</textarea>
+    <div class="row">
+      <button id="testPlay" class="primary">送信</button>
+      <button id="testStop" disabled>停止</button>
+      <label class="chk" title="繰り返し送信"><input type="checkbox" class="loop"> LOOP</label>
+      <span class="grow"></span>
+      <span id="testTime" class="metric"></span>
+    </div>
+  </div>
+</div>
+
+<div class="sidehead"><span class="ttl setup">SETUP</span>実機との接続とログ</div>
+<div class="card">
+  <div class="row">
+    <button id="connect" class="primary">シリアル接続</button>
+    <button id="disconnect" class="danger" disabled>切断</button>
+  </div>
+  <div class="row">
+    <button id="loadFile">ログを開く</button>
+    <button id="saveFile" disabled>ログを保存</button>
+    <button id="clear" title="受信したスコープログをすべて消す">ログをクリア</button>
+    <input type="file" id="file" accept=".log,.txt" hidden>
+  </div>
+</div>
+</section>
+
+<!-- ================= 受信 (実機のスコープログ) ================= -->
+<section class="side recv">
+<div class="sidehead"><span class="ttl">スコープ</span>実機の受信 (USB シリアルのスコープログ)</div>
+<div class="card">
+  <div class="row">
+    <button id="follow" class="primary">追従中</button>
+    <button class="trace" id="bKey" aria-pressed="true">KEY</button>
+    <button class="trace" id="bEnv" aria-pressed="true">ENV</button>
+    <button class="trace" id="bRaw" aria-pressed="true">RAW</button>
+    <label>横
+      <select id="zoomX">
+        <option value="1">1x</option><option value="2">2x</option><option value="3" selected>3x</option>
+        <option value="4">4x</option><option value="6">6x</option><option value="8">8x</option>
+      </select>
+    </label>
+    <label>縦
+      <select id="zoomY">
+        <option value="1">1x</option><option value="2">2x</option><option value="3">3x</option>
+        <option value="4" selected>4x</option><option value="6">6x</option><option value="8">8x</option>
+      </select>
+    </label>
+  </div>
+  <div class="stat" id="stat">
+    <div><b>SPEED</b><span id="wpm">--</span> WPM</div>
+    <div><b>TONE</b><span id="tone">--</span></div>
+    <div><b>掃引</b><span id="sweep">--</span> ms/列</div>
+    <div><b>入力</b><span id="level">--</span> dBFS</div>
+    <div><b>表示</b><span id="span">--</span></div>
+    <div><b>保持</b><span id="count">0</span> 列</div>
+    <div><b>欠落</b><span id="drop">0</span></div>
+    <div><b>CLIP</b><span id="clip">0</span></div>
+  </div>
+  <div id="wrap">
+    <canvas id="cv"></canvas>
+    <input type="range" id="scrub" min="0" max="0" value="0" disabled>
+  </div>
+  <div class="row" id="selbar" style="display:none">
+    <b>選択範囲</b><span id="selinfo">--</span>
+    <button id="copyAnalysis" class="primary">解析をコピー</button>
+    <button id="copyRaw">ログをコピー</button>
+    <button id="selClear">選択解除</button>
+    <span id="copied" style="color:var(--dim)"></span>
+  </div>
+  <pre id="analysis" style="display:none"></pre>
+</div>
+
+<div class="card">
+  <h2>送信文 (赤 = 実機がデコードできなかった文字)
+    <span class="grow"></span>
+    <span>認識率 <span class="rate" id="rateNow">--</span> <span class="rateN" id="rateNowN"></span></span>
+    <span id="rateAllWrap" hidden>累計 <span class="rate" id="rateAll">--</span> <span class="rateN" id="rateAllN"></span></span>
+  </h2>
+  <div id="tShow" style="margin:0"></div>
+  <h2 style="margin-top:8px">デコード結果 <span class="grow"></span><button id="textClear" style="height:26px;font-size:12px">クリア</button></h2>
+  <div id="text"></div>
+</div>
+
+<div class="card">
+  <h2>FFT スペクトラム (送信音)</h2>
+  <canvas id="fft"></canvas>
+</div>
+</section>
+</div>
+
+<div id="statusbar"><span id="state">停止中</span><span id="conn">未接続</span>
+  <span class="ver" id="appVer"></span></div>
+
+<script>
+'use strict';
+{
+const $ = (id) => document.getElementById(id);
+
+let ctx = null;         // AudioContext
+let out = null;         // 音量の GainNode
+let pre = null;         // 音量の手前で全音源を混ぜるノード (FFT はここから取る)
+let analyser = null;    // 送信音の FFT
+let src = null;         // 再生中の AudioBufferSourceNode
+let loopOn = false;
+
+function setState(msg, isErr = false) {
+	$('state').textContent = msg;
+	$('state').className = isErr ? 'err' : '';
+}
+
+async function ensureCtx() {
+	if (!ctx) {
+		ctx = new AudioContext({ sampleRate: 48000 });
+		out = ctx.createGain();
+		out.connect(ctx.destination);
+		pre = ctx.createGain();
+		pre.connect(out);
+		analyser = ctx.createAnalyser();
+		// 窓長と分解能はトレードオフ (16384 点 = 0.34 秒 / 2.9Hz)。32768 点 (0.68 秒)
+		// では符号の断続に追従しないので 16384 にし、フレーム間の平均もしない
+		analyser.fftSize = 16384;
+		analyser.smoothingTimeConstant = 0;
+		pre.connect(analyser);
+		applyVol();
+	}
+	if (ctx.state === 'suspended') await ctx.resume();
+}
+
+function applyVol() {
+	const db = +$('vol').value;
+	$('volV').textContent = `${db} dB`;
+	if (out) out.gain.setTargetAtTime(Math.pow(10, db / 20), ctx.currentTime, 0.01);
+}
+
+//	鳴っている音を止める。onended は stop() でも呼ばれるので先に外す
+function stopSource() {
+	if (src) {
+		src.onended = null;
+		try { src.stop(); } catch {}
+		try { src.disconnect(); } catch {}
+	}
+	src = null;
+}
+
+function playBuffer(buffer, offset, loop, onended, dest = pre) {
+	stopSource();
+	const s = ctx.createBufferSource();
+	s.buffer = buffer;
+	s.loop = loop;
+	s.connect(dest);
+	s.onended = onended;
+	s.start(0, offset);
+	src = s;
+	return s;
+}
+
+//==================================================================
+//	LOOP チェックボックス (両タブで同じ状態を共有する)
+//==================================================================
+function setLoop(on) {
+	loopOn = on;
+	for (const b of document.querySelectorAll('input.loop')) b.checked = on;
+	// 再生中のファイルにはその場で反映する。位置計算の起点を今に取り直してから
+	// 切り替えるので、既に何周かしていても表示はずれない
+	if (filePlaying && src) {
+		filePos = fileNow();
+		fileT0 = ctx.currentTime;
+		src.loop = on;
+		if (!on) {
+			// ループを外した瞬間からは素の再生と同じく末尾で止まるようにする
+			src.onended = fileEnded;
+		}
+	}
+}
+for (const b of document.querySelectorAll('input.loop')) b.onchange = () => setLoop(b.checked);
+
+//==================================================================
+//	タブ切替 (切り替えたら鳴っている音は止める)
+//==================================================================
+for (const t of document.querySelectorAll('[role=tab]')) {
+	t.onclick = () => {
+		for (const u of document.querySelectorAll('[role=tab]')) u.setAttribute('aria-selected', u === t);
+		for (const p of document.querySelectorAll('.srcpane')) p.classList.toggle('active', p.dataset.pane === t.dataset.src);
+		stopAll();
+	};
+}
+
+//==================================================================
+//	音声ファイル
+//	AudioBufferSourceNode は一時停止もシークもできないので、位置を自前で持ち、
+//	操作のたびにノードを作り直して offset 付きで start する。
+//	filePos は「今の source が start された時点の位置」
+//==================================================================
+let fileBuffer = null, fileName = '';
+let filePos = 0, fileT0 = 0, filePlaying = false, fileSeeking = false;
+const SEEK_STEP = 5;
+const mmss = (t) => `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}`;
+
+function fileNow() {
+	if (!fileBuffer) return 0;
+	const d = fileBuffer.duration;
+	let t = filePlaying ? filePos + (ctx.currentTime - fileT0) : filePos;
+	if (filePlaying && src && src.loop) t %= d;
+	return Math.max(0, Math.min(d, t));
+}
+
+function fileUpdateUI() {
+	const has = !!fileBuffer;
+	for (const id of ['fileHome', 'fileBack', 'filePlay', 'fileFwd', 'fileEnd', 'fileSeek']) $(id).disabled = !has;
+	$('filePlay').innerHTML = filePlaying ? '&#10074;&#10074;' : '&#9654;';
+	$('filePlay').title = filePlaying ? '一時停止' : '再生';
+	if (!has) { $('fileTime').textContent = '--:-- / --:--'; return; }
+	const t = fileNow(), d = fileBuffer.duration;
+	$('fileTime').textContent = `${mmss(t)} / ${mmss(d)}`;
+	if (!fileSeeking) $('fileSeek').value = Math.round((t / d) * 1000);
+}
+
+function fileEnded() {
+	filePlaying = false;
+	filePos = fileBuffer.duration;
+	src = null;
+	fileUpdateUI();
+	setState(`ファイル: ${fileName} — 再生終了`);
+}
+
+function fileStartAt(pos) {
+	filePos = Math.max(0, Math.min(fileBuffer.duration - 0.01, pos));
+	playBuffer(fileBuffer, filePos, loopOn, fileEnded);
+	fileT0 = ctx.currentTime;
+	filePlaying = true;
+	fileUpdateUI();
+	setState(`ファイル: ${fileName} — 再生中${loopOn ? ' (LOOP)' : ''}`);
+}
+
+async function filePlayPause() {
+	await ensureCtx();
+	if (!fileBuffer) return;
+	if (filePlaying) {
+		filePos = fileNow();
+		filePlaying = false;
+		stopSource();
+		fileUpdateUI();
+		setState(`ファイル: ${fileName} — 一時停止`);
+	} else {
+		if (filePos >= fileBuffer.duration - 0.05) filePos = 0;   // 末尾なら頭から
+		fileStartAt(filePos);
+	}
+}
+
+async function fileSeek(pos) {
+	await ensureCtx();
+	if (!fileBuffer) return;
+	const wasPlaying = filePlaying;
+	if (wasPlaying) { filePlaying = false; stopSource(); }
+	filePos = Math.max(0, Math.min(fileBuffer.duration, pos));
+	if (wasPlaying && filePos < fileBuffer.duration - 0.05) fileStartAt(filePos);
+	else fileUpdateUI();
+}
+
+async function loadFile(file) {
+	await ensureCtx();
+	stopAll();
+	fileBuffer = await ctx.decodeAudioData(await file.arrayBuffer());
+	fileName = file.name;
+	filePos = 0;
+	setState(`ファイル: ${file.name} — ${fileBuffer.duration.toFixed(1)}秒 / ${fileBuffer.sampleRate}Hz`);
+	fileStartAt(0);     // 選んだらそのまま先頭から再生する
+}
+
+//==================================================================
+//	テスト信号 (合成 CW)
+//==================================================================
+const MORSE = {
+	A: '.-', B: '-...', C: '-.-.', D: '-..', E: '.', F: '..-.', G: '--.',
+	H: '....', I: '..', J: '.---', K: '-.-', L: '.-..', M: '--', N: '-.',
+	O: '---', P: '.--.', Q: '--.-', R: '.-.', S: '...', T: '-', U: '..-',
+	V: '...-', W: '.--', X: '-..-', Y: '-.--', Z: '--..',
+	0: '-----', 1: '.----', 2: '..---', 3: '...--', 4: '....-',
+	5: '.....', 6: '-....', 7: '--...', 8: '---..', 9: '----.',
+	'/': '-..-.', '?': '..--..', ',': '--..--', '.': '.-.-.-', '=': '-...-',
+	':': '---...', ';': '-.-.-.', '-': '-....-', "'": '.----.', '(': '-.--.',
+	')': '-.--.-', '"': '.-..-.', '@': '.--.-.', '+': '.-.-.', '!': '-.-.--',
+};
+
+const LEAD = 0.6, TAIL = 1.0;    // 前後の無音 (秒)
+
+//	立ち上がり/立ち下がりを 5ms なまらせた、実機の受信音に近い CW を作る。
+//	marks には各文字の送出開始時刻 (秒) と text 上の位置を入れて返す。
+//	振幅 1 で作り、ノイズも足さない。信号とノイズの大きさは再生時に
+//	それぞれのゲインノードで決める (S/N を再生中に変えられるようにするため)
+function synthCW(text, { wpm, toneHz }) {
+	const rate = ctx.sampleRate;
+	const unit = 1.2 / wpm;
+	const keys = [[false, LEAD]];
+	const marks = [];
+	let t = LEAD, first = true;
+	const push = (on, d) => { keys.push([on, d]); t += d; };
+	[...text.toUpperCase()].forEach((raw, idx) => {
+		if (/\s/.test(raw)) {
+			if (!first) push(false, 7 * unit);
+			first = true;
+			return;
+		}
+		const code = MORSE[raw];
+		if (!code) return;
+		if (!first) push(false, 3 * unit);
+		first = false;
+		const mk = { t, idx, ch: raw, end: 0 };
+		code.split('').forEach((e, i) => {
+			if (i > 0) push(false, unit);
+			push(true, e === '.' ? unit : 3 * unit);
+		});
+		mk.end = t;
+		marks.push(mk);
+	});
+	push(false, TAIL);
+
+	const n = Math.round(t * rate);
+	const buf = ctx.createBuffer(1, n, rate);
+	const o = buf.getChannelData(0);
+	const env = new Float32Array(n);
+	let pos = 0;
+	for (const [on, dur] of keys) {
+		const len = Math.round(dur * rate);
+		if (on) for (let i = 0; i < len && pos + i < n; i++) env[pos + i] = 1;
+		pos += len;
+	}
+	const rn = Math.max(1, Math.round(0.005 * rate));
+	const w = 2 * Math.PI * toneHz / rate;
+	let run = 0;
+	for (let i = 0; i < rn; i++) run += env[Math.min(n - 1, i)];
+	for (let i = 0; i < n; i++) {
+		const add = env[Math.min(n - 1, i + rn)] ?? 0;
+		const sub = env[Math.max(0, i - 1)] ?? 0;
+		if (i > 0) run += add - sub;
+		const e = Math.max(0, Math.min(1, run / rn));
+		o[i] = e * Math.sin(w * i);
+	}
+	return { buf, marks, unit };
+}
+
+//==================================================================
+//	信号とノイズのレベル (S/N はこの 2 つのゲインで決める)
+//	ノイズは分散 1 のガウス雑音を 4 秒分作ってループで鳴らし続ける。
+//	S/N の定義は「信号の振幅 A に対する雑音の標準偏差 σ」(σ = A·r, r = 10^(-S/N/20))。
+//	A を固定して σ だけ動かすと、S/N が低いとき σ が 1 を超えて出力が割れ、
+//	実際の S/N が設定とずれる。そこで ピーク ≈ A + 4σ が PEAK に収まるよう
+//	A = PEAK / (1 + 4r) とする。S/N が低いほど σ は PEAK/4 に近づいてほぼ一定に
+//	なり信号が小さくなる。高いほど A は PEAK に近づきノイズが小さくなる。
+//	ゲインを変えるだけなので送信中でもその場で効く
+//==================================================================
+const PEAK = 0.9;
+let sigGain = null;
+let noiseBuf = null, noiseSrc = null, noiseGain = null;
+
+function levels() {
+	const r = Math.pow(10, -$('tSnr').value / 20);
+	const a = PEAK / (1 + 4 * r);
+	return { sig: a, noise: a * r };
+}
+
+function noiseStart() {
+	if (noiseSrc) return;
+	if (!noiseBuf) {
+		const n = ctx.sampleRate * 4;
+		noiseBuf = ctx.createBuffer(1, n, ctx.sampleRate);
+		const d = noiseBuf.getChannelData(0);
+		for (let i = 0; i < n; i++) {
+			const u1 = Math.random() || 1e-9, u2 = Math.random();
+			d[i] = Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
+		}
+	}
+	const lv = levels();
+	sigGain = ctx.createGain();
+	sigGain.gain.value = lv.sig;
+	sigGain.connect(pre);
+	noiseGain = ctx.createGain();
+	noiseGain.gain.value = lv.noise;
+	noiseGain.connect(pre);
+	noiseSrc = ctx.createBufferSource();
+	noiseSrc.buffer = noiseBuf;
+	noiseSrc.loop = true;
+	noiseSrc.connect(noiseGain);
+	noiseSrc.start();
+}
+
+function noiseStop() {
+	if (noiseSrc) { try { noiseSrc.stop(); } catch {} try { noiseSrc.disconnect(); } catch {} }
+	if (noiseGain) { try { noiseGain.disconnect(); } catch {} }
+	if (sigGain) { try { sigGain.disconnect(); } catch {} }
+	noiseSrc = null;
+	noiseGain = null;
+	sigGain = null;
+}
+
+function applySnr() {
+	const lv = levels();
+	if (sigGain) sigGain.gain.setTargetAtTime(lv.sig, ctx.currentTime, 0.02);
+	if (noiseGain) noiseGain.gain.setTargetAtTime(lv.noise, ctx.currentTime, 0.02);
+	if (testRun) showTestState(testRun.count);
+}
+
+function showTestState(count) {
+	setState(`テスト信号: ${$('tWpm').value}WPM / ${$('tHz').value}Hz / S:N ${$('tSnr').value}dB` +
+		(loopOn ? ` — LOOP ${count} 回目` : ''));
+}
+
+let testRun = null;       // { text, marks, t0, dur, count }
+let testRaf = 0;
+
+//	1 回分を合成して鳴らす。LOOP 中は鳴り終わるたびに作り直すので、
+//	WPM・トーン・文の変更は次の周回から効く (S/N はその場で効く)
+function testSendOnce(count) {
+	const text = $('tText').value;
+	const { buf, marks, unit } = synthCW(text, { wpm: +$('tWpm').value, toneHz: +$('tHz').value });
+	if (!marks.length) { testStop(); setState('送信できる文字がありません', true); return; }
+	playBuffer(buf, 0, false, () => {
+		src = null;
+		if (loopOn) testSendOnce(count + 1);
+		else { testStop(); setState('テスト信号: 送信終了'); }
+	}, sigGain);
+	testRun = { text, marks, t0: ctx.currentTime, dur: buf.duration, count };
+	cmpStartRun(text, marks, unit, count === 1);
+	showTestState(count);
+	if (!testRaf) testRaf = requestAnimationFrame(testTick);
+}
+
+//	送出中の文字を強調表示する
+function testTick() {
+	testRaf = 0;
+	if (!testRun) return;
+	const { text, marks, t0, dur } = testRun;
+	const t = ctx.currentTime - t0;
+	let k = -1;
+	while (k + 1 < marks.length && marks[k + 1].t <= t) k++;
+	cmpCur = k >= 0 && t < marks[k].end ? marks[k].idx : -1;
+	$('testTime').textContent = `${mmss(Math.min(t, dur))} / ${mmss(dur)}`;
+	testRaf = requestAnimationFrame(testTick);
+}
+
+async function testPlay() {
+	await ensureCtx();
+	// 新しく送るたびにデコード結果・赤の印・認識率を消す (LOOP の 2 周目以降は消さない)
+	$('textClear').click();
+	$('testStop').disabled = false;
+	$('testPlay').disabled = true;
+	noiseStart();
+	testSendOnce(1);
+}
+
+function testStop() {
+	cmpStop();
+	stopSource();
+	noiseStop();
+	testRun = null;
+	if (testRaf) { cancelAnimationFrame(testRaf); testRaf = 0; }
+	$('testStop').disabled = true;
+	$('testPlay').disabled = false;
+}
+
+function stopAll() {
+	if (filePlaying) { filePos = fileNow(); filePlaying = false; }
+	testStop();
+	fileUpdateUI();
+	setState('停止中');
+}
+
+//==================================================================
+//	イベント
+//==================================================================
+//	失敗を握りつぶさず状態欄に出す
+const guard = (fn) => async (...a) => {
+	try { await fn(...a); } catch (e) { console.error(e); setState(`エラー: ${e.message || e}`, true); }
+};
+
+$('fileInput').onchange = guard((e) => e.target.files[0] && loadFile(e.target.files[0]));
+$('filePlay').onclick = guard(filePlayPause);
+$('fileHome').onclick = guard(() => fileSeek(0));
+$('fileBack').onclick = guard(() => fileSeek(fileNow() - SEEK_STEP));
+$('fileFwd').onclick  = guard(() => fileSeek(fileNow() + SEEK_STEP));
+$('fileEnd').onclick  = guard(() => fileSeek(fileBuffer ? fileBuffer.duration : 0));
+$('fileSeek').oninput = () => {
+	fileSeeking = true;
+	if (fileBuffer) {
+		const t = (+$('fileSeek').value / 1000) * fileBuffer.duration;
+		$('fileTime').textContent = `${mmss(t)} / ${mmss(fileBuffer.duration)}`;
+	}
+};
+$('fileSeek').onchange = guard(async () => {
+	fileSeeking = false;
+	if (fileBuffer) await fileSeek((+$('fileSeek').value / 1000) * fileBuffer.duration);
+});
+
+for (const [r, v] of [['tWpm', 'tWpmV'], ['tHz', 'tHzV'], ['tSnr', 'tSnrV']]) {
+	$(r).oninput = () => { $(v).textContent = $(r).value; };
+}
+$('tSnr').addEventListener('input', applySnr);
+$('testPlay').onclick = guard(testPlay);
+$('testStop').onclick = () => { testStop(); setState('停止中'); };
+$('tText').oninput = () => { if (!cmp.run) $('tShow').textContent = $('tText').value.toUpperCase(); };
+$('tShow').textContent = $('tText').value.toUpperCase();
+$('vol').oninput = applyVol;
+
+// ファイル再生中は位置表示を進める
+setInterval(() => { if (filePlaying) fileUpdateUI(); }, 200);
+
+//==================================================================
+//	送信文と実機のデコード結果の照合
+//	- 実機の文字 (スコープログの C レコード) は受け取った時刻 (performance.now)
+//	  付きで cmp.decoded に貯める
+//	- 送信 1 回 (= LOOP の 1 周) を run とし、その周の文字は
+//	  「周の開始 + 0.3 秒」から「次の周の開始 + 0.3 秒」までに届いたものとする。
+//	  周の頭には 0.6 秒、末尾には 1.0 秒の無音があるので、前の周の最後の文字が
+//	  次の周に紛れ込むことはない
+//	- 送った文字は、送り終えてから JUDGE 秒 (+ 4 短点) 経っても届かなければ
+//	  判定に入れる (実機は文字間の無音を待ってから文字を出すため遅れる)
+//	- 判定は空白を除いた文字列どうしの編集距離による対応付け。末尾の、まだ
+//	  判定していない送信文字に対応するはずの受信文字はただで読み飛ばす
+//==================================================================
+const JUDGE = 0.6;          // 秒
+const BOUND = 0.3;          // 周の区切り (周の開始からの秒)
+const nowSec = () => performance.now() / 1000;
+const cmp = {
+	decoded: [],            // {ch, at}
+	run: null,              // 照合中の周
+	prev: null,             // 区切りを過ぎるまで受信を待つ前の周
+	totOk: 0, totN: 0,      // 確定した周の累計
+	active: false,          // 送信中 (この間だけ受信文字を貯める)
+};
+let cmpCur = -1;            // 送出中の文字の位置 (text 上)
+
+window.cwTester = {
+	//	デコード結果の「クリア」: 赤の印と認識率 (累計も) を消し、送信中なら
+	//	今から送る文字だけで照合をやり直す
+	clear() {
+		const now = nowSec();
+		cmp.decoded = [];
+		cmp.totOk = cmp.totN = 0;
+		cmp.prev = null;
+		if (cmp.run) {
+			cmp.run.from = now;
+			cmp.run.dStart = Math.max(cmp.run.dStart, now);
+		}
+		$('tShow').textContent = (cmp.run ? cmp.run.text : $('tText').value).toUpperCase();
+		for (const id of ['rateNow', 'rateAll']) $(id).textContent = '--';
+		for (const id of ['rateNowN', 'rateAllN']) $(id).textContent = '';
+	},
+	onChar(ch) {
+		if (!cmp.active && !cmp.run) return;
+		cmp.decoded.push({ ch, at: nowSec() });
+	},
+};
+
+function cmpStartRun(text, marks, unit, fresh) {
+	const t0 = nowSec();
+	if (fresh || !cmp.run) {    // 送信開始 (LOOP の 2 周目以降ではない)
+		cmp.decoded = [];
+		cmp.totOk = cmp.totN = 0;
+		cmp.prev = null;
+	} else {
+		cmp.run.dEnd = t0 + BOUND;
+		cmp.prev = cmp.run;     // 区切りまでは前の周の受信を続ける
+	}
+	cmp.active = true;
+	cmp.run = { text, marks, unit, t0, dStart: cmp.prev ? t0 + BOUND : t0 - 1, dEnd: Infinity,
+	            stopAt: Infinity, from: -Infinity, res: null };
+}
+
+function cmpStop() {
+	if (!cmp.run) return;
+	cmp.active = false;
+	// 止めた時点で送り終えていない文字は判定しない。届くのを待つため、区切りは
+	// 少し先 (最後の文字の判定時刻) に置く
+	const r = cmp.run;
+	r.stopAt = nowSec();
+	r.dEnd = r.stopAt + JUDGE + 4 * r.unit;
+}
+
+//	周 r の照合。戻り値 { st: 文字ごとの状態 (marks と同じ並び), ok, n }
+//	st: 'ok' 一致 / 'ng' 取りこぼし・誤り / 'wait' 判定前 / 'skip' 送っていない
+function cmpEval(r, now) {
+	const D = cmp.decoded.filter((d) => d.at >= r.dStart && d.at < r.dEnd && d.ch !== ' ').map((d) => d.ch);
+	const final = now >= r.dEnd;
+	const st = r.marks.map((m) => {
+		const endAbs = r.t0 + m.end;
+		if (endAbs > r.stopAt) return 'skip';
+		if (endAbs < r.from) return 'skip';     // クリアより前に送り終えた文字
+		if (!final && now < endAbs + JUDGE + 4 * r.unit) return 'wait';
+		return 'judge';
+	});
+	const idx = [];
+	st.forEach((s, i) => { if (s === 'judge') idx.push(i); });
+	const S = idx.map((i) => r.marks[i].ch);
+	const n = S.length, m = D.length;
+	// dp[i][j]: S の先頭 i 文字と D の先頭 j 文字を対応付ける最小コスト
+	const dp = Array.from({ length: n + 1 }, () => new Int32Array(m + 1));
+	for (let j = 0; j <= m; j++) dp[0][j] = j;
+	for (let i = 1; i <= n; i++) {
+		dp[i][0] = i;
+		for (let j = 1; j <= m; j++) {
+			const sub = dp[i - 1][j - 1] + (S[i - 1] === D[j - 1] ? 0 : 1);
+			dp[i][j] = Math.min(sub, dp[i - 1][j] + 1, dp[i][j - 1] + 1);
+		}
+	}
+	// 判定前の送信文字に当たる D の末尾はただ (最小コストの j で止める)
+	let j = 0;
+	if (final) j = m;
+	else for (let k = 1; k <= m; k++) if (dp[n][k] < dp[n][j]) j = k;
+	let i = n, ok = 0;
+	const res = new Array(n).fill('ng');
+	while (i > 0 && j > 0) {
+		const eq = S[i - 1] === D[j - 1];
+		if (dp[i][j] === dp[i - 1][j - 1] + (eq ? 0 : 1)) {
+			if (eq) { res[i - 1] = 'ok'; ok++; }
+			i--; j--;
+		} else if (dp[i][j] === dp[i - 1][j] + 1) i--;
+		else j--;
+	}
+	idx.forEach((mi, k) => { st[mi] = res[k]; });
+	return { st, ok, n };
+}
+
+function pct(ok, n) { return n ? `${(ok * 100 / n).toFixed(1)}%` : '--'; }
+
+function cmpRender() {
+	const now = nowSec();
+	// 区切りを過ぎた前の周を確定して累計へ
+	if (cmp.prev && now >= cmp.prev.dEnd) {
+		const e = cmpEval(cmp.prev, now);
+		cmp.totOk += e.ok; cmp.totN += e.n;
+		cmp.prev = null;
+	}
+	const r = cmp.run;
+	if (!r) return;
+	const e = cmpEval(r, now);
+	const pOk = cmp.prev ? cmpEval(cmp.prev, now) : { ok: 0, n: 0 };
+	const allOk = cmp.totOk + pOk.ok + e.ok, allN = cmp.totN + pOk.n + e.n;
+	$('rateNow').textContent = pct(e.ok, e.n);
+	$('rateNowN').textContent = `${e.ok}/${e.n}`;
+	$('rateAll').textContent = pct(allOk, allN);
+	$('rateAllN').textContent = `${allOk}/${allN}`;
+	$('rateAllWrap').hidden = !loopOn && !cmp.totN && !cmp.prev;
+
+	// 送信文の表示: 文字ごとに状態のクラスを付ける
+	const cls = new Map();
+	r.marks.forEach((m, k) => cls.set(m.idx, e.st[k]));
+	const esc = (c) => c === '&' ? '&amp;' : c === '<' ? '&lt;' : c;
+	const up = r.text.toUpperCase();
+	let html = '';
+	for (let i = 0; i < up.length; i++) {
+		let c = cls.get(i);
+		if (i === cmpCur) c = 'cur';
+		html += c ? `<span class="${c}">${esc(up[i])}</span>` : esc(up[i]);
+	}
+	if ($('tShow').innerHTML !== html) $('tShow').innerHTML = html;
+
+	// 送信を終えて最後の判定も済んだら照合を閉じる
+	if (!cmp.active && !cmp.prev && now >= r.dEnd) {
+		cmp.totOk += e.ok; cmp.totN += e.n;
+		cmp.run = null;
+		cmpCur = -1;
+		$('rateAll').textContent = pct(cmp.totOk, cmp.totN);
+		$('rateAllN').textContent = `${cmp.totOk}/${cmp.totN}`;
+	}
+}
+
+//==================================================================
+//	送信音の FFT スペクトラム
+//	実機に聞かせている音 (音量をかける前) を表示する。実機が受けた音ではない
+//==================================================================
+const FFT_LO = 400, FFT_HI = 1100;      // 表示範囲 (Hz)。トーンの可変範囲 450〜1050Hz を含む
+const DB_LO = -110, DB_HI = -10;
+let fftBuf = null;
+
+function drawFft() {
+	const cv = $('fft');
+	const dpr = window.devicePixelRatio || 1;
+	const W = Math.max(200, cv.clientWidth), H = 140;
+	if (cv.width !== W * dpr || cv.height !== H * dpr) { cv.width = W * dpr; cv.height = H * dpr; }
+	const g = cv.getContext('2d');
+	g.setTransform(dpr, 0, 0, dpr, 0, 0);
+	g.fillStyle = '#020810';
+	g.fillRect(0, 0, W, H);
+	const x0 = 34, x1 = W - 6, y0 = 6, y1 = H - 18;
+	const hzToX = (hz) => x0 + (hz - FFT_LO) / (FFT_HI - FFT_LO) * (x1 - x0);
+	const dbToY = (db) => y0 + (DB_HI - db) / (DB_HI - DB_LO) * (y1 - y0);
+	g.font = '10px ui-monospace, monospace';
+	g.fillStyle = '#5a6e82';
+	g.strokeStyle = '#142837';
+	g.lineWidth = 1;
+	g.textAlign = 'center';
+	for (let hz = FFT_LO; hz <= FFT_HI; hz += 50) {
+		const x = Math.round(hzToX(hz)) + 0.5;
+		g.beginPath(); g.moveTo(x, y0); g.lineTo(x, y1); g.stroke();
+		if (hz % 100 === 0) g.fillText(String(hz), x, H - 5);
+	}
+	g.textAlign = 'right';
+	for (let db = DB_HI; db >= DB_LO; db -= 20) {
+		const y = Math.round(dbToY(db)) + 0.5;
+		g.beginPath(); g.moveTo(x0, y); g.lineTo(x1, y); g.stroke();
+		g.fillText(String(db), x0 - 4, y + 3);
+	}
+	// テスト信号のトーン
+	if (testRun) {
+		const x = Math.round(hzToX(+$('tHz').value)) + 0.5;
+		g.strokeStyle = '#463410';
+		g.beginPath(); g.moveTo(x, y0); g.lineTo(x, y1); g.stroke();
+	}
+	if (!analyser || (!src && !noiseSrc)) return;
+	if (!fftBuf || fftBuf.length !== analyser.frequencyBinCount) fftBuf = new Float32Array(analyser.frequencyBinCount);
+	analyser.getFloatFrequencyData(fftBuf);
+	const binHz = ctx.sampleRate / analyser.fftSize;
+	g.strokeStyle = '#5adc78';
+	g.lineWidth = 1.2;
+	g.beginPath();
+	let first = true;
+	// 1 ピクセルに複数ビンが入るときは最大値を描く (ピークを潰さないため)
+	for (let x = x0; x <= x1; x++) {
+		const hzA = FFT_LO + (x - x0) / (x1 - x0) * (FFT_HI - FFT_LO);
+		const hzB = FFT_LO + (x + 1 - x0) / (x1 - x0) * (FFT_HI - FFT_LO);
+		let a = Math.floor(hzA / binHz), b = Math.max(a, Math.floor(hzB / binHz));
+		let v = -Infinity;
+		for (let k = a; k <= b && k < fftBuf.length; k++) if (fftBuf[k] > v) v = fftBuf[k];
+		const y = Math.max(y0, Math.min(y1, dbToY(Number.isFinite(v) ? v : DB_LO)));
+		if (first) { g.moveTo(x, y); first = false; } else g.lineTo(x, y);
+	}
+	g.stroke();
+}
+
+let lastCmp = 0;
+function playerFrame(t) {
+	drawFft();
+	if (t - lastCmp > 150) { lastCmp = t; cmpRender(); }
+	requestAnimationFrame(playerFrame);
+}
+requestAnimationFrame(playerFrame);
+}
+</script>
+<script>
+'use strict';
+{
+
+//====================================================================
+//  実機 (src/display.cpp draw_scope_panel) と同じ配色
+//====================================================================
+const C = {
+  bg:    '#020810',   // C_PANEL_BG
+  frame: '#283c55',   // C_FRAME
+  raw:   '#0082af',   // C_RAW
+  env:   '#fac775',   // C_ENV
+  gate:  '#5adc78',   // C_GATE
+  text:  '#adff2f',   // C_TEXT_NEW
+  mid:   '#142837',   // 中心線
+};
+// 実機の縦方向の内訳 (縦 1x のとき): 文字 16 / KEYバー 3 / 隙間 5 / 波形 21。
+// 既定は 4x (波形 84px) — 実機そのままでは画面上で小さすぎて読めないため
+const DEV = { textH: 16, keyH: 3, gapH: 5, waveH: 21 };
+
+//====================================================================
+//  受信データ
+//====================================================================
+const MAX_COLS = 200000;
+const cols = new Map();          // col index -> {t, mn, mx, env, gate}
+const chars = [];                // {col, ch}
+const elems = [];                // {col, mark, ms, unit} (E レコード = デコーダ実測)
+let minCol = null, maxCol = null;
+const state = {
+  rate: 8000, hop: 59, ver: '?',
+  wpm: null, tone: null, auto: 1, hopq8: 768,
+  peak: null, clip: 0, dropped: 0,
+};
+let rawLog = [];                 // 保存用の生テキスト
+let showKey = true, showEnv = true, showRaw = true;
+let following = true;            // false = 停止して横スクロール
+let viewEnd = null;              // 表示右端の列番号 (追従中は最新)
+let lastView = null;
+let rawMax = 100, envMax = 500;  // AGC (実機と同じ平滑化。停止中は瞬時値)
+
+function msPerCol() {
+  return state.hopq8 / 256 * (state.hop / state.rate * 1000);
+}
+
+function resetData() {
+  cols.clear(); chars.length = 0; elems.length = 0; rawLog = [];
+  selA = selB = null; updateSelBar();
+  minCol = maxCol = null; viewEnd = null; lastView = null;
+  state.wpm = state.tone = state.peak = null;
+  state.clip = state.dropped = 0;
+  rawMax = 100; envMax = 500;
+  scrub.max = 0; scrub.value = 0; scrub.disabled = true;
+  saveBtn.disabled = true;
+  textEl.textContent = '';
+  textClearCol = -Infinity;
+  updateStat();
+}
+
+function trim() {
+  if (cols.size <= MAX_COLS) return;
+  const drop = cols.size - MAX_COLS;
+  for (let i = 0; i < drop; i++) cols.delete(minCol + i);
+  minCol += drop;
+  while (chars.length && chars[0].col < minCol) chars.shift();
+  while (elems.length && elems[0].col < minCol) elems.shift();
+}
+
+//====================================================================
+//  行の解析
+//====================================================================
+function feedLine(line, live = false) {
+  line = line.trim();
+  if (!line) return;
+  const f = line.split(/\s+/);
+  switch (f[0]) {
+    case 'S': {
+      if (f.length < 7) return;
+      const idx = +f[1];
+      if (!Number.isFinite(idx)) return;
+      cols.set(idx, { t: +f[2], mn: +f[3], mx: +f[4], env: +f[5], gate: +f[6],
+                      side: f.length > 7 ? +f[7] : null, near: f.length > 8 ? +f[8] : null,
+                      limit: f.length > 9 ? +f[9] : null, nf: f.length > 10 ? +f[10] : null,
+                      magMin: f.length > 11 ? +f[11] : null, onCnt: f.length > 12 ? +f[12] : null,
+                      offCnt: f.length > 13 ? +f[13] : null, realCnt: f.length > 14 ? +f[14] : null,
+                      hops: f.length > 15 ? +f[15] : null });
+      if (minCol === null || idx < minCol) minCol = idx;
+      if (maxCol === null || idx > maxCol) maxCol = idx;
+      trim();
+      break;
+    }
+    case 'C':
+      if (f.length >= 3) {
+        chars.push({ col: +f[1], ch: f.slice(2).join(' ') });
+        if (live) window.cwTester?.onChar(f.slice(2).join(' '));   // 送信文との照合へ
+      }
+      break;
+    case 'W':
+      if (f.length >= 2) chars.push({ col: +f[1], ch: ' ' });
+      break;
+    case 'E':
+      if (f.length >= 5) elems.push({ col: +f[1], mark: f[2] === 'M', ms: +f[3], unit: +f[4] });
+      break;
+    case 'T':
+      for (const kv of f.slice(2)) {
+        const [k, v] = kv.split('=');
+        if (k === 'wpm') state.wpm = +v;
+        else if (k === 'tone') state.tone = +v;
+        else if (k === 'auto') state.auto = +v;
+        else if (k === 'hopq8') state.hopq8 = +v;
+      }
+      break;
+    case 'H':
+      for (const kv of f.slice(1)) {
+        const [k, v] = kv.split('=');
+        if (k === 'rate') state.rate = +v;
+        else if (k === 'hop') state.hop = +v;
+        else if (k === 'ver') state.ver = v;
+      }
+      break;
+    case 'L':
+      if (f.length >= 3) { state.peak = +f[1]; state.clip = +f[2]; }
+      break;
+    case 'X': {
+      const m = /dropped=(\d+)/.exec(line);
+      if (m) state.dropped += +m[1];
+      break;
+    }
+    default:
+      break;   // [dsp] / [sync] など本体の他のログ行は無視
+  }
+  rawLog.push(line);
+  if (rawLog.length > 400000) rawLog.splice(0, 100000);
+  saveBtn.disabled = false;
+}
+
+function feedChunk(text, live = false) {
+  for (const line of text.split('\n')) feedLine(line, live);
+}
+
+//====================================================================
+//  描画 (実機の draw_scope_panel と同じ手順。横/縦の倍率は独立)
+//====================================================================
+const cv = document.getElementById('cv');
+const ctx = cv.getContext('2d');   // (このブロック内だけの名前。音声側の ctx とは別)
+
+//	画面幅いっぱいに、選んだ倍率で何列入るかを決める
+function metrics() {
+  const sx = +zoomX.value, sy = +zoomY.value;
+  const dpr = window.devicePixelRatio || 1;
+  const W = Math.max(200, Math.floor(wrap.clientWidth));
+  const x0 = 4;
+  const nCols = Math.max(20, Math.floor((W - x0 * 2) / sx));
+  // 文字は横倍率に追従させる (実機と同じで 1 文字 = 16 列ぶん) が、
+  // 大きくしすぎると文字行が画面を占領するので 2 倍で頭打ちにする
+  const tScale = Math.min(2, Math.max(1, sx));
+  const textH = Math.round(DEV.textH * tScale);
+  const keyY = textH + 2;
+  const keyH = Math.max(3, Math.round(DEV.keyH * sy));
+  const waveTop = keyY + keyH + Math.round(DEV.gapH * sy);
+  const waveH = Math.round(DEV.waveH * sy);
+  const waveBot = waveTop + waveH;
+  return { sx, sy, dpr, W, H: waveBot + 3, x0, nCols, textH, keyY, keyH, waveTop, waveH, waveBot, tScale };
+}
+
+function clampEnd(end, nCols) {
+  if (maxCol === null) return null;
+  const lo = Math.min(maxCol, minCol + nCols - 1);
+  return Math.max(lo, Math.min(maxCol, end));
+}
+
+function draw() {
+  const m = metrics();
+  if (cv.width !== m.W * m.dpr || cv.height !== m.H * m.dpr) {
+    cv.width = m.W * m.dpr; cv.height = m.H * m.dpr;
+    cv.style.height = m.H + 'px';
+  }
+  ctx.setTransform(m.dpr, 0, 0, m.dpr, 0, 0);
+  ctx.imageSmoothingEnabled = false;
+
+  ctx.fillStyle = C.bg;
+  ctx.fillRect(0, 0, m.W, m.H);
+  ctx.fillStyle = C.frame;
+  ctx.fillRect(0, 0, m.W, 1); ctx.fillRect(0, m.H - 1, m.W, 1);
+  ctx.fillRect(0, 0, 1, m.H); ctx.fillRect(m.W - 1, 0, 1, m.H);
+
+  if (maxCol !== null) {
+    const end = clampEnd(following ? maxCol : (viewEnd ?? maxCol), m.nCols);
+    const start = end - m.nCols + 1;
+
+    // AGC: 表示範囲の最大値に追従 (実機と同じ係数)
+    let rmax = 0, emax = 0;
+    for (let i = start; i <= end; i++) {
+      const c = cols.get(i);
+      if (!c) continue;
+      const a = c.mx > -c.mn ? c.mx : -c.mn;
+      if (a > rmax) rmax = a;
+      if (c.env > emax) emax = c.env;
+    }
+    if (following) {
+      rawMax += (rmax * 1.1 - rawMax) * 0.1;
+      envMax += (emax * 1.1 - envMax) * 0.1;
+    } else {
+      rawMax = rmax * 1.1; envMax = emax * 1.1;
+    }
+    if (rawMax < 60) rawMax = 60;
+    if (envMax < 400) envMax = 400;
+
+    const midY = m.waveTop + m.waveH / 2;
+    const halfH = m.waveH / 2;
+
+    if (showRaw) {
+      ctx.fillStyle = C.mid;
+      ctx.fillRect(m.x0, Math.round(midY), m.nCols * m.sx, 1);
+    }
+
+    let prevEy = -1, prevX = 0;
+    ctx.lineWidth = Math.max(1, Math.round(m.sx * 0.6));
+    ctx.lineJoin = 'round';
+    for (let i = 0; i < m.nCols; i++) {
+      const c = cols.get(start + i);
+      if (!c) { prevEy = -1; continue; }
+      const x = m.x0 + i * m.sx;
+
+      if (showRaw) {                                  // 生波形 min/max バンド
+        let y1 = midY - c.mx / rawMax * halfH;
+        let y2 = midY - c.mn / rawMax * halfH;
+        if (y1 < m.waveTop) y1 = m.waveTop;
+        if (y2 > m.waveBot) y2 = m.waveBot;
+        if (y2 < y1) { const t = y1; y1 = y2; y2 = t; }
+        ctx.fillStyle = C.raw;
+        ctx.fillRect(x, Math.round(y1), m.sx, Math.max(1, Math.round(y2 - y1)));
+      }
+
+      if (showEnv) {                                  // エンベロープ
+        let eh = c.env / envMax * m.waveH;
+        if (eh > m.waveH) eh = m.waveH;
+        const ey = m.waveBot - eh;
+        const cx = x + m.sx / 2;
+        if (prevEy >= 0) {
+          ctx.strokeStyle = C.env;
+          ctx.beginPath();
+          ctx.moveTo(prevX, prevEy);
+          ctx.lineTo(cx, ey);
+          ctx.stroke();
+        }
+        prevEy = ey; prevX = cx;
+      }
+
+      if (showKey && c.gate) {                        // キー判定バー
+        ctx.fillStyle = C.gate;
+        ctx.fillRect(x, m.keyY, m.sx, m.keyH);
+      }
+    }
+
+    if (showKey) {                                    // デコード文字
+      ctx.fillStyle = C.text;
+      ctx.font = m.textH + 'px "Hiragino Sans", "Noto Sans JP", sans-serif';
+      ctx.textBaseline = 'top';
+      ctx.textAlign = 'center';
+      for (const ch of chars) {
+        if (ch.ch === ' ') continue;                  // 語間は描かない
+        if (ch.col < start - 2 || ch.col > end + 2) continue;
+        ctx.fillText(ch.ch, m.x0 + (ch.col - start) * m.sx + m.sx / 2, 1);
+      }
+      ctx.textAlign = 'left';
+    }
+
+    // 選択範囲のハイライト
+    const sel = selRange();
+    if (sel && sel.b >= start && sel.a <= end) {
+      const xa = m.x0 + (Math.max(sel.a, start) - start) * m.sx;
+      const xb = m.x0 + (Math.min(sel.b, end) - start + 1) * m.sx;
+      ctx.fillStyle = 'rgba(90,150,210,0.18)';
+      ctx.fillRect(xa, 1, xb - xa, m.H - 2);
+      ctx.fillStyle = '#5a96d2';
+      if (sel.a >= start) ctx.fillRect(xa, 1, 1, m.H - 2);
+      if (sel.b <= end) ctx.fillRect(xb - 1, 1, 1, m.H - 2);
+    }
+
+    lastView = { start, end, nCols: m.nCols };
+  }
+}
+
+//====================================================================
+//  停止 / 横スクロール
+//====================================================================
+function setFollowing(on) {
+  following = on;
+  if (!on && viewEnd === null) viewEnd = maxCol;
+  followBtn.textContent = on ? '追従中' : '停止中';
+  followBtn.className = on ? 'primary' : '';
+  scrub.disabled = on || maxCol === null;
+}
+
+function panBy(deltaCols) {
+  if (maxCol === null) return;
+  if (following) setFollowing(false);
+  const n = lastView ? lastView.nCols : 150;
+  viewEnd = clampEnd((viewEnd ?? maxCol) + deltaCols, n);
+  updateStat();
+}
+
+cv.addEventListener('wheel', ev => {
+  const d = Math.abs(ev.deltaX) > Math.abs(ev.deltaY) ? ev.deltaX : ev.deltaY;
+  if (!d) return;
+  ev.preventDefault();
+  panBy(Math.sign(d) * Math.max(1, Math.round(Math.abs(d) / 4)));
+}, { passive: false });
+
+let dragX = null, dragEnd = 0, selecting = false;
+let selA = null, selB = null;          // 選択範囲 (列番号)
+
+function selRange() {
+  if (selA === null || selB === null) return null;
+  return { a: Math.min(selA, selB), b: Math.max(selA, selB) };
+}
+
+//	キャンバス上の X 座標 → 列番号
+function colAtClientX(clientX) {
+  const m = metrics();
+  const r = cv.getBoundingClientRect();
+  const x = (clientX - r.left) * (m.W / r.width);
+  const start = lastView ? lastView.start : maxCol - m.nCols + 1;
+  const col = start + Math.round((x - m.x0) / m.sx);
+  return Math.max(minCol, Math.min(maxCol, col));
+}
+
+cv.addEventListener('pointerdown', ev => {
+  if (maxCol === null) return;
+  cv.setPointerCapture(ev.pointerId);
+  if (ev.shiftKey) {                    // Shift+ドラッグ = 範囲選択
+    if (following) setFollowing(false);
+    selecting = true;
+    selA = selB = colAtClientX(ev.clientX);
+    updateSelBar();
+    return;
+  }
+  if (following) setFollowing(false);
+  dragX = ev.clientX; dragEnd = viewEnd ?? maxCol;
+  cv.classList.add('drag');
+});
+cv.addEventListener('pointermove', ev => {
+  if (selecting) {
+    selB = colAtClientX(ev.clientX);
+    updateSelBar();
+    return;
+  }
+  if (dragX === null) return;
+  const m = metrics();
+  const r = cv.getBoundingClientRect();
+  const pxPerCol = (r.width / m.W) * m.sx;
+  viewEnd = clampEnd(dragEnd - Math.round((ev.clientX - dragX) / pxPerCol), m.nCols);
+  updateStat();
+});
+for (const e of ['pointerup', 'pointercancel']) {
+  cv.addEventListener(e, () => {
+    if (selecting) {
+      selecting = false;
+      if (selRange() && selRange().a === selRange().b) { selA = selB = null; }
+      updateSelBar();
+    }
+    dragX = null; cv.classList.remove('drag');
+  });
+}
+
+//====================================================================
+//  範囲選択の解析 (誤認識の原因調べ用)
+//====================================================================
+function pad(v, w) { return String(v).padStart(w); }
+
+function markVerdict(ms, u) {
+  if (!u) return '?';
+  if (ms < 2 * u && ms * 5 > 3 * u) return '短点 .';
+  if (ms > 2 * u && ms < 6 * u) return '長点 -';
+  return ms * 5 <= 3 * u ? '短すぎ (符号にならない)' : '長すぎ (符号にならない)';
+}
+function gapVerdict(ms, u) {
+  if (!u) return '?';
+  if (ms < u * 1.5) return '文字内';
+  if (ms < u * 4.5) return '文字間';
+  if (ms >= u * 6) return '語間';
+  return '文字間';
+}
+
+function buildAnalysis() {
+  const r = selRange();
+  if (!r) return '';
+  const mc = msPerCol();
+  const ca = cols.get(r.a), cb = cols.get(r.b);
+  const n = r.b - r.a + 1;
+  const out = [];
+  out.push('# CW Decoder 4 scope  ver=' + state.ver + '  wpm=' + state.wpm +
+           '  tone=' + state.tone + 'Hz' + (state.auto ? '(AUTO)' : '') +
+           '  掃引=' + mc.toFixed(1) + 'ms/列');
+  out.push('# 選択 col ' + r.a + '..' + r.b + '  ' + n + '列 / ' + (n * mc / 1000).toFixed(2) + '秒' +
+           (ca && cb ? '  t=' + ca.t + '..' + cb.t + 'ms' : ''));
+  const cs = chars.filter(c => c.col >= r.a - 4 && c.col <= r.b + 4);
+  out.push('# 文字: ' + (cs.length ? cs.map(c => (c.ch === ' ' ? '_' : c.ch) + '(' + c.col + ')').join(' ') : '(なし)'));
+
+  const es = elems.filter(e => e.col >= r.a && e.col <= r.b);
+  if (es.length) {
+    out.push('# 要素 (デコーダ実測)');
+    out.push('#    col 種別  長さms  unit    比  判定');
+    for (const e of es) {
+      const u = e.unit || 0;
+      out.push('  ' + pad(e.col, 6) + '  ' + (e.mark ? 'M' : 'S') + pad(e.ms, 7) + pad(e.unit, 6) +
+               pad(u ? (e.ms / u).toFixed(2) : '-', 6) + '  ' +
+               (e.mark ? markVerdict(e.ms, u) : gapVerdict(e.ms, u)));
+    }
+  } else {
+    out.push('# 要素 (KEY列から復元: ' + mc.toFixed(1) + 'ms 量子化。E レコード付きのファームならより正確)');
+    out.push('#    col 種別  長さms  unit    比  判定');
+    const u = state.wpm ? Math.round(1200 / state.wpm) : 0;
+    let runVal = null, runStart = 0;
+    const emit = (val, a, b) => {
+      const ms = Math.round((b - a + 1) * mc);
+      out.push('  ' + pad(a, 6) + '  ' + (val ? 'M' : 'S') + pad(ms, 7) + pad(u, 6) +
+               pad(u ? (ms / u).toFixed(2) : '-', 6) + '  ' +
+               (val ? markVerdict(ms, u) : gapVerdict(ms, u)));
+    };
+    for (let i = r.a; i <= r.b; i++) {
+      const c = cols.get(i);
+      if (!c) continue;
+      if (runVal === null) { runVal = c.gate; runStart = i; }
+      else if (c.gate !== runVal) { emit(runVal, runStart, i - 1); runVal = c.gate; runStart = i; }
+    }
+    if (runVal !== null) emit(runVal, runStart, r.b);
+  }
+  // 列ごとの判定値 (新しいファームの S レコードにだけ入っている)
+  const det = [];
+  for (let i = r.a; i <= r.b; i++) {
+    const c = cols.get(i);
+    if (c && c.limit !== null && c.limit !== undefined) det.push([i, c]);
+  }
+  if (det.length && det.length <= 150) {
+    const hasCnt = det[0][1].onCnt !== null && det[0][1].onCnt !== undefined;
+    if (hasCnt) {
+      // ブロック単位の実際の判定。env は列内 3 ブロックの 2 番目に大きい値、
+      // side/near は最後のブロックの値なので、両者の比から判定は再現できない
+      out.push('# 列詳細  on/off/real = 列内で tone_on / tone_off / realstate=HIGH だったブロック数 (分母 hops)');
+      out.push('#    col g    env  envmin  limit     nf   side   near | on off real hops');
+      for (const d of det) {
+        const i = d[0], c = d[1];
+        out.push('  ' + pad(i, 6) + pad(c.gate, 2) + pad(c.env, 7) + pad(c.magMin, 8) +
+                 pad(c.limit, 7) + pad(c.nf, 7) + pad(c.side, 7) + pad(c.near, 7) + ' |' +
+                 pad(c.onCnt, 4) + pad(c.offCnt, 4) + pad(c.realCnt, 5) + pad(c.hops, 5));
+      }
+    } else {
+      out.push('# 列詳細 (古いファーム: ブロック単位の判定が無いため参考値)');
+      out.push('#    col g    env  limit     nf   side   near');
+      for (const d of det) {
+        const i = d[0], c = d[1];
+        out.push('  ' + pad(i, 6) + pad(c.gate, 2) + pad(c.env, 7) + pad(c.limit, 7) +
+                 pad(c.nf, 7) + pad(c.side, 7) + pad(c.near, 7));
+      }
+    }
+  }
+  return out.join('\n');
+}
+
+function buildRawLog() {
+  const r = selRange();
+  if (!r) return '';
+  const head = [];
+  const body = [];
+  let lastT = null, lastH = null, lastL = null;
+  for (const line of rawLog) {
+    const f = line.split(/\s+/);
+    const c = +f[1];
+    if (f[0] === 'H') { lastH = line; continue; }
+    if (f[0] === 'L') { lastL = line; continue; }
+    if (f[0] === 'T' && Number.isFinite(c) && c < r.a) { lastT = line; continue; }
+    if ((f[0] === 'S' || f[0] === 'C' || f[0] === 'W' || f[0] === 'E' || f[0] === 'T') &&
+        Number.isFinite(c) && c >= r.a && c <= r.b) {
+      body.push(line);
+    }
+  }
+  if (lastH) head.push(lastH);
+  if (lastT) head.push(lastT);
+  if (lastL) head.push(lastL);
+  return head.concat(body).join('\n');
+}
+
+function updateSelBar() {
+  const r = selRange();
+  const bar = document.getElementById('selbar');
+  const pre = document.getElementById('analysis');
+  if (!r) {
+    bar.style.display = 'none';
+    pre.style.display = 'none';
+    return;
+  }
+  const n = r.b - r.a + 1;
+  bar.style.display = '';
+  document.getElementById('selinfo').textContent =
+    'col ' + r.a + '..' + r.b + ' (' + n + '列 / ' + (n * msPerCol() / 1000).toFixed(2) + '秒)';
+  if (!selecting) {
+    pre.style.display = '';
+    pre.textContent = buildAnalysis();
+  }
+}
+
+async function copyText(text, label) {
+  const note = document.getElementById('copied');
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch (e) {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand('copy'); } catch (_) {}
+    ta.remove();
+  }
+  note.textContent = label + ' をコピーしました (' + text.length + ' 文字)';
+  setTimeout(() => { note.textContent = ''; }, 3000);
+}
+
+//====================================================================
+//  ステータスとデコード文字列
+//====================================================================
+function updateStat() {
+  document.getElementById('wpm').textContent = state.wpm ?? '--';
+  document.getElementById('tone').textContent =
+    state.tone === null ? '--' : (state.auto ? 'AUTO ' + state.tone + 'Hz' : state.tone + 'Hz');
+  document.getElementById('sweep').textContent = msPerCol().toFixed(1);
+  document.getElementById('level').textContent =
+    state.peak ? (20 * Math.log10(state.peak / 2048)).toFixed(1) : '--';
+  document.getElementById('count').textContent = cols.size;
+  document.getElementById('span').textContent = lastView
+    ? lastView.nCols + ' 列 / ' + (lastView.nCols * msPerCol() / 1000).toFixed(1) + ' 秒'
+    : '--';
+  const d = document.getElementById('drop');
+  d.textContent = state.dropped; d.className = state.dropped ? 'warn' : '';
+  const cl = document.getElementById('clip');
+  cl.textContent = state.clip; cl.className = state.clip ? 'warn' : '';
+
+  if (maxCol !== null) {
+    scrub.max = maxCol - minCol;
+    scrub.disabled = following;
+    scrub.value = (following ? maxCol : (viewEnd ?? maxCol)) - minCol;
+  }
+}
+
+//	デコード結果の「クリア」はこの列より後の文字だけを表示にする
+//	(オシロ上の文字や保存するログは消さない)
+let textClearCol = -Infinity;
+document.getElementById('textClear').onclick = () => {
+  textClearCol = maxCol ?? -Infinity;
+  window.cwTester?.clear();
+  textEl.textContent = '';
+};
+
+function updateText() {
+  // 語間は本体が W レコードで出すので、そのまま連結するだけ
+  let out = '';
+  for (const c of chars.slice(-300)) if (c.col > textClearCol) out += c.ch;
+  if (textEl.textContent !== out) {
+    const atEnd = textEl.scrollTop + textEl.clientHeight >= textEl.scrollHeight - 4;
+    textEl.textContent = out;
+    if (atEnd) textEl.scrollTop = textEl.scrollHeight;
+  }
+}
+
+//====================================================================
+//  シリアル / ファイル
+//====================================================================
+const connBtn = document.getElementById('connect');
+const discBtn = document.getElementById('disconnect');
+const saveBtn = document.getElementById('saveFile');
+const followBtn = document.getElementById('follow');
+const scrub   = document.getElementById('scrub');
+const zoomX   = document.getElementById('zoomX');
+const zoomY   = document.getElementById('zoomY');
+const wrap    = document.getElementById('wrap');
+const textEl  = document.getElementById('text');
+const connEl  = document.getElementById('conn');
+
+let port = null, reader = null, keepReading = false;
+
+async function connect() {
+  if (!('serial' in navigator)) {
+    connEl.innerHTML = '<span class="err">この環境では Web Serial が使えません (Chrome / Edge を使うか、ログを開いてください)</span>';
+    return;
+  }
+  try {
+    port = await navigator.serial.requestPort();
+    await port.open({ baudRate: 115200, bufferSize: 16384 });
+  } catch (e) {
+    connEl.innerHTML = '<span class="err">接続できません: ' + e.message + '</span>';
+    return;
+  }
+  connEl.textContent = '接続中';
+  connBtn.disabled = true; discBtn.disabled = false;
+  setFollowing(true);
+  keepReading = true;
+  readLoop();
+}
+
+async function readLoop() {
+  const dec = new TextDecoder();
+  let buf = '';
+  reader = port.readable.getReader();
+  try {
+    while (keepReading) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      const idx = buf.lastIndexOf('\n');
+      if (idx >= 0) {
+        feedChunk(buf.slice(0, idx), true);
+        buf = buf.slice(idx + 1);
+      }
+    }
+  } catch (e) {
+    connEl.innerHTML = '<span class="err">受信が止まりました: ' + e.message + '</span>';
+  } finally {
+    try { reader.releaseLock(); } catch (_) {}
+  }
+}
+
+async function disconnect() {
+  keepReading = false;
+  try { if (reader) await reader.cancel(); } catch (_) {}
+  try { if (port) await port.close(); } catch (_) {}
+  port = null; reader = null;
+  connEl.textContent = '切断';
+  connBtn.disabled = false; discBtn.disabled = true;
+}
+
+connBtn.onclick = connect;
+discBtn.onclick = disconnect;
+document.getElementById('clear').onclick = resetData;
+document.getElementById('loadFile').onclick = () => document.getElementById('file').click();
+document.getElementById('file').onchange = async ev => {
+  const f = ev.target.files[0];
+  if (!f) return;
+  resetData();
+  feedChunk(await f.text());
+  setFollowing(false);
+  viewEnd = maxCol;
+  connEl.textContent = 'ファイル: ' + f.name + ' (' + cols.size + ' 列)';
+  updateStat();
+  ev.target.value = '';
+};
+saveBtn.onclick = () => {
+  const blob = new Blob([rawLog.join('\n') + '\n'], { type: 'text/plain' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'cwdec_scope_' + new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19) + '.log';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+};
+followBtn.onclick = () => { setFollowing(!following); updateStat(); };
+document.getElementById('copyAnalysis').onclick = () => copyText(buildAnalysis(), '解析');
+document.getElementById('copyRaw').onclick = () => copyText(buildRawLog(), 'ログ');
+document.getElementById('selClear').onclick = () => { selA = selB = null; updateSelBar(); };
+scrub.oninput = () => {
+  if (following) setFollowing(false);
+  viewEnd = minCol + (+scrub.value);
+  updateStat();
+};
+for (const spec of [
+  [document.getElementById('bKey'), () => showKey, v => showKey = v],
+  [document.getElementById('bEnv'), () => showEnv, v => showEnv = v],
+  [document.getElementById('bRaw'), () => showRaw, v => showRaw = v],
+]) {
+  const btn = spec[0], get = spec[1], set = spec[2];
+  btn.onclick = () => { set(!get()); btn.setAttribute('aria-pressed', String(get())); };
+}
+
+//====================================================================
+//  描画ループ
+//====================================================================
+let lastStat = 0;
+function frame(now) {
+  draw();
+  if (now - lastStat > 200) { lastStat = now; updateStat(); updateText(); }
+  requestAnimationFrame(frame);
+}
+resetData();
+setFollowing(true);
+requestAnimationFrame(frame);
+}
+</script>
+<script>
+// ステータス欄の右端に、配布中の最新ファームの版を出す (スコープビューアと同じ)
+fetch('../firmware/versions.json', { cache: 'no-cache' })
+  .then((r) => r.ok ? r.json() : null)
+  .then((d) => { if (d?.latest) document.getElementById('appVer').textContent = `v${d.latest}`; })
+  .catch(() => { /* オフライン */ });
+</script>
+<script type="module">
+import { setupPwa } from '../pwa.js';
+setupPwa(document.getElementById('btnInstall'), '../manual.html#install');
+</script>
+</body>
+</html>

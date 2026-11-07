@@ -91,6 +91,7 @@ let monitor = null;     // モニター音の GainNode
 let srcNode = null;     // 現在の入力ノード
 let chain = [];         // 入力ノードと worklet の間に挟んだノード (停止時に外す)
 let srcStream = null;   // getUserMedia / getDisplayMedia のストリーム
+let srcExtra = [];      // srcNode の手前で鳴っているノード (テスト信号の信号・ノイズ)
 let ready = false;
 
 function setState(msg, isErr = false) {
@@ -202,6 +203,16 @@ function sendNr() {
 function stopSource() {
 	if (srcNode) { try { srcNode.disconnect(); } catch {} }
 	if (srcNode && srcNode.stop) { try { srcNode.stop(); } catch {} }
+	// テスト信号は信号・ノイズの 2 本を混ぜたノードが srcNode なので、
+	// 実際に鳴っている元のノードはここで止める
+	for (const x of srcExtra) {
+		x.onended = null;
+		if (x.stop) { try { x.stop(); } catch {} }
+		try { x.disconnect(); } catch {}
+	}
+	srcExtra = [];
+	testSig = testNoise = null;
+	testOn = false;
 	if (srcStream) srcStream.getTracks().forEach((t) => t.stop());
 	for (const c of chain) { try { c.disconnect(); } catch {} }
 	chain = [];
@@ -215,10 +226,12 @@ function stopSource() {
 
 //	入力ノードを差し替える。monitorOn で生音をスピーカーへ出すかを決める。
 //	stream は getUserMedia / getDisplayMedia のもの (停止時に track を止めるため)
-function attachSource(n, monitorOn, stream = null) {
+//	extra は srcNode の手前で鳴っている、停止時に一緒に止めるノード
+function attachSource(n, monitorOn, stream = null, extra = []) {
 	stopSource();                       // 先に古い入力を完全に片付ける
 	srcNode = n;
 	srcStream = stream;
+	srcExtra = extra;
 	monitorOn_ = monitorOn;
 	wireChain();
 	node.port.postMessage({ type: 'reset' });
@@ -247,6 +260,9 @@ function wireChain() {
 		chain.push(sp, g);
 		out = g;
 	}
+	// モニターは BPF の手前 (チャンネル選択の後) から取り、帯域制限前の
+	// 入力音そのものを聞けるようにする
+	const pre = out;
 
 	// 入力段バンドパス。実機は ADC の手前に多重帰還型の BPF
 	// (中心 700Hz / Q=5) が入っており、ファームのしきい値やノイズ床の
@@ -272,7 +288,7 @@ function wireChain() {
 	// 接続/切断で切り替えると再生中に反映されない (chain を張り直すまで
 	// 効かない) ので、ここでは必ず繋ぐ
 	if (monitor) {
-		out.connect(monitor);
+		pre.connect(monitor);
 		applyMonitor();
 	}
 }
@@ -417,12 +433,14 @@ let filePos = 0;            // 秒
 let filePlaying = false;
 let fileT0 = 0;             // start した時点の ctx.currentTime
 let fileSeeking = false;    // シークバーをドラッグ中は表示を追従させない
+let fileSrc = null;         // 再生中の AudioBufferSourceNode (LOOP の切替用)
 
 const SEEK_STEP = 5;        // 巻き戻し / 早送りの秒数
 
 function fileNow() {
 	if (!fileBuffer) return 0;
-	const t = filePlaying ? filePos + (ctx.currentTime - fileT0) : filePos;
+	let t = filePlaying ? filePos + (ctx.currentTime - fileT0) : filePos;
+	if (filePlaying && fileSrc?.loop) t %= fileBuffer.duration;
 	return Math.max(0, Math.min(fileBuffer.duration, t));
 }
 
@@ -450,13 +468,16 @@ function fileStartAt(pos) {
 	filePos = Math.max(0, Math.min(fileBuffer.duration - 0.01, pos));
 	const src = ctx.createBufferSource();
 	src.buffer = fileBuffer;
+	src.loop = loopOn;                  // LOOP 中は末尾から先頭へ切れ目なくつながる
 	attachSource(src, $('fileMonitor').checked);
+	fileSrc = src;
 	src.onended = () => {
 		// stop() で止めたときも呼ばれるので、末尾まで来た場合だけ後始末する
-		if (!filePlaying) return;
+		if (!filePlaying || fileSrc !== src) return;
 		if (fileNow() >= fileBuffer.duration - 0.05) {
 			filePlaying = false;
 			filePos = fileBuffer.duration;
+			fileSrc = null;
 			drainDecoder();             // 末尾の文字を取りこぼさない
 			fileUpdateUI();
 		}
@@ -525,15 +546,6 @@ function drainDecoder() {
 	node?.port.postMessage({ type: 'drain' });
 }
 
-function playBuffer(buffer, monitorOn, onended) {
-	const s = ctx.createBufferSource();
-	s.buffer = buffer;
-	attachSource(s, monitorOn);
-	s.onended = onended;
-	s.start();
-	return s;
-}
-
 //==================================================================
 //	入力元 4: 内蔵テスト信号 (合成 CW)
 //==================================================================
@@ -545,16 +557,20 @@ const MORSE = {
 	0: '-----', 1: '.----', 2: '..---', 3: '...--', 4: '....-',
 	5: '.....', 6: '-....', 7: '--...', 8: '---..', 9: '----.',
 	'/': '-..-.', '?': '..--..', ',': '--..--', '.': '.-.-.-', '=': '-...-',
+	':': '---...', ';': '-.-.-.', '-': '-....-', "'": '.----.', '(': '-.--.',
+	')': '-.--.-', '"': '.-..-.', '@': '.--.-.', '+': '.-.-.', '!': '-.-.--',
 };
 
-//	立ち上がり/立ち下がりを 5ms なまらせた、実機の受信音に近い CW を作る
-function synthCW(text, { wpm, toneHz, snrDb, amp = 0.3 }) {
+//	立ち上がり/立ち下がりを 5ms なまらせた、実機の受信音に近い CW を作る。
+//	振幅 1 で作り、ノイズも足さない。信号とノイズの大きさは再生時に
+//	それぞれのゲインノードで決める (S/N を再生中に変えられるようにするため)
+function synthCW(text, { wpm, toneHz }) {
 	const rate = ctx.sampleRate;
 	const unit = 1.2 / wpm;
 	const keys = [[false, 0.6]];
 	let first = true;
 	for (const raw of text.toUpperCase()) {
-		if (raw === ' ') { keys.push([false, 7 * unit]); first = true; continue; }
+		if (/\s/.test(raw)) { if (!first) keys.push([false, 7 * unit]); first = true; continue; }
 		const code = MORSE[raw];
 		if (!code) continue;
 		if (!first) keys.push([false, 3 * unit]);
@@ -577,7 +593,6 @@ function synthCW(text, { wpm, toneHz, snrDb, amp = 0.3 }) {
 		pos += len;
 	}
 	const rn = Math.max(1, Math.round(0.005 * rate));
-	const noise = amp / Math.pow(10, snrDb / 20);
 	const w = 2 * Math.PI * toneHz / rate;
 	let run = 0;
 	for (let i = 0; i < rn; i++) run += env[Math.min(n - 1, i)];
@@ -586,11 +601,118 @@ function synthCW(text, { wpm, toneHz, snrDb, amp = 0.3 }) {
 		const sub = env[Math.max(0, i - 1)] ?? 0;
 		if (i > 0) run += add - sub;
 		const e = Math.max(0, Math.min(1, run / rn));
-		const u1 = Math.random() || 1e-9, u2 = Math.random();
-		const g = Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
-		out[i] = amp * e * Math.sin(w * i) + noise * g;
+		out[i] = e * Math.sin(w * i);
 	}
 	return buf;
+}
+
+//	信号とノイズのレベル。S/N の定義は「信号の振幅 A に対する雑音の標準偏差 σ」
+//	(σ = A·r, r = 10^(-S/N/20))。A を固定して σ だけ動かすと、S/N が低いとき
+//	σ が 1 を超えて割れ (ADC 相当のレンジで CLIP)、実際の S/N が設定とずれる。
+//	そこで ピーク ≈ A + 4σ が PEAK に収まるよう A = PEAK / (1 + 4r) とする。
+//	S/N が低いほど σ は PEAK/4 に近づいてほぼ一定になり信号が小さくなる。
+//	高いほど A は PEAK に近づきノイズが小さくなる
+const TEST_PEAK = 0.9;
+function testLevels() {
+	const r = Math.pow(10, -$('tSnr').value / 20);
+	const a = TEST_PEAK / (1 + 4 * r);
+	return { sig: a, noise: a * r };
+}
+
+//	ノイズは分散 1 のガウス雑音を 4 秒分作ってループで鳴らし続ける
+let noiseBuf = null;
+function getNoiseBuf() {
+	if (noiseBuf && noiseBuf.sampleRate === ctx.sampleRate) return noiseBuf;
+	const n = ctx.sampleRate * 4;
+	noiseBuf = ctx.createBuffer(1, n, ctx.sampleRate);
+	const d = noiseBuf.getChannelData(0);
+	for (let i = 0; i < n; i++) {
+		const u1 = Math.random() || 1e-9, u2 = Math.random();
+		d[i] = Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
+	}
+	return noiseBuf;
+}
+
+//	テスト信号の経路: 信号 → sigGain ┐
+//	                  ノイズ → noiseGain ┴→ testMix (= srcNode) → BPF → worklet
+//	S/N はゲインを変えるだけなので送信中でもその場で効く。LOOP 中は 1 回
+//	送り終えるたびに信号だけ作り直して sigGain へつなぐ (デコーダはリセットしない)
+let testOn = false, testSig = null, testNoise = null;
+let testSigGain = null, testNoiseGain = null, testCount = 0;
+
+function testStatus() {
+	setState(`テスト信号: ${$('tWpm').value}WPM / ${$('tHz').value}Hz / S:N ${$('tSnr').value}dB` +
+		(loopOn ? ` — LOOP ${testCount} 回目` : ''));
+}
+
+function testSendOnce() {
+	const buf = synthCW($('tText').value, { wpm: +$('tWpm').value, toneHz: +$('tHz').value });
+	const s = ctx.createBufferSource();
+	s.buffer = buf;
+	s.connect(testSigGain);
+	s.onended = () => {
+		if (!testOn || testSig !== s) return;
+		srcExtra = srcExtra.filter((x) => x !== s);
+		if (loopOn) { testCount++; testSendOnce(); return; }
+		drainDecoder();                 // 末尾の文字を取りこぼさない
+		stopSource();
+		setState('テスト信号: 送信終了');
+	};
+	s.start();
+	testSig = s;
+	srcExtra.push(s);
+	testStatus();
+}
+
+async function testPlay() {
+	await ensureEngine();
+	// ファイルを再生中なら一時停止の扱いにする (位置表示が進み続けないように)
+	if (filePlaying) { filePos = fileNow(); filePlaying = false; fileUpdateUI(); }
+	const lv = testLevels();
+	const mix = ctx.createGain();
+	testSigGain = ctx.createGain();
+	testSigGain.gain.value = lv.sig;
+	testNoiseGain = ctx.createGain();
+	testNoiseGain.gain.value = lv.noise;
+	testSigGain.connect(mix);
+	testNoiseGain.connect(mix);
+	const nz = ctx.createBufferSource();
+	nz.buffer = getNoiseBuf();
+	nz.loop = true;
+	nz.connect(testNoiseGain);
+	attachSource(mix, $('testMonitor').checked, null, [nz, testSigGain, testNoiseGain]);
+	nz.start();
+	testNoise = nz;
+	testOn = true;
+	testCount = 1;
+	testSendOnce();
+	$('testStop').disabled = false;
+	$('testPlay').disabled = true;
+}
+
+function applyTestSnr() {
+	if (!testOn) return;
+	const lv = testLevels();
+	testSigGain.gain.setTargetAtTime(lv.sig, ctx.currentTime, 0.02);
+	testNoiseGain.gain.setTargetAtTime(lv.noise, ctx.currentTime, 0.02);
+	testStatus();
+}
+
+//==================================================================
+//	LOOP (音声ファイル・テスト信号の両タブで同じ状態を共有する)
+//==================================================================
+let loopOn = false;
+function setLoop(on) {
+	loopOn = on;
+	for (const b of document.querySelectorAll('input.loop')) b.checked = on;
+	// 再生中のファイルにはその場で反映する。位置計算の起点を今に取り直してから
+	// 切り替えるので、既に何周かしていても表示はずれない
+	if (filePlaying && fileSrc) {
+		filePos = fileNow();
+		fileT0 = ctx.currentTime;
+		fileSrc.loop = on;
+	}
+	if (testOn) testStatus();
 }
 
 //==================================================================
@@ -1064,20 +1186,9 @@ $('fileSeek').onchange = guard(async () => {
 for (const [r, v] of [['tWpm', 'tWpmV'], ['tHz', 'tHzV'], ['tSnr', 'tSnrV']]) {
 	$(r).oninput = () => { $(v).textContent = $(r).value; };
 }
-$('testPlay').onclick = guard(async () => {
-	await ensureEngine();
-	const buf = synthCW($('tText').value, {
-		wpm: +$('tWpm').value, toneHz: +$('tHz').value, snrDb: +$('tSnr').value,
-	});
-	playBuffer(buf, $('testMonitor').checked, () => {
-		drainDecoder();                 // 末尾の文字を取りこぼさない
-		$('testStop').disabled = true;
-		$('testPlay').disabled = false;
-	});
-	$('testStop').disabled = false;
-	$('testPlay').disabled = true;
-	setState(`テスト信号: ${$('tWpm').value}WPM / ${$('tHz').value}Hz / S:N ${$('tSnr').value}dB`);
-});
+$('tSnr').addEventListener('input', applyTestSnr);
+for (const b of document.querySelectorAll('input.loop')) b.onchange = () => setLoop(b.checked);
+$('testPlay').onclick = guard(testPlay);
 $('testStop').onclick = () => { drainDecoder(); stopSource(); setState('停止中'); };
 $('stopAll').onclick = () => {
 	drainDecoder();

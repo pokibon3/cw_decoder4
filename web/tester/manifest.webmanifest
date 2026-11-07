@@ -1,0 +1,26 @@
+{
+ "id": "/cw_decoder4/tester/",
+ "name": "CW Tester",
+ "short_name": "CW Tester",
+ "description": "テスト信号を実機に聞かせ、デコード結果と照合して認識率を出す",
+ "lang": "ja",
+ "start_url": "./",
+ "scope": "./",
+ "display": "standalone",
+ "background_color": "#0b0f14",
+ "theme_color": "#0b0f14",
+ "icons": [
+  {
+   "src": "../icons/tester-192.png",
+   "sizes": "192x192",
+   "type": "image/png",
+   "purpose": "any maskable"
+  },
+  {
+   "src": "../icons/tester-512.png",
+   "sizes": "512x512",
+   "type": "image/png",
+   "purpose": "any maskable"
+  }
+ ]
+}

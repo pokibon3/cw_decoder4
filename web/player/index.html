@@ -1,0 +1,558 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<!--
+	CW Player — Web 版 CW Decoder の「音声ファイル」「テスト信号」の再生部分だけを
+	取り出した単独アプリ。デコーダ (worklet / wasm) は持たず、音をスピーカーへ
+	出すだけなので、実機の CW Decoder にスピーカー経由で聞かせる用途に使う。
+	ワークレットを使わないため file:// で直接開いても動作する (インストールは不可)。
+-->
+<title>CW Player</title>
+<meta name="theme-color" content="#0b0f14">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" type="image/png" href="../icons/player-192.png">
+<link rel="apple-touch-icon" href="../icons/player-192.png">
+<style>
+:root {
+  --bg: #0b0f14;
+  --panel: #111823;
+  --line: #28374b;
+  --tx: #d8dee6;
+  --dim: #8b94a3;
+  --accent: #5a96d2;
+  --amber: #fac775;
+  --green: #5adc78;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0; padding: 8px 10px;
+  background: var(--bg); color: var(--tx);
+  font: 13px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", "Hiragino Sans", "Noto Sans JP", sans-serif;
+  display: flex; flex-direction: column; gap: 7px; min-height: 100%;
+}
+h1 { font-size: 14px; margin: 0; font-weight: 600; letter-spacing: .04em; display: flex; align-items: baseline; gap: 8px; }
+h1 .link {
+  font-size: 12px; font-weight: 400; color: var(--accent);
+  border: 1px solid var(--line); border-radius: 5px; padding: 2px 10px; text-decoration: none;
+}
+h1 .link { margin-left: auto; }
+h1 .link:hover { border-color: var(--accent); }
+.card {
+  background: var(--panel); border: 1px solid var(--line);
+  border-radius: 8px; padding: 7px 10px;
+}
+.row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.row + .row { margin-top: 6px; }
+.grow { flex: 1 1 auto; }
+button, input[type=file]::file-selector-button, input[type=text], textarea {
+  font: inherit; color: var(--tx); background: #1a2331;
+  border: 1px solid var(--line); border-radius: 6px;
+  height: 32px; padding: 0 12px; cursor: pointer;
+}
+button, input[type=file]::file-selector-button {
+  display: inline-flex; align-items: center; justify-content: center;
+}
+button:hover:not(:disabled) { border-color: #47607f; }
+button:disabled { opacity: .4; cursor: default; }
+button.primary { background: #16324a; color: #cfe7ff; }
+label.chk { display: inline-flex; align-items: center; gap: 5px; color: var(--dim); cursor: pointer; }
+input[type=range] { accent-color: var(--accent); }
+.metric { font: 600 13px/1 ui-monospace, "SF Mono", Menlo, monospace; color: var(--amber); }
+
+.tabs { display: flex; gap: 4px; }
+.tabs button { border-radius: 6px 6px 0 0; border-bottom-color: transparent; }
+.tabs button[aria-selected=true] { background: #16324a; border-color: #2f6592; border-bottom-color: #2f6592; color: #cfe7ff; }
+.srcpane { display: none; padding-top: 10px; border-top: 1px solid var(--line); margin-top: -1px; }
+.srcpane.active { display: block; }
+
+button.tp { font-size: 15px; line-height: 1; min-width: 44px; }
+textarea {
+  width: 100%; height: auto; min-height: 84px; padding: 6px 8px; resize: vertical;
+  background: #0a121c; cursor: text;
+  font: 15px/1.5 ui-monospace, "SF Mono", Menlo, monospace; letter-spacing: .04em;
+}
+/* 送出中の文字の位置 */
+#tShow {
+  margin: 8px 0 0; min-height: 3em; padding: 6px 8px;
+  border: 1px solid var(--line); border-radius: 6px; background: #0a1018;
+  font: 15px/1.5 ui-monospace, "SF Mono", Menlo, monospace; letter-spacing: .04em;
+  white-space: pre-wrap; word-break: break-all; color: var(--dim);
+}
+#tShow .done { color: #e1e6dc; }
+#tShow .cur { color: #0b0f14; background: var(--green); border-radius: 2px; }
+
+#statusbar {
+  margin-top: auto; color: var(--dim); font-size: 11.5px; line-height: 1.5;
+  border-top: 1px solid var(--line); padding-top: 5px;
+  display: flex; gap: 12px; white-space: nowrap;
+}
+#statusbar #state { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.err { color: #ff9a8f; }
+</style>
+</head>
+<body>
+
+<h1>CW Player
+  <a class="link" href="#" id="btnInstall" hidden title="アプリとしてインストールする (Chrome / Edge)">インストール</a>
+</h1>
+
+<div class="card">
+  <div class="tabs" role="tablist">
+    <button role="tab" data-src="file" aria-selected="true">音声ファイル</button>
+    <button role="tab" data-src="test" aria-selected="false">テスト信号</button>
+  </div>
+
+  <!-- 音声ファイル -->
+  <div class="srcpane active" id="pane-file">
+    <div class="row">
+      <input type="file" id="fileInput" accept="audio/*">
+    </div>
+    <div class="row">
+      <button id="fileHome"  class="tp" disabled title="先頭へ">&#9198;</button>
+      <button id="fileBack"  class="tp" disabled title="5 秒戻す">&#9194;</button>
+      <button id="filePlay"  class="tp primary" disabled title="再生 / 一時停止">&#9654;</button>
+      <button id="fileFwd"   class="tp" disabled title="5 秒進める">&#9193;</button>
+      <button id="fileEnd"   class="tp" disabled title="末尾へ">&#9197;</button>
+      <label class="chk" title="繰り返し再生"><input type="checkbox" class="loop"> LOOP</label>
+      <input type="range" id="fileSeek" min="0" max="1000" value="0" step="1" disabled
+             title="再生位置" style="flex:1 1 160px">
+      <span id="fileTime" class="metric" style="min-width:96px;text-align:right">--:-- / --:--</span>
+    </div>
+  </div>
+
+  <!-- テスト信号 -->
+  <div class="srcpane" id="pane-test">
+    <div class="row">
+      <label class="chk">WPM <input type="range" id="tWpm" min="5" max="45" value="20"><span id="tWpmV" class="metric">20</span></label>
+      <label class="chk">トーン <input type="range" id="tHz" min="450" max="1050" step="10" value="600"><span id="tHzV" class="metric">600</span>Hz</label>
+      <label class="chk">S/N <input type="range" id="tSnr" min="-15" max="40" value="15"><span id="tSnrV" class="metric">15</span>dB</label>
+    </div>
+    <div class="row">
+      <textarea id="tText" spellcheck="false">ALICE WAS BEGINNING TO GET VERY TIRED OF SITTING BY HER SISTER ON THE BANK, AND OF HAVING NOTHING TO DO: ONCE OR TWICE SHE HAD PEEPED INTO THE BOOK</textarea>
+    </div>
+    <div class="row">
+      <button id="testPlay" class="primary">送信</button>
+      <button id="testStop" disabled>停止</button>
+      <label class="chk" title="繰り返し送信"><input type="checkbox" class="loop"> LOOP</label>
+      <span class="grow"></span>
+      <span id="testTime" class="metric"></span>
+    </div>
+    <div id="tShow"></div>
+  </div>
+
+  <div class="row" style="margin-top:8px">
+    <label class="chk">音量 <input type="range" id="vol" min="-40" max="0" value="-6" style="width:160px"><span id="volV" class="metric">-6 dB</span></label>
+  </div>
+</div>
+
+<div id="statusbar"><span id="state">停止中</span></div>
+
+<script>
+'use strict';
+const $ = (id) => document.getElementById(id);
+
+let ctx = null;         // AudioContext
+let out = null;         // 音量の GainNode
+let src = null;         // 再生中の AudioBufferSourceNode
+let loopOn = false;
+
+function setState(msg, isErr = false) {
+	$('state').textContent = msg;
+	$('state').className = isErr ? 'err' : '';
+}
+
+async function ensureCtx() {
+	if (!ctx) {
+		ctx = new AudioContext({ sampleRate: 48000 });
+		out = ctx.createGain();
+		out.connect(ctx.destination);
+		applyVol();
+	}
+	if (ctx.state === 'suspended') await ctx.resume();
+}
+
+function applyVol() {
+	const db = +$('vol').value;
+	$('volV').textContent = `${db} dB`;
+	if (out) out.gain.setTargetAtTime(Math.pow(10, db / 20), ctx.currentTime, 0.01);
+}
+
+//	鳴っている音を止める。onended は stop() でも呼ばれるので先に外す
+function stopSource() {
+	if (src) {
+		src.onended = null;
+		try { src.stop(); } catch {}
+		try { src.disconnect(); } catch {}
+	}
+	src = null;
+}
+
+function playBuffer(buffer, offset, loop, onended, dest = out) {
+	stopSource();
+	const s = ctx.createBufferSource();
+	s.buffer = buffer;
+	s.loop = loop;
+	s.connect(dest);
+	s.onended = onended;
+	s.start(0, offset);
+	src = s;
+	return s;
+}
+
+//==================================================================
+//	LOOP チェックボックス (両タブで同じ状態を共有する)
+//==================================================================
+function setLoop(on) {
+	loopOn = on;
+	for (const b of document.querySelectorAll('input.loop')) b.checked = on;
+	// 再生中のファイルにはその場で反映する。位置計算の起点を今に取り直してから
+	// 切り替えるので、既に何周かしていても表示はずれない
+	if (filePlaying && src) {
+		filePos = fileNow();
+		fileT0 = ctx.currentTime;
+		src.loop = on;
+		if (!on) {
+			// ループを外した瞬間からは素の再生と同じく末尾で止まるようにする
+			src.onended = fileEnded;
+		}
+	}
+}
+for (const b of document.querySelectorAll('input.loop')) b.onchange = () => setLoop(b.checked);
+
+//==================================================================
+//	タブ切替 (切り替えたら鳴っている音は止める)
+//==================================================================
+for (const t of document.querySelectorAll('[role=tab]')) {
+	t.onclick = () => {
+		for (const u of document.querySelectorAll('[role=tab]')) u.setAttribute('aria-selected', u === t);
+		for (const p of document.querySelectorAll('.srcpane')) p.classList.toggle('active', p.id === 'pane-' + t.dataset.src);
+		stopAll();
+	};
+}
+
+//==================================================================
+//	音声ファイル
+//	AudioBufferSourceNode は一時停止もシークもできないので、位置を自前で持ち、
+//	操作のたびにノードを作り直して offset 付きで start する。
+//	filePos は「今の source が start された時点の位置」
+//==================================================================
+let fileBuffer = null, fileName = '';
+let filePos = 0, fileT0 = 0, filePlaying = false, fileSeeking = false;
+const SEEK_STEP = 5;
+const mmss = (t) => `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}`;
+
+function fileNow() {
+	if (!fileBuffer) return 0;
+	const d = fileBuffer.duration;
+	let t = filePlaying ? filePos + (ctx.currentTime - fileT0) : filePos;
+	if (filePlaying && src && src.loop) t %= d;
+	return Math.max(0, Math.min(d, t));
+}
+
+function fileUpdateUI() {
+	const has = !!fileBuffer;
+	for (const id of ['fileHome', 'fileBack', 'filePlay', 'fileFwd', 'fileEnd', 'fileSeek']) $(id).disabled = !has;
+	$('filePlay').innerHTML = filePlaying ? '&#10074;&#10074;' : '&#9654;';
+	$('filePlay').title = filePlaying ? '一時停止' : '再生';
+	if (!has) { $('fileTime').textContent = '--:-- / --:--'; return; }
+	const t = fileNow(), d = fileBuffer.duration;
+	$('fileTime').textContent = `${mmss(t)} / ${mmss(d)}`;
+	if (!fileSeeking) $('fileSeek').value = Math.round((t / d) * 1000);
+}
+
+function fileEnded() {
+	filePlaying = false;
+	filePos = fileBuffer.duration;
+	src = null;
+	fileUpdateUI();
+	setState(`ファイル: ${fileName} — 再生終了`);
+}
+
+function fileStartAt(pos) {
+	filePos = Math.max(0, Math.min(fileBuffer.duration - 0.01, pos));
+	playBuffer(fileBuffer, filePos, loopOn, fileEnded);
+	fileT0 = ctx.currentTime;
+	filePlaying = true;
+	fileUpdateUI();
+	setState(`ファイル: ${fileName} — 再生中${loopOn ? ' (LOOP)' : ''}`);
+}
+
+async function filePlayPause() {
+	await ensureCtx();
+	if (!fileBuffer) return;
+	if (filePlaying) {
+		filePos = fileNow();
+		filePlaying = false;
+		stopSource();
+		fileUpdateUI();
+		setState(`ファイル: ${fileName} — 一時停止`);
+	} else {
+		if (filePos >= fileBuffer.duration - 0.05) filePos = 0;   // 末尾なら頭から
+		fileStartAt(filePos);
+	}
+}
+
+async function fileSeek(pos) {
+	await ensureCtx();
+	if (!fileBuffer) return;
+	const wasPlaying = filePlaying;
+	if (wasPlaying) { filePlaying = false; stopSource(); }
+	filePos = Math.max(0, Math.min(fileBuffer.duration, pos));
+	if (wasPlaying && filePos < fileBuffer.duration - 0.05) fileStartAt(filePos);
+	else fileUpdateUI();
+}
+
+async function loadFile(file) {
+	await ensureCtx();
+	stopAll();
+	fileBuffer = await ctx.decodeAudioData(await file.arrayBuffer());
+	fileName = file.name;
+	filePos = 0;
+	setState(`ファイル: ${file.name} — ${fileBuffer.duration.toFixed(1)}秒 / ${fileBuffer.sampleRate}Hz`);
+	fileStartAt(0);     // 選んだらそのまま先頭から再生する
+}
+
+//==================================================================
+//	テスト信号 (合成 CW)
+//==================================================================
+const MORSE = {
+	A: '.-', B: '-...', C: '-.-.', D: '-..', E: '.', F: '..-.', G: '--.',
+	H: '....', I: '..', J: '.---', K: '-.-', L: '.-..', M: '--', N: '-.',
+	O: '---', P: '.--.', Q: '--.-', R: '.-.', S: '...', T: '-', U: '..-',
+	V: '...-', W: '.--', X: '-..-', Y: '-.--', Z: '--..',
+	0: '-----', 1: '.----', 2: '..---', 3: '...--', 4: '....-',
+	5: '.....', 6: '-....', 7: '--...', 8: '---..', 9: '----.',
+	'/': '-..-.', '?': '..--..', ',': '--..--', '.': '.-.-.-', '=': '-...-',
+	':': '---...', ';': '-.-.-.', '-': '-....-', "'": '.----.', '(': '-.--.',
+	')': '-.--.-', '"': '.-..-.', '@': '.--.-.', '+': '.-.-.', '!': '-.-.--',
+};
+
+const LEAD = 0.6, TAIL = 1.0;    // 前後の無音 (秒)
+
+//	立ち上がり/立ち下がりを 5ms なまらせた、実機の受信音に近い CW を作る。
+//	marks には各文字の送出開始時刻 (秒) と text 上の位置を入れて返す。
+//	振幅 1 で作り、ノイズも足さない。信号とノイズの大きさは再生時に
+//	それぞれのゲインノードで決める (S/N を再生中に変えられるようにするため)
+function synthCW(text, { wpm, toneHz }) {
+	const rate = ctx.sampleRate;
+	const unit = 1.2 / wpm;
+	const keys = [[false, LEAD]];
+	const marks = [];
+	let t = LEAD, first = true;
+	const push = (on, d) => { keys.push([on, d]); t += d; };
+	[...text.toUpperCase()].forEach((raw, idx) => {
+		if (/\s/.test(raw)) {
+			if (!first) push(false, 7 * unit);
+			first = true;
+			return;
+		}
+		const code = MORSE[raw];
+		if (!code) return;
+		if (!first) push(false, 3 * unit);
+		first = false;
+		marks.push({ t, idx });
+		code.split('').forEach((e, i) => {
+			if (i > 0) push(false, unit);
+			push(true, e === '.' ? unit : 3 * unit);
+		});
+	});
+	push(false, TAIL);
+
+	const n = Math.round(t * rate);
+	const buf = ctx.createBuffer(1, n, rate);
+	const o = buf.getChannelData(0);
+	const env = new Float32Array(n);
+	let pos = 0;
+	for (const [on, dur] of keys) {
+		const len = Math.round(dur * rate);
+		if (on) for (let i = 0; i < len && pos + i < n; i++) env[pos + i] = 1;
+		pos += len;
+	}
+	const rn = Math.max(1, Math.round(0.005 * rate));
+	const w = 2 * Math.PI * toneHz / rate;
+	let run = 0;
+	for (let i = 0; i < rn; i++) run += env[Math.min(n - 1, i)];
+	for (let i = 0; i < n; i++) {
+		const add = env[Math.min(n - 1, i + rn)] ?? 0;
+		const sub = env[Math.max(0, i - 1)] ?? 0;
+		if (i > 0) run += add - sub;
+		const e = Math.max(0, Math.min(1, run / rn));
+		o[i] = e * Math.sin(w * i);
+	}
+	return { buf, marks };
+}
+
+//==================================================================
+//	信号とノイズのレベル (S/N はこの 2 つのゲインで決める)
+//	ノイズは分散 1 のガウス雑音を 4 秒分作ってループで鳴らし続ける。
+//	S/N の定義は「信号の振幅 A に対する雑音の標準偏差 σ」(σ = A·r, r = 10^(-S/N/20))。
+//	A を固定して σ だけ動かすと、S/N が低いとき σ が 1 を超えて出力が割れ、
+//	実際の S/N が設定とずれる。そこで ピーク ≈ A + 4σ が PEAK に収まるよう
+//	A = PEAK / (1 + 4r) とする。S/N が低いほど σ は PEAK/4 に近づいてほぼ一定に
+//	なり信号が小さくなる。高いほど A は PEAK に近づきノイズが小さくなる。
+//	ゲインを変えるだけなので送信中でもその場で効く
+//==================================================================
+const PEAK = 0.9;
+let sigGain = null;
+let noiseBuf = null, noiseSrc = null, noiseGain = null;
+
+function levels() {
+	const r = Math.pow(10, -$('tSnr').value / 20);
+	const a = PEAK / (1 + 4 * r);
+	return { sig: a, noise: a * r };
+}
+
+function noiseStart() {
+	if (noiseSrc) return;
+	if (!noiseBuf) {
+		const n = ctx.sampleRate * 4;
+		noiseBuf = ctx.createBuffer(1, n, ctx.sampleRate);
+		const d = noiseBuf.getChannelData(0);
+		for (let i = 0; i < n; i++) {
+			const u1 = Math.random() || 1e-9, u2 = Math.random();
+			d[i] = Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
+		}
+	}
+	const lv = levels();
+	sigGain = ctx.createGain();
+	sigGain.gain.value = lv.sig;
+	sigGain.connect(out);
+	noiseGain = ctx.createGain();
+	noiseGain.gain.value = lv.noise;
+	noiseGain.connect(out);
+	noiseSrc = ctx.createBufferSource();
+	noiseSrc.buffer = noiseBuf;
+	noiseSrc.loop = true;
+	noiseSrc.connect(noiseGain);
+	noiseSrc.start();
+}
+
+function noiseStop() {
+	if (noiseSrc) { try { noiseSrc.stop(); } catch {} try { noiseSrc.disconnect(); } catch {} }
+	if (noiseGain) { try { noiseGain.disconnect(); } catch {} }
+	if (sigGain) { try { sigGain.disconnect(); } catch {} }
+	noiseSrc = null;
+	noiseGain = null;
+	sigGain = null;
+}
+
+function applySnr() {
+	const lv = levels();
+	if (sigGain) sigGain.gain.setTargetAtTime(lv.sig, ctx.currentTime, 0.02);
+	if (noiseGain) noiseGain.gain.setTargetAtTime(lv.noise, ctx.currentTime, 0.02);
+	if (testRun) showTestState(testRun.count);
+}
+
+function showTestState(count) {
+	setState(`テスト信号: ${$('tWpm').value}WPM / ${$('tHz').value}Hz / S:N ${$('tSnr').value}dB` +
+		(loopOn ? ` — LOOP ${count} 回目` : ''));
+}
+
+let testRun = null;       // { text, marks, t0, dur, count }
+let testRaf = 0;
+
+//	1 回分を合成して鳴らす。LOOP 中は鳴り終わるたびに作り直すので、
+//	WPM・トーン・文の変更は次の周回から効く (S/N はその場で効く)
+function testSendOnce(count) {
+	const text = $('tText').value;
+	const { buf, marks } = synthCW(text, { wpm: +$('tWpm').value, toneHz: +$('tHz').value });
+	if (!marks.length) { testStop(); setState('送信できる文字がありません', true); return; }
+	playBuffer(buf, 0, false, () => {
+		src = null;
+		if (loopOn) testSendOnce(count + 1);
+		else { testStop(); setState('テスト信号: 送信終了'); }
+	}, sigGain);
+	testRun = { text, marks, t0: ctx.currentTime, dur: buf.duration, count };
+	showTestState(count);
+	if (!testRaf) testRaf = requestAnimationFrame(testTick);
+}
+
+//	送出中の文字を強調表示する
+function testTick() {
+	testRaf = 0;
+	if (!testRun) return;
+	const { text, marks, t0, dur } = testRun;
+	const t = ctx.currentTime - t0;
+	let k = -1;
+	while (k + 1 < marks.length && marks[k + 1].t <= t) k++;
+	const cur = k >= 0 ? marks[k].idx : -1;
+	const esc = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;');
+	const up = text.toUpperCase();
+	$('tShow').innerHTML = cur < 0 ? esc(up)
+		: `<span class="done">${esc(up.slice(0, cur))}</span><span class="cur">${esc(up[cur])}</span>${esc(up.slice(cur + 1))}`;
+	$('testTime').textContent = `${mmss(Math.min(t, dur))} / ${mmss(dur)}`;
+	testRaf = requestAnimationFrame(testTick);
+}
+
+async function testPlay() {
+	await ensureCtx();
+	$('testStop').disabled = false;
+	$('testPlay').disabled = true;
+	noiseStart();
+	testSendOnce(1);
+}
+
+function testStop() {
+	stopSource();
+	noiseStop();
+	testRun = null;
+	if (testRaf) { cancelAnimationFrame(testRaf); testRaf = 0; }
+	$('testStop').disabled = true;
+	$('testPlay').disabled = false;
+}
+
+function stopAll() {
+	if (filePlaying) { filePos = fileNow(); filePlaying = false; }
+	testStop();
+	fileUpdateUI();
+	setState('停止中');
+}
+
+//==================================================================
+//	イベント
+//==================================================================
+//	失敗を握りつぶさず状態欄に出す
+const guard = (fn) => async (...a) => {
+	try { await fn(...a); } catch (e) { console.error(e); setState(`エラー: ${e.message || e}`, true); }
+};
+
+$('fileInput').onchange = guard((e) => e.target.files[0] && loadFile(e.target.files[0]));
+$('filePlay').onclick = guard(filePlayPause);
+$('fileHome').onclick = guard(() => fileSeek(0));
+$('fileBack').onclick = guard(() => fileSeek(fileNow() - SEEK_STEP));
+$('fileFwd').onclick  = guard(() => fileSeek(fileNow() + SEEK_STEP));
+$('fileEnd').onclick  = guard(() => fileSeek(fileBuffer ? fileBuffer.duration : 0));
+$('fileSeek').oninput = () => {
+	fileSeeking = true;
+	if (fileBuffer) {
+		const t = (+$('fileSeek').value / 1000) * fileBuffer.duration;
+		$('fileTime').textContent = `${mmss(t)} / ${mmss(fileBuffer.duration)}`;
+	}
+};
+$('fileSeek').onchange = guard(async () => {
+	fileSeeking = false;
+	if (fileBuffer) await fileSeek((+$('fileSeek').value / 1000) * fileBuffer.duration);
+});
+
+for (const [r, v] of [['tWpm', 'tWpmV'], ['tHz', 'tHzV'], ['tSnr', 'tSnrV']]) {
+	$(r).oninput = () => { $(v).textContent = $(r).value; };
+}
+$('tSnr').addEventListener('input', applySnr);
+$('testPlay').onclick = guard(testPlay);
+$('testStop').onclick = () => { testStop(); setState('停止中'); };
+$('tText').oninput = () => { if (!testRun) $('tShow').textContent = $('tText').value.toUpperCase(); };
+$('tShow').textContent = $('tText').value.toUpperCase();
+$('vol').oninput = applyVol;
+
+// ファイル再生中は位置表示を進める
+setInterval(() => { if (filePlaying) fileUpdateUI(); }, 200);
+</script>
+<script type="module">
+import { setupPwa } from '../pwa.js';
+setupPwa(document.getElementById('btnInstall'), '../manual.html#install');
+</script>
+</body>
+</html>
