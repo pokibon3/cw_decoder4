@@ -19,7 +19,9 @@
 #               https://pokibon3.github.io/cw_decoder4/firmware/latest.txt
 #               https://pokibon3.github.io/cw_decoder4/flasher/
 #               https://pokibon3.github.io/cw_decoder4/scope/
-# 3 つともインストール (PWA) できる。マニフェストとサービスワーカーは各ディレクトリに
+#               https://pokibon3.github.io/cw_decoder4/player/
+#               https://pokibon3.github.io/cw_decoder4/tester/
+# どれもインストール (PWA) できる。マニフェストとサービスワーカーは各ディレクトリに
 name: Deploy web to Pages
 
 on:
@@ -72,6 +74,11 @@ jobs:
           # スコープビューア (本体のスコープログをシリアルで受けて表示する)
           mkdir -p _site/scope
           cp web/scope/index.html web/scope/manifest.webmanifest web/scope/sw.js _site/scope/
+          # CW Player (音声ファイル / テスト信号の再生) と CW Tester (再生 + スコープ + 照合)
+          for d in player tester; do
+            mkdir -p _site/$d
+            cp web/$d/index.html web/$d/manifest.webmanifest web/$d/sw.js _site/$d/
+          done
           # 本体の「自動更新」が見にくる配布物。bin はリポジトリに二重で
           # 持たせず、latest.txt に書かれた版の tools/v<版>/ から配る
           if [ -f web/firmware/latest.txt ]; then
