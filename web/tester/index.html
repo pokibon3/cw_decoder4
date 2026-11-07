@@ -28,18 +28,17 @@
 * { box-sizing: border-box; }
 html, body { height: 100%; }
 body {
-  margin: 0; padding: 8px 10px;
+  margin: 0; padding: 6px 10px;
   background: var(--bg); color: var(--tx);
   font: 13px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", "Hiragino Sans", "Noto Sans JP", sans-serif;
   display: flex; flex-direction: column; gap: 7px; min-height: 100%;
 }
-h1 { font-size: 14px; margin: 0; font-weight: 600; letter-spacing: .04em; display: flex; align-items: baseline; gap: 8px; }
-h1 .link {
+.link {
   font-size: 12px; font-weight: 400; color: var(--accent);
   border: 1px solid var(--line); border-radius: 5px; padding: 2px 10px; text-decoration: none;
 }
-h1 .link { margin-left: auto; }
-h1 .link:hover { border-color: var(--accent); }
+#statusbar .link { flex: 0 0 auto; font-size: 11px; padding: 0 8px; }
+.link:hover { border-color: var(--accent); }
 .card {
   background: var(--panel); border: 1px solid var(--line);
   border-radius: 8px; padding: 7px 10px;
@@ -104,7 +103,7 @@ textarea {
 #statusbar .ver { flex: 0 0 auto; font-family: ui-monospace, monospace; }
 .err { color: #ff9a8f; }
 
-h2 { font-size: 12.5px; margin: 0 0 6px; font-weight: 600; color: var(--dim); letter-spacing: .04em; }
+h2 { font-size: 12.5px; margin: 0 0 4px; font-weight: 600; color: var(--dim); letter-spacing: .04em; }
 .card > h2 { display: flex; align-items: center; gap: 10px; }
 .sep { flex: 1; }
 select { font: inherit; color: var(--tx); background: #1a2331; border: 1px solid var(--line); border-radius: 6px; height: 32px; padding: 0 6px; }
@@ -122,10 +121,10 @@ label { color: var(--dim); display: inline-flex; align-items: center; gap: 5px; 
 #cv { display: block; width: 100%; border-radius: 4px; cursor: grab; touch-action: none; }
 #cv.drag { cursor: grabbing; }
 #scrub { width: 100%; margin-top: 6px; }
-#fft { display: block; width: 100%; height: 140px; border-radius: 4px; }
+#fft { display: block; width: 100%; height: 110px; border-radius: 4px; }
 #text {
   background: #05080d; border: 1px solid var(--line); border-radius: 8px;
-  padding: 8px 12px; height: 150px; overflow-y: auto;   /* 高さ固定 (文字が増えたらスクロール) */
+  padding: 6px 12px; height: 80px; overflow-y: auto;    /* 3 行分で固定 (文字が増えたらスクロール) */
   font: 15px/1.5 "SF Mono", Menlo, Consolas, monospace;
   letter-spacing: .08em; color: #adff2f; word-break: break-all; white-space: pre-wrap;
 }
@@ -143,7 +142,7 @@ label { color: var(--dim); display: inline-flex; align-items: center; gap: 5px; 
   .cols { display: grid; grid-template-columns: minmax(340px, 400px) minmax(0, 1fr); align-items: stretch; }
 }
 /* 送信側とスコープ側の区切り */
-.side { display: flex; flex-direction: column; gap: 7px; padding: 8px 10px 10px; border-radius: 10px; border: 1px solid; }
+.side { display: flex; flex-direction: column; gap: 6px; padding: 6px 10px 8px; border-radius: 10px; border: 1px solid; }
 .side.send { border-color: #2f6592; background: #0d1622; }
 .side.recv { border-color: #3f6b3a; background: #0c150f; }
 .sidehead { display: flex; align-items: center; gap: 10px; color: var(--dim); font-size: 12px; }
@@ -158,9 +157,6 @@ label { color: var(--dim); display: inline-flex; align-items: center; gap: 5px; 
 </head>
 <body>
 
-<h1>CW Tester
-  <a class="link" href="#" id="btnInstall" hidden title="アプリとしてインストールする (Chrome / Edge)">インストール</a>
-</h1>
 
 <div class="cols">
 <!-- ================= 送信 (Player) + SETUP ================= -->
@@ -247,8 +243,8 @@ label { color: var(--dim); display: inline-flex; align-items: center; gap: 5px; 
     </label>
     <label>縦
       <select id="zoomY">
-        <option value="1">1x</option><option value="2">2x</option><option value="3">3x</option>
-        <option value="4" selected>4x</option><option value="6">6x</option><option value="8">8x</option>
+        <option value="1">1x</option><option value="2">2x</option><option value="3" selected>3x</option>
+        <option value="4">4x</option><option value="6">6x</option><option value="8">8x</option>
       </select>
     </label>
   </div>
@@ -294,7 +290,9 @@ label { color: var(--dim); display: inline-flex; align-items: center; gap: 5px; 
 </section>
 </div>
 
+<!-- 縦を詰めるため見出し (タイトル) は置かず、インストールはステータス欄の右端に置く -->
 <div id="statusbar"><span id="state">停止中</span><span id="conn">未接続</span>
+  <a class="link" href="#" id="btnInstall" hidden title="アプリとしてインストールする (Chrome / Edge)">インストール</a>
   <span class="ver" id="appVer"></span></div>
 
 <script>
@@ -947,7 +945,7 @@ let fftBuf = null;
 function drawFft() {
 	const cv = $('fft');
 	const dpr = window.devicePixelRatio || 1;
-	const W = Math.max(200, cv.clientWidth), H = 140;
+	const W = Math.max(200, cv.clientWidth), H = 110;
 	if (cv.width !== W * dpr || cv.height !== H * dpr) { cv.width = W * dpr; cv.height = H * dpr; }
 	const g = cv.getContext('2d');
 	g.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -1025,7 +1023,7 @@ const C = {
   mid:   '#142837',   // 中心線
 };
 // 実機の縦方向の内訳 (縦 1x のとき): 文字 16 / KEYバー 3 / 隙間 5 / 波形 21。
-// 既定は 4x (波形 84px) — 実機そのままでは画面上で小さすぎて読めないため
+// 既定は 3x (波形 63px)。実機そのまま (1x) では画面上で小さすぎて読めず、4x ではノート PC の画面に全体が収まらないため
 const DEV = { textH: 16, keyH: 3, gapH: 5, waveH: 21 };
 
 //====================================================================
