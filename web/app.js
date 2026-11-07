@@ -211,7 +211,7 @@ function stopSource() {
 		try { x.disconnect(); } catch {}
 	}
 	srcExtra = [];
-	testSig = testNoise = null;
+	testSig = testNoise = testOsc = testKey = null;
 	testOn = false;
 	if (srcStream) srcStream.getTracks().forEach((t) => t.stop());
 	for (const c of chain) { try { c.disconnect(); } catch {} }
@@ -562,9 +562,11 @@ const MORSE = {
 };
 
 //	立ち上がり/立ち下がりを 5ms なまらせた、実機の受信音に近い CW を作る。
-//	振幅 1 で作り、ノイズも足さない。信号とノイズの大きさは再生時に
-//	それぞれのゲインノードで決める (S/N を再生中に変えられるようにするため)
-function synthCW(text, { wpm, toneHz }) {
+//	作るのは 0〜1 のキーイング波形 (エンベロープ) だけで、トーンは掛けない。
+//	再生時に発振器の振幅をこの波形で変調する。トーンは発振器の周波数、
+//	WPM はこの波形の再生速度 (playbackRate) で決まるので、どちらも送信中に
+//	その場で変えられる。信号とノイズの大きさもゲインノードで決める
+function synthCW(text, { wpm }) {
 	const rate = ctx.sampleRate;
 	const unit = 1.2 / wpm;
 	const keys = [[false, 0.6]];
@@ -593,7 +595,6 @@ function synthCW(text, { wpm, toneHz }) {
 		pos += len;
 	}
 	const rn = Math.max(1, Math.round(0.005 * rate));
-	const w = 2 * Math.PI * toneHz / rate;
 	let run = 0;
 	for (let i = 0; i < rn; i++) run += env[Math.min(n - 1, i)];
 	for (let i = 0; i < n; i++) {
@@ -601,7 +602,7 @@ function synthCW(text, { wpm, toneHz }) {
 		const sub = env[Math.max(0, i - 1)] ?? 0;
 		if (i > 0) run += add - sub;
 		const e = Math.max(0, Math.min(1, run / rn));
-		out[i] = e * Math.sin(w * i);
+		out[i] = e;
 	}
 	return buf;
 }
@@ -633,11 +634,14 @@ function getNoiseBuf() {
 	return noiseBuf;
 }
 
-//	テスト信号の経路: 信号 → sigGain ┐
-//	                  ノイズ → noiseGain ┴→ testMix (= srcNode) → BPF → worklet
-//	S/N はゲインを変えるだけなので送信中でもその場で効く。LOOP 中は 1 回
-//	送り終えるたびに信号だけ作り直して sigGain へつなぐ (デコーダはリセットしない)
+//	テスト信号の経路: 発振器 → keyGain → sigGain ┐
+//	                  ノイズ → noiseGain ────────┴→ testMix (= srcNode) → BPF → worklet
+//	keyGain の gain (基準 0) にキーイング波形を足し込んで断続させる。
+//	S/N はゲイン、トーンは発振器の周波数、WPM は波形の再生速度を変えるだけ
+//	なので、どれも送信中にその場で効く。LOOP 中は 1 回送り終えるたびに
+//	波形だけ作り直して keyGain へつなぐ (デコーダはリセットしない)
 let testOn = false, testSig = null, testNoise = null;
+let testOsc = null, testKey = null, testRef = 20;    // testRef: 波形を作ったときの WPM
 let testSigGain = null, testNoiseGain = null, testCount = 0;
 
 function testStatus() {
@@ -646,10 +650,11 @@ function testStatus() {
 }
 
 function testSendOnce() {
-	const buf = synthCW($('tText').value, { wpm: +$('tWpm').value, toneHz: +$('tHz').value });
+	testRef = +$('tWpm').value;
+	const buf = synthCW($('tText').value, { wpm: testRef });
 	const s = ctx.createBufferSource();
 	s.buffer = buf;
-	s.connect(testSigGain);
+	s.connect(testKey.gain);
 	s.onended = () => {
 		if (!testOn || testSig !== s) return;
 		srcExtra = srcExtra.filter((x) => x !== s);
@@ -676,18 +681,40 @@ async function testPlay() {
 	testNoiseGain.gain.value = lv.noise;
 	testSigGain.connect(mix);
 	testNoiseGain.connect(mix);
+	testKey = ctx.createGain();
+	testKey.gain.value = 0;
+	testKey.connect(testSigGain);
+	const osc = ctx.createOscillator();
+	osc.frequency.value = +$('tHz').value;
+	osc.connect(testKey);
 	const nz = ctx.createBufferSource();
 	nz.buffer = getNoiseBuf();
 	nz.loop = true;
 	nz.connect(testNoiseGain);
-	attachSource(mix, $('testMonitor').checked, null, [nz, testSigGain, testNoiseGain]);
+	attachSource(mix, $('testMonitor').checked, null, [nz, osc, testKey, testSigGain, testNoiseGain]);
 	nz.start();
+	osc.start();
+	testOsc = osc;
 	testNoise = nz;
 	testOn = true;
 	testCount = 1;
 	testSendOnce();
 	$('testStop').disabled = false;
 	$('testPlay').disabled = true;
+}
+
+//	WPM をその場で変える: 波形の再生速度を変える
+function applyTestWpm() {
+	if (!testOn || !testSig) return;
+	testSig.playbackRate.setValueAtTime(+$('tWpm').value / testRef, ctx.currentTime);
+	testStatus();
+}
+
+//	トーンをその場で変える: 発振器の周波数を変える (位相は連続)
+function applyTestTone() {
+	if (!testOn || !testOsc) return;
+	testOsc.frequency.setTargetAtTime(+$('tHz').value, ctx.currentTime, 0.005);
+	testStatus();
 }
 
 function applyTestSnr() {
@@ -1187,6 +1214,8 @@ for (const [r, v] of [['tWpm', 'tWpmV'], ['tHz', 'tHzV'], ['tSnr', 'tSnrV']]) {
 	$(r).oninput = () => { $(v).textContent = $(r).value; };
 }
 $('tSnr').addEventListener('input', applyTestSnr);
+$('tWpm').addEventListener('input', applyTestWpm);
+$('tHz').addEventListener('input', applyTestTone);
 for (const b of document.querySelectorAll('input.loop')) b.onchange = () => setLoop(b.checked);
 $('testPlay').onclick = guard(testPlay);
 $('testStop').onclick = () => { drainDecoder(); stopSource(); setState('停止中'); };

@@ -84,9 +84,10 @@ textarea {
 }
 /* 送出中の文字の位置 */
 #tShow {
-  margin: 8px 0 0; min-height: 3em; padding: 6px 8px;
-  border: 1px solid var(--line); border-radius: 6px; background: #0a1018;
-  font: 15px/1.5 ui-monospace, "SF Mono", Menlo, monospace; letter-spacing: .04em;
+  margin: 8px 0 0; min-height: 3em; padding: 8px 12px;
+  border: 1px solid var(--line); border-radius: 8px; background: #0a1018;
+  /* デコード結果 (#text) と書体・文字間隔・余白をそろえ、上下で文字の位置を合わせる */
+  font: 15px/1.5 "SF Mono", Menlo, Consolas, monospace; letter-spacing: .08em;
   white-space: pre-wrap; word-break: break-all; color: var(--dim);
 }
 #tShow .ok   { color: #e1e6dc; }
@@ -125,7 +126,7 @@ label { color: var(--dim); display: inline-flex; align-items: center; gap: 5px; 
 #text {
   background: #05080d; border: 1px solid var(--line); border-radius: 8px;
   padding: 8px 12px; min-height: 60px; max-height: 150px; overflow-y: auto;
-  font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 15px;
+  font: 15px/1.5 "SF Mono", Menlo, Consolas, monospace;
   letter-spacing: .08em; color: #adff2f; word-break: break-all; white-space: pre-wrap;
 }
 #analysis {
@@ -491,9 +492,11 @@ const LEAD = 0.6, TAIL = 1.0;    // 前後の無音 (秒)
 
 //	立ち上がり/立ち下がりを 5ms なまらせた、実機の受信音に近い CW を作る。
 //	marks には各文字の送出開始時刻 (秒) と text 上の位置を入れて返す。
-//	振幅 1 で作り、ノイズも足さない。信号とノイズの大きさは再生時に
-//	それぞれのゲインノードで決める (S/N を再生中に変えられるようにするため)
-function synthCW(text, { wpm, toneHz }) {
+//	作るのは 0〜1 のキーイング波形 (エンベロープ) だけで、トーンは掛けない。
+//	再生時に発振器の振幅をこの波形で変調する。トーンは発振器の周波数、
+//	WPM はこの波形の再生速度 (playbackRate) で決まるので、どちらも送信中に
+//	その場で変えられる。信号とノイズの大きさもゲインノードで決める
+function synthCW(text, { wpm }) {
 	const rate = ctx.sampleRate;
 	const unit = 1.2 / wpm;
 	const keys = [[false, LEAD]];
@@ -531,7 +534,6 @@ function synthCW(text, { wpm, toneHz }) {
 		pos += len;
 	}
 	const rn = Math.max(1, Math.round(0.005 * rate));
-	const w = 2 * Math.PI * toneHz / rate;
 	let run = 0;
 	for (let i = 0; i < rn; i++) run += env[Math.min(n - 1, i)];
 	for (let i = 0; i < n; i++) {
@@ -539,7 +541,7 @@ function synthCW(text, { wpm, toneHz }) {
 		const sub = env[Math.max(0, i - 1)] ?? 0;
 		if (i > 0) run += add - sub;
 		const e = Math.max(0, Math.min(1, run / rn));
-		o[i] = e * Math.sin(w * i);
+		o[i] = e;
 	}
 	return { buf, marks, unit };
 }
@@ -557,6 +559,7 @@ function synthCW(text, { wpm, toneHz }) {
 const PEAK = 0.9;
 let sigGain = null;
 let noiseBuf = null, noiseSrc = null, noiseGain = null;
+let osc = null, keyGain = null;     // トーンの発振器と、エンベロープで開閉するゲイン
 
 function levels() {
 	const r = Math.pow(10, -$('tSnr').value / 20);
@@ -579,6 +582,14 @@ function noiseStart() {
 	sigGain = ctx.createGain();
 	sigGain.gain.value = lv.sig;
 	sigGain.connect(pre);
+	// 発振器 → keyGain (基準 0、エンベロープを gain に足し込む) → sigGain
+	keyGain = ctx.createGain();
+	keyGain.gain.value = 0;
+	keyGain.connect(sigGain);
+	osc = ctx.createOscillator();
+	osc.frequency.value = +$('tHz').value;
+	osc.connect(keyGain);
+	osc.start();
 	noiseGain = ctx.createGain();
 	noiseGain.gain.value = lv.noise;
 	noiseGain.connect(pre);
@@ -593,6 +604,9 @@ function noiseStop() {
 	if (noiseSrc) { try { noiseSrc.stop(); } catch {} try { noiseSrc.disconnect(); } catch {} }
 	if (noiseGain) { try { noiseGain.disconnect(); } catch {} }
 	if (sigGain) { try { sigGain.disconnect(); } catch {} }
+	if (osc) { try { osc.stop(); } catch {} try { osc.disconnect(); } catch {} }
+	if (keyGain) { try { keyGain.disconnect(); } catch {} }
+	osc = keyGain = null;
 	noiseSrc = null;
 	noiseGain = null;
 	sigGain = null;
@@ -614,32 +628,78 @@ let testRun = null;       // { text, marks, t0, dur, count }
 let testRaf = 0;
 
 //	1 回分を合成して鳴らす。LOOP 中は鳴り終わるたびに作り直すので、
-//	WPM・トーン・文の変更は次の周回から効く (S/N はその場で効く)
+//	文の変更は次の周回から効く (WPM・トーン・S/N はその場で効く)
 function testSendOnce(count) {
+	markEnds();                     // 前の周の最後の文字の時刻を確定してから入れ替える
 	const text = $('tText').value;
-	const { buf, marks, unit } = synthCW(text, { wpm: +$('tWpm').value, toneHz: +$('tHz').value });
+	const wpm = +$('tWpm').value;
+	const { buf, marks, unit } = synthCW(text, { wpm });
 	if (!marks.length) { testStop(); setState('送信できる文字がありません', true); return; }
 	playBuffer(buf, 0, false, () => {
 		src = null;
 		if (loopOn) testSendOnce(count + 1);
 		else { testStop(); setState('テスト信号: 送信終了'); }
-	}, sigGain);
-	testRun = { text, marks, t0: ctx.currentTime, dur: buf.duration, count };
+	}, keyGain.gain);
+	// 再生位置 (波形上の秒) = pos0 + (今 - tc) × rate。WPM を変えるたびに
+	// pos0 / tc を取り直す。started は表示用の実時間の起点
+	testRun = { text, marks, ref: wpm, rate: 1, pos0: 0, tc: ctx.currentTime, started: ctx.currentTime,
+	            dur: buf.duration, count };
 	cmpStartRun(text, marks, unit, count === 1);
 	showTestState(count);
 	if (!testRaf) testRaf = requestAnimationFrame(testTick);
+}
+
+//	波形上の今の再生位置 (秒)
+function testHead() {
+	const r = testRun;
+	return r ? r.pos0 + (ctx.currentTime - r.tc) * r.rate : 0;
+}
+
+//	送り終えた文字に、送り終えた実時刻 (performance.now 基準の秒) を付ける。
+//	照合はこの時刻から判定までの待ち時間を数える (WPM を途中で変えても合うように)
+function markEnds() {
+	const r = testRun;
+	if (!r) return;
+	const pos = testHead(), now = performance.now() / 1000;
+	for (const m of r.marks) {
+		if (m.endWall !== undefined) continue;
+		if (m.end > pos) break;
+		m.endWall = now - (pos - m.end) / r.rate;
+	}
+}
+
+//	WPM をその場で変える: 波形の再生速度を変える
+function applyWpm() {
+	const r = testRun;
+	if (!r || !src) return;
+	const wpm = +$('tWpm').value;
+	r.pos0 = testHead();
+	r.tc = ctx.currentTime;
+	r.rate = wpm / r.ref;
+	src.playbackRate.setValueAtTime(r.rate, ctx.currentTime);
+	if (cmp.run) cmp.run.unit = 1.2 / wpm;    // 判定の待ち時間も今の速度に合わせる
+	showTestState(r.count);
+}
+
+//	トーンをその場で変える: 発振器の周波数を変える (位相は連続)
+function applyTone() {
+	if (osc) osc.frequency.setTargetAtTime(+$('tHz').value, ctx.currentTime, 0.005);
+	if (testRun) showTestState(testRun.count);
 }
 
 //	送出中の文字を強調表示する
 function testTick() {
 	testRaf = 0;
 	if (!testRun) return;
-	const { text, marks, t0, dur } = testRun;
-	const t = ctx.currentTime - t0;
+	const { marks, dur, rate } = testRun;
+	const t = testHead();
+	markEnds();
 	let k = -1;
 	while (k + 1 < marks.length && marks[k + 1].t <= t) k++;
 	cmpCur = k >= 0 && t < marks[k].end ? marks[k].idx : -1;
-	$('testTime').textContent = `${mmss(Math.min(t, dur))} / ${mmss(dur)}`;
+	// 経過は実時間、全体は「経過 + 残りを今の速度で送る時間」
+	const el = ctx.currentTime - testRun.started;
+	$('testTime').textContent = `${mmss(el)} / ${mmss(el + Math.max(0, dur - t) / rate)}`;
 	testRaf = requestAnimationFrame(testTick);
 }
 
@@ -654,6 +714,7 @@ async function testPlay() {
 }
 
 function testStop() {
+	markEnds();
 	cmpStop();
 	stopSource();
 	noiseStop();
@@ -700,6 +761,8 @@ for (const [r, v] of [['tWpm', 'tWpmV'], ['tHz', 'tHzV'], ['tSnr', 'tSnrV']]) {
 	$(r).oninput = () => { $(v).textContent = $(r).value; };
 }
 $('tSnr').addEventListener('input', applySnr);
+$('tWpm').addEventListener('input', applyWpm);
+$('tHz').addEventListener('input', applyTone);
 $('testPlay').onclick = guard(testPlay);
 $('testStop').onclick = () => { testStop(); setState('停止中'); };
 $('tText').oninput = () => { if (!cmp.run) $('tShow').textContent = $('tText').value.toUpperCase(); };
@@ -787,7 +850,8 @@ function cmpEval(r, now) {
 	const D = cmp.decoded.filter((d) => d.at >= r.dStart && d.at < r.dEnd && d.ch !== ' ').map((d) => d.ch);
 	const final = now >= r.dEnd;
 	const st = r.marks.map((m) => {
-		const endAbs = r.t0 + m.end;
+		const endAbs = m.endWall;            // 送り終えた実時刻 (markEnds が付ける)
+		if (endAbs === undefined) return r.stopAt < Infinity ? 'skip' : 'wait';
 		if (endAbs > r.stopAt) return 'skip';
 		if (endAbs < r.from) return 'skip';     // クリアより前に送り終えた文字
 		if (!final && now < endAbs + JUDGE + 4 * r.unit) return 'wait';
