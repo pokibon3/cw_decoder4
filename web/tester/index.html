@@ -1063,6 +1063,7 @@ function resetData() {
   saveBtn.disabled = true;
   textEl.textContent = '';
   textClearCol = -Infinity;
+  textOut = ''; textShown = 0;
   updateStat();
 }
 
@@ -1101,11 +1102,12 @@ function feedLine(line, live = false) {
     case 'C':
       if (f.length >= 3) {
         chars.push({ col: +f[1], ch: f.slice(2).join(' ') });
+        textOut += f.slice(2).join(' ');
         if (live) window.cwTester?.onChar(f.slice(2).join(' '));   // 送信文との照合へ
       }
       break;
     case 'W':
-      if (f.length >= 2) chars.push({ col: +f[1], ch: ' ' });
+      if (f.length >= 2) { chars.push({ col: +f[1], ch: ' ' }); textOut += ' '; }
       break;
     case 'E':
       if (f.length >= 5) elems.push({ col: +f[1], mark: f[2] === 'M', ms: +f[3], unit: +f[4] });
@@ -1555,31 +1557,41 @@ function updateStat() {
 //	デコード結果の「クリア」はこの列より後の文字だけを表示にする
 //	(オシロ上の文字や保存するログは消さない)
 let textClearCol = -Infinity;
+//	デコード結果に出す文字列 (クリア以降に届いた分)。表示には差分だけを
+//	書き足すので、上へスクロールして読んでいる途中でも位置が動かない
+let textOut = '', textShown = 0;
+const TEXT_MAX = 50000;          // これを超えたら古い方を 10000 文字捨てる
 
 //	LOOP の周の区切りでデコード結果を改行する (送信側から呼ばれる)。
 //	オシロや保存するログには出ない (chars の中の印だけ)
 window.cwScope = {
   newline() {
     const last = chars[chars.length - 1];
-    if (!last || last.ch === '\n' || last.col <= textClearCol) return;   // 空行は作らない
+    if (!textOut || textOut.endsWith('\n')) return;   // 空行は作らない
     chars.push({ col: maxCol ?? last.col, ch: '\n' });
+    textOut += '\n';
   },
 };
 document.getElementById('textClear').onclick = () => {
   textClearCol = maxCol ?? -Infinity;
   window.cwTester?.clear();
+  textOut = ''; textShown = 0;
   textEl.textContent = '';
 };
 
 function updateText() {
-  // 語間は本体が W レコードで出すので、そのまま連結するだけ
-  let out = '';
-  for (const c of chars.slice(-300)) if (c.col > textClearCol) out += c.ch;
-  if (textEl.textContent !== out) {
-    const atEnd = textEl.scrollTop + textEl.clientHeight >= textEl.scrollHeight - 4;
-    textEl.textContent = out;
-    if (atEnd) textEl.scrollTop = textEl.scrollHeight;
+  // 語間は本体が W レコードで出すので、届いた順に連結するだけ。
+  // 新しく届いた分だけを書き足す (全体を書き直すと読んでいる位置が飛ぶ)
+  if (textOut.length === textShown) return;
+  const atEnd = textEl.scrollTop + textEl.clientHeight >= textEl.scrollHeight - 4;
+  if (textOut.length > TEXT_MAX) {
+    textOut = textOut.slice(10000);
+    textEl.textContent = textOut;
+  } else {
+    textEl.append(textOut.slice(textShown));
   }
+  textShown = textOut.length;
+  if (atEnd) textEl.scrollTop = textEl.scrollHeight;
 }
 
 //====================================================================
