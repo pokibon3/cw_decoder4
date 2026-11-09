@@ -185,8 +185,8 @@ label { color: var(--dim); display: inline-flex; align-items: center; gap: 5px; 
   </div>
 <div class="srcpane first" data-pane="file">
     <div class="row">
-      <input type="file" id="fileInput" accept="audio/*">
-      <span style="color:var(--dim)">(音声ファイルは送信文が分からないため照合しません)</span>
+      <input type="file" id="fileInput" accept="audio/*,.txt" multiple>
+      <span style="color:var(--dim)">(同じ名前の .txt も一緒に選ぶと、その文と照合します)</span>
     </div>
     <div class="row">
       <button id="fileHome"  class="tp" disabled title="先頭へ">&#9198;</button>
@@ -394,6 +394,10 @@ for (const t of document.querySelectorAll('[role=tab]')) {
 		for (const u of document.querySelectorAll('[role=tab]')) u.setAttribute('aria-selected', u === t);
 		for (const p of document.querySelectorAll('.srcpane')) p.classList.toggle('active', p.dataset.pane === t.dataset.src);
 		stopAll();
+		cmp.run = cmp.prev = null;  // 送信文の欄はそのタブの文に戻す
+		cmp.active = false;
+		cmpCur = -1;
+		showSent();
 	};
 }
 
@@ -431,6 +435,7 @@ function fileEnded() {
 	filePlaying = false;
 	filePos = fileBuffer.duration;
 	src = null;
+	cmpStop();
 	fileUpdateUI();
 	setState(`ファイル: ${fileName} — 再生終了`);
 }
@@ -440,6 +445,7 @@ function fileStartAt(pos) {
 	playBuffer(fileBuffer, filePos, loopOn, fileEnded);
 	fileT0 = ctx.currentTime;
 	filePlaying = true;
+	fileLastT = filePos;
 	fileUpdateUI();
 	setState(`ファイル: ${fileName} — 再生中${loopOn ? ' (LOOP)' : ''}`);
 }
@@ -454,7 +460,10 @@ async function filePlayPause() {
 		fileUpdateUI();
 		setState(`ファイル: ${fileName} — 一時停止`);
 	} else {
-		if (filePos >= fileBuffer.duration - 0.05) filePos = 0;   // 末尾なら頭から
+		if (filePos >= fileBuffer.duration - 0.05) {   // 末尾なら頭から
+			filePos = 0;
+			fileCmpBegin(0);
+		} else if (!cmp.run || !cmp.run.file) fileCmpBegin(filePos);
 		fileStartAt(filePos);
 	}
 }
@@ -465,16 +474,42 @@ async function fileSeek(pos) {
 	const wasPlaying = filePlaying;
 	if (wasPlaying) { filePlaying = false; stopSource(); }
 	filePos = Math.max(0, Math.min(fileBuffer.duration, pos));
+	fileCmpBegin(filePos);      // 位置を変えたら照合はそこからやり直す
 	if (wasPlaying && filePos < fileBuffer.duration - 0.05) fileStartAt(filePos);
 	else fileUpdateUI();
+}
+
+//	音声ファイルの送信文: 一緒に選んだ同じ名前の .txt (無ければ空)。
+//	ブラウザは選んだファイル以外を読めないため、.txt も同時に選んでもらう
+let fileSent = '';
+
+const baseName = (n) => n.replace(/\.[^.]*$/, '').toLowerCase();
+
+async function loadFiles(files) {
+	files = [...files];
+	const isTxt = (f) => /\.txt$/i.test(f.name);
+	const audio = files.find((f) => !isTxt(f));
+	if (!audio) throw new Error('音声ファイルを選んでください (.txt だけでは再生できません)');
+	const txt = files.find((f) => isTxt(f) && baseName(f.name) === baseName(audio.name));
+	fileSent = txt ? (await txt.text()).trim() : '';
+	await loadFile(audio);
+}
+
+//	送信文の欄: テスト信号は入力欄の文、音声ファイルは .txt の文
+function showSent() {
+	if (cmp.run) return;
+	const file = document.querySelector('[role=tab][data-src=file]').getAttribute('aria-selected') === 'true';
+	$('tShow').textContent = (file ? fileSent : $('tText').value).toUpperCase();
 }
 
 async function loadFile(file) {
 	await ensureCtx();
 	stopAll();
 	fileBuffer = await ctx.decodeAudioData(await file.arrayBuffer());
+	$('textClear').click();     // 送信と同じく、前のデコード結果と認識率は消す
 	fileName = file.name;
 	filePos = 0;
+	fileCmpBegin(0);
 	setState(`ファイル: ${file.name} — ${fileBuffer.duration.toFixed(1)}秒 / ${fileBuffer.sampleRate}Hz`);
 	fileStartAt(0);     // 選んだらそのまま先頭から再生する
 }
@@ -748,7 +783,7 @@ const guard = (fn) => async (...a) => {
 	try { await fn(...a); } catch (e) { console.error(e); setState(`エラー: ${e.message || e}`, true); }
 };
 
-$('fileInput').onchange = guard((e) => e.target.files[0] && loadFile(e.target.files[0]));
+$('fileInput').onchange = guard((e) => e.target.files.length && loadFiles(e.target.files));
 $('filePlay').onclick = guard(filePlayPause);
 $('fileHome').onclick = guard(() => fileSeek(0));
 $('fileBack').onclick = guard(() => fileSeek(fileNow() - SEEK_STEP));
@@ -774,12 +809,19 @@ $('tWpm').addEventListener('input', applyWpm);
 $('tHz').addEventListener('input', applyTone);
 $('testPlay').onclick = guard(testPlay);
 $('testStop').onclick = () => { testStop(); setState('停止中'); };
-$('tText').oninput = () => { if (!cmp.run) $('tShow').textContent = $('tText').value.toUpperCase(); };
-$('tShow').textContent = $('tText').value.toUpperCase();
+$('tText').oninput = showSent;
 $('vol').oninput = applyVol;
 
 // ファイル再生中は位置表示を進める
-setInterval(() => { if (filePlaying) fileUpdateUI(); }, 200);
+//	LOOP で頭に戻ったら照合も次の周にする
+let fileLastT = 0;
+setInterval(() => {
+	if (!filePlaying) return;
+	const t = fileNow();
+	if (t < fileLastT - 1 && cmp.run?.file) fileCmpLoop();
+	fileLastT = t;
+	fileUpdateUI();
+}, 200);
 
 //==================================================================
 //	送信文と実機のデコード結果の照合
@@ -805,6 +847,7 @@ const cmp = {
 	active: false,          // 送信中 (この間だけ受信文字を貯める)
 };
 let cmpCur = -1;            // 送出中の文字の位置 (text 上)
+showSent();                 // 最初の送信文 (cmp ができてから)
 
 window.cwTester = {
 	//	デコード結果の「クリア」: 赤の印と認識率 (累計も) を消し、送信中なら
@@ -818,7 +861,8 @@ window.cwTester = {
 			cmp.run.from = now;
 			cmp.run.dStart = Math.max(cmp.run.dStart, now);
 		}
-		$('tShow').textContent = (cmp.run ? cmp.run.text : $('tText').value).toUpperCase();
+		if (cmp.run) $('tShow').textContent = cmp.run.text.toUpperCase();
+		else showSent();
 		for (const id of ['rateNow', 'rateAll']) $(id).textContent = '--';
 		for (const id of ['rateNowN', 'rateAllN']) $(id).textContent = '';
 	},
@@ -853,9 +897,80 @@ function cmpStop() {
 	r.dEnd = r.stopAt + JUDGE + 4 * r.unit;
 }
 
+//	音声ファイルの照合。送信文は .txt の文で、文字ごとの送出時刻は分からない。
+//	受け取った文字列全体を送信文の先頭側と対応付け、最後に対応した送信文字まで
+//	を判定済みにする (その先は判定前)。再生を終えると残りもすべて判定する。
+//	途中から再生したときは、対応の始まりより前の送信文字は判定しない
+const FILE_UNIT = 0.1;      // 判定の待ち時間に足す短点 (速度が分からないので 12WPM 相当)
+
+function fileCmpMarks(text) {
+	const marks = [];
+	[...text.toUpperCase()].forEach((ch, idx) => { if (MORSE[ch]) marks.push({ idx, ch }); });
+	return marks;
+}
+
+function fileCmpBegin(pos) {
+	cmp.run = cmp.prev = null;
+	cmp.active = false;
+	cmpCur = -1;
+	const marks = fileCmpMarks(fileSent);
+	if (!marks.length) { showSent(); return; }
+	cmpStartRun(fileSent, marks, FILE_UNIT, true);
+	cmp.run.file = true;
+	cmp.run.freeHead = pos > 0.5;
+}
+
+function fileCmpLoop() {
+	const r = cmp.run;
+	cmpStartRun(r.text, fileCmpMarks(r.text), FILE_UNIT, false);
+	cmp.run.file = true;
+	cmp.run.freeHead = false;
+	setTimeout(() => window.cwScope?.newline(), BOUND * 1000);
+}
+
+function fileEval(r, now) {
+	const D = cmp.decoded.filter((d) => d.at >= r.dStart && d.at < r.dEnd && d.ch !== ' ').map((d) => d.ch);
+	const final = now >= r.dEnd;
+	const key = `${D.length}:${final}:${r.dStart}`;
+	if (r.cache && r.cache.key === key) return r.cache.e;
+	const S = r.marks.map((m) => m.ch);
+	const n = S.length, m = D.length;
+	const freeHead = r.freeHead || r.from > -Infinity;     // 途中から / クリアの後
+	const dp = Array.from({ length: n + 1 }, () => new Int32Array(m + 1));
+	for (let j = 0; j <= m; j++) dp[0][j] = j;
+	for (let i = 1; i <= n; i++) {
+		dp[i][0] = freeHead ? 0 : i;
+		for (let j = 1; j <= m; j++) {
+			const sub = dp[i - 1][j - 1] + (S[i - 1] === D[j - 1] ? 0 : 1);
+			dp[i][j] = Math.min(sub, dp[i - 1][j] + 1, dp[i][j - 1] + 1);
+		}
+	}
+	// 受信の全体と最も安く対応する送信文の長さ (同じなら短いほう) まで判定する
+	let end = n;
+	if (!final) {
+		end = 0;
+		for (let i = 1; i <= n; i++) if (dp[i][m] < dp[end][m]) end = i;
+	}
+	const st = new Array(n).fill('wait');
+	let i = end, j = m;
+	while (i > 0 && j > 0) {
+		const eq = S[i - 1] === D[j - 1];
+		if (dp[i][j] === dp[i - 1][j - 1] + (eq ? 0 : 1)) { st[i - 1] = eq ? 'ok' : 'ng'; i--; j--; }
+		else if (dp[i][j] === dp[i - 1][j] + 1) { st[i - 1] = 'ng'; i--; }
+		else j--;
+	}
+	for (let k = 0; k < i; k++) st[k] = freeHead ? 'skip' : 'ng';
+	let ok = 0, cnt = 0;
+	for (const x of st) { if (x === 'ok') ok++; if (x === 'ok' || x === 'ng') cnt++; }
+	const e = { st, ok, n: cnt };
+	r.cache = { key, e };
+	return e;
+}
+
 //	周 r の照合。戻り値 { st: 文字ごとの状態 (marks と同じ並び), ok, n }
 //	st: 'ok' 一致 / 'ng' 取りこぼし・誤り / 'wait' 判定前 / 'skip' 送っていない
 function cmpEval(r, now) {
+	if (r.file) return fileEval(r, now);
 	const D = cmp.decoded.filter((d) => d.at >= r.dStart && d.at < r.dEnd && d.ch !== ' ').map((d) => d.ch);
 	const final = now >= r.dEnd;
 	const st = r.marks.map((m) => {
