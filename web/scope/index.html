@@ -708,10 +708,21 @@ function updateStat() {
   }
 }
 
+//	本体は濁点・半濁点を ゛゜ として文字のあとに別に返すので、表示では前の
+//	文字とまとめる (カ゛ → ガ)。まとめられないときは null
+function withMark(prev, ch) {
+  if (!prev || (ch !== '\u309B' && ch !== '\u309C')) return null;
+  const c = (prev + (ch === '\u309B' ? '\u3099' : '\u309A')).normalize('NFC');
+  return c.length === 1 ? c : null;
+}
+
 function updateText() {
   // 語間は本体が W レコードで出すので、そのまま連結するだけ
   let out = '';
-  for (const c of chars.slice(-300)) out += c.ch;
+  for (const c of chars.slice(-300)) {
+    const m = withMark(out.slice(-1), c.ch);
+    out = m ? out.slice(0, -1) + m : out + c.ch;
+  }
   if (textEl.textContent !== out) {
     const atEnd = textEl.scrollTop + textEl.clientHeight >= textEl.scrollHeight - 4;
     textEl.textContent = out;

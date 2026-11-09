@@ -181,6 +181,7 @@ label { color: var(--dim); display: inline-flex; align-items: center; gap: 5px; 
       <span>WPM</span><input type="range" id="tWpm" min="5" max="45" value="20"><span><span id="tWpmV" class="metric">20</span></span>
       <span>トーン</span><input type="range" id="tHz" min="450" max="1050" step="10" value="600"><span><span id="tHzV" class="metric">600</span> Hz</span>
       <span>S/N</span><input type="range" id="tSnr" min="-15" max="40" value="15"><span><span id="tSnrV" class="metric">15</span> dB</span>
+      <span>帯域</span><select id="tBw" title="ノイズの帯域。S/N はこの帯域内のノイズに対する比" style="justify-self:start"><option value="6000">6kHz</option><option value="2500">2.5kHz</option><option value="600" selected>600Hz</option><option value="200">200Hz</option></select><span></span>
     </div>
   </div>
 <div class="srcpane first" data-pane="file">
@@ -529,6 +530,58 @@ const MORSE = {
 	')': '-.--.-', '"': '.-..-.', '@': '.--.-.', '+': '.-.-.', '!': '-.-.--',
 };
 
+//	和文 (カタカナ)。ひらがな・半角カナも受け付け、カタカナにそろえて送る。
+//	濁点・半濁点は文字のあとに ゛(・・) ゜(・・－－・) を続け、小さい文字は
+//	大きい文字で送る。カナが続く間の前にホレ、後にラタを入れる
+const WABUN = {
+	ア: '--.--', イ: '.-', ウ: '..-', エ: '-.---', オ: '.-...',
+	カ: '.-..', キ: '-.-..', ク: '...-', ケ: '-.--', コ: '----',
+	サ: '-.-.-', シ: '--.-.', ス: '---.-', セ: '.---.', ソ: '---.',
+	タ: '-.', チ: '..-.', ツ: '.--.', テ: '.-.--', ト: '..-..',
+	ナ: '.-.', ニ: '-.-.', ヌ: '....', ネ: '--.-', ノ: '..--',
+	ハ: '-...', ヒ: '--..-', フ: '--..', ヘ: '.', ホ: '-..',
+	マ: '-..-', ミ: '..-.-', ム: '-', メ: '-...-', モ: '-..-.',
+	ヤ: '.--', ユ: '-..--', ヨ: '--',
+	ラ: '...', リ: '--.', ル: '-.--.', レ: '---', ロ: '.-.-',
+	ワ: '-.-', ヰ: '.-..-', ヱ: '.--..', ヲ: '.---', ン: '.-.-.',
+	'゛': '..', '゜': '..--.', ー: '.--.-', '、': '.-.-.-', '。': '.-.-..', '」': '.-.-..',
+};
+//	実機がデコードして返す文字 (照合用)。ーは「-」、。と段落の」は「」」で返る
+const WABUN_OUT = { ー: '-', '。': '」' };
+const HORE = '-..---', RATA = '...-.';
+const SMALL_KANA = { ァ: 'ア', ィ: 'イ', ゥ: 'ウ', ェ: 'エ', ォ: 'オ', ッ: 'ツ', ャ: 'ヤ', ュ: 'ユ', ョ: 'ヨ', ヮ: 'ワ', ヵ: 'カ', ヶ: 'ケ' };
+
+//	送る符号の並び。{ idx: 元の文字の位置, code, ch: 実機が返すはずの文字 } と
+//	語の区切り { space: true }。送れない文字は飛ばす
+function cwTokens(text) {
+	const out = [];
+	[...text].forEach((raw, idx) => {
+		if (/\s/.test(raw)) { out.push({ space: true }); return; }
+		// 全角英数・半角カナを直し、ひらがなはカタカナに、濁点は分ける
+		let s = raw.normalize('NFKC').toUpperCase()
+			.replace(/[ぁ-ゖ]/g, (c) => String.fromCharCode(c.charCodeAt(0) + 0x60))
+			.normalize('NFD')
+			.replace(/゙/g, '゛').replace(/゚/g, '゜');
+		for (let c of s) {
+			c = SMALL_KANA[c] || c;
+			if (WABUN[c]) out.push({ idx, code: WABUN[c], ch: WABUN_OUT[c] || c, kana: true });
+			else if (MORSE[c]) out.push({ idx, code: MORSE[c], ch: c });
+		}
+	});
+	// カナが続く間 (空白をはさんでもよい) の前後にホレ・ラタ
+	const res = [];
+	let inKana = false, lastKana = -1;
+	for (const tk of out) {
+		if (tk.space) { res.push(tk); continue; }
+		if (tk.kana && !inKana) { res.push({ idx: tk.idx, code: HORE, ch: '「' }); inKana = true; }
+		if (!tk.kana && inKana) { res.splice(lastKana + 1, 0, { idx: res[lastKana].idx, code: RATA, ch: '」' }); inKana = false; }
+		res.push(tk);
+		if (tk.kana) lastKana = res.length - 1;
+	}
+	if (inKana) res.splice(lastKana + 1, 0, { idx: res[lastKana].idx, code: RATA, ch: '」' });
+	return res;
+}
+
 const LEAD = 0.6, TAIL = 1.0;    // 前後の無音 (秒)
 
 //	立ち上がり/立ち下がりを 5ms なまらせた、実機の受信音に近い CW を作る。
@@ -544,17 +597,15 @@ function synthCW(text, { wpm }) {
 	const marks = [];
 	let t = LEAD, first = true;
 	const push = (on, d) => { keys.push([on, d]); t += d; };
-	[...text.toUpperCase()].forEach((raw, idx) => {
-		if (/\s/.test(raw)) {
+	cwTokens(text).forEach(({ space, idx, code, ch }) => {
+		if (space) {
 			if (!first) push(false, 7 * unit);
 			first = true;
 			return;
 		}
-		const code = MORSE[raw];
-		if (!code) return;
 		if (!first) push(false, 3 * unit);
 		first = false;
-		const mk = { t, idx, ch: raw, end: 0 };
+		const mk = { t, idx, ch, end: 0 };
 		code.split('').forEach((e, i) => {
 			if (i > 0) push(false, unit);
 			push(true, e === '.' ? unit : 3 * unit);
@@ -599,8 +650,75 @@ function synthCW(text, { wpm }) {
 //==================================================================
 const PEAK = 0.9;
 let sigGain = null;
-let noiseBuf = null, noiseSrc = null, noiseGain = null;
+let noiseSrc = null, noiseGain = null;
 let osc = null, keyGain = null;     // トーンの発振器と、エンベロープで開閉するゲイン
+
+//	ノイズの帯域。S/N はこの帯域内の雑音の実効値に対する比になる。
+//	6kHz・2.5kHz は受信機の音声帯域 (50Hz〜6kHz / 300Hz〜2.8kHz)、
+//	600Hz・200Hz はトーンを中心にした幅 (トーンを変えると帯域も動く)
+const NOISE_BANDS = { 6000: [50, 6000], 2500: [300, 2800] };
+function noiseBand(bw, tone) {
+	if (NOISE_BANDS[bw]) return NOISE_BANDS[bw];
+	return [Math.max(20, tone - bw / 2), tone + bw / 2];
+}
+const noiseFollowsTone = (bw) => !NOISE_BANDS[bw];
+
+//	帯域を限ったガウス雑音 (実効値 1)。周波数領域で帯域内の成分だけに乱数を
+//	置いて逆 FFT するので、帯域の外は 0 になり、ループの継ぎ目もつながる
+const noiseCache = new Map();
+function bandNoiseBuf(bw, tone) {
+	const [lo, hi] = noiseBand(bw, tone);
+	const rate = ctx.sampleRate;
+	const key = `${rate}:${lo}:${hi}`;
+	let b = noiseCache.get(key);
+	if (b) return b;
+	const N = 1 << 18;                  // 48kHz で約 5.5 秒
+	const re = new Float64Array(N), im = new Float64Array(N);
+	const k0 = Math.max(1, Math.ceil(lo * N / rate));
+	const k1 = Math.min(N / 2 - 1, Math.floor(hi * N / rate));
+	for (let k = k0; k <= k1; k++) {
+		const g = Math.sqrt(-2 * Math.log(Math.random() || 1e-9)), p = 2 * Math.PI * Math.random();
+		re[k] = re[N - k] = g * Math.cos(p);
+		im[k] = g * Math.sin(p);
+		im[N - k] = -im[k];             // 共役対称にして実数の波形にする
+	}
+	fftInPlace(re, im);
+	let ss = 0;
+	for (let i = 0; i < N; i++) ss += re[i] * re[i];
+	const s = 1 / Math.sqrt(ss / N);
+	b = ctx.createBuffer(1, N, rate);
+	const d = b.getChannelData(0);
+	for (let i = 0; i < N; i++) d[i] = re[i] * s;
+	if (noiseCache.size >= 8) noiseCache.clear();
+	noiseCache.set(key, b);
+	return b;
+}
+
+//	基数 2 の FFT (符号 + の向き。正規化しない)
+function fftInPlace(re, im) {
+	const n = re.length;
+	for (let i = 1, j = 0; i < n; i++) {
+		let bit = n >> 1;
+		for (; j & bit; bit >>= 1) j ^= bit;
+		j ^= bit;
+		if (i < j) {
+			let t = re[i]; re[i] = re[j]; re[j] = t;
+			t = im[i]; im[i] = im[j]; im[j] = t;
+		}
+	}
+	for (let len = 2; len <= n; len <<= 1) {
+		const h = len >> 1;
+		for (let k = 0; k < h; k++) {
+			const wr = Math.cos(Math.PI * k / h), wi = Math.sin(Math.PI * k / h);
+			for (let a = k; a < n; a += len) {
+				const b = a + h;
+				const tr = re[b] * wr - im[b] * wi, ti = re[b] * wi + im[b] * wr;
+				re[b] = re[a] - tr; im[b] = im[a] - ti;
+				re[a] += tr; im[a] += ti;
+			}
+		}
+	}
+}
 
 function levels() {
 	const r = Math.pow(10, -$('tSnr').value / 20);
@@ -610,15 +728,6 @@ function levels() {
 
 function noiseStart() {
 	if (noiseSrc) return;
-	if (!noiseBuf) {
-		const n = ctx.sampleRate * 4;
-		noiseBuf = ctx.createBuffer(1, n, ctx.sampleRate);
-		const d = noiseBuf.getChannelData(0);
-		for (let i = 0; i < n; i++) {
-			const u1 = Math.random() || 1e-9, u2 = Math.random();
-			d[i] = Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
-		}
-	}
 	const lv = levels();
 	sigGain = ctx.createGain();
 	sigGain.gain.value = lv.sig;
@@ -635,10 +744,28 @@ function noiseStart() {
 	noiseGain.gain.value = lv.noise;
 	noiseGain.connect(pre);
 	noiseSrc = ctx.createBufferSource();
-	noiseSrc.buffer = noiseBuf;
+	noiseSrc.buffer = bandNoiseBuf(+$('tBw').value, +$('tHz').value);
 	noiseSrc.loop = true;
 	noiseSrc.connect(noiseGain);
 	noiseSrc.start();
+}
+
+//	送信中にノイズの帯域を変える (新しい雑音に差し替える)
+function noiseSwap() {
+	if (!noiseSrc) return;
+	const s = ctx.createBufferSource();
+	s.buffer = bandNoiseBuf(+$('tBw').value, +$('tHz').value);
+	s.loop = true;
+	s.connect(noiseGain);
+	s.start();
+	try { noiseSrc.stop(); noiseSrc.disconnect(); } catch {}
+	noiseSrc = s;
+}
+let noiseRetuneTimer = 0;
+function noiseRetune() {        // トーンに追従する帯域は、トーンを動かし終えてから作り直す
+	if (!noiseFollowsTone(+$('tBw').value)) return;
+	clearTimeout(noiseRetuneTimer);
+	noiseRetuneTimer = setTimeout(noiseSwap, 200);
 }
 
 function noiseStop() {
@@ -661,7 +788,7 @@ function applySnr() {
 }
 
 function showTestState(count) {
-	setState(`テスト信号: ${$('tWpm').value}WPM / ${$('tHz').value}Hz / S:N ${$('tSnr').value}dB` +
+	setState(`テスト信号: ${$('tWpm').value}WPM / ${$('tHz').value}Hz / S:N ${$('tSnr').value}dB (${$('tBw').selectedOptions[0].text})` +
 		(loopOn ? ` — LOOP ${count} 回目` : ''));
 }
 
@@ -807,6 +934,8 @@ for (const [r, v] of [['tWpm', 'tWpmV'], ['tHz', 'tHzV'], ['tSnr', 'tSnrV']]) {
 $('tSnr').addEventListener('input', applySnr);
 $('tWpm').addEventListener('input', applyWpm);
 $('tHz').addEventListener('input', applyTone);
+$('tHz').addEventListener('input', noiseRetune);
+$('tBw').onchange = () => { noiseSwap(); applySnr(); };
 $('testPlay').onclick = guard(testPlay);
 $('testStop').onclick = () => { testStop(); setState('停止中'); };
 $('tText').oninput = showSent;
@@ -905,7 +1034,7 @@ const FILE_UNIT = 0.1;      // 判定の待ち時間に足す短点 (速度が�
 
 function fileCmpMarks(text) {
 	const marks = [];
-	[...text.toUpperCase()].forEach((ch, idx) => { if (MORSE[ch]) marks.push({ idx, ch }); });
+	for (const tk of cwTokens(text)) if (!tk.space) marks.push({ idx: tk.idx, ch: tk.ch });
 	return marks;
 }
 
@@ -1036,7 +1165,11 @@ function cmpRender() {
 
 	// 送信文の表示: 文字ごとに状態のクラスを付ける
 	const cls = new Map();
-	r.marks.forEach((m, k) => cls.set(m.idx, e.st[k]));
+	const RANK = { skip: 0, ok: 1, wait: 2, ng: 3 };    // 1 文字に複数の符号 (濁点・ホレ/ラタ) があるときは悪いほう
+	r.marks.forEach((m, k) => {
+		const c = cls.get(m.idx);
+		if (c === undefined || RANK[e.st[k]] > RANK[c]) cls.set(m.idx, e.st[k]);
+	});
 	const esc = (c) => c === '&' ? '&amp;' : c === '<' ? '&lt;' : c;
 	const up = r.text.toUpperCase();
 	let html = '';
@@ -1222,8 +1355,17 @@ function feedLine(line, live = false) {
     }
     case 'C':
       if (f.length >= 3) {
-        chars.push({ col: +f[1], ch: f.slice(2).join(' ') });
-        textOut += f.slice(2).join(' ');
+        const ch = f.slice(2).join(' ');
+        chars.push({ col: +f[1], ch });
+        const merged = withMark(textOut.slice(-1), ch);
+        if (merged) {
+          // 前の文字に濁点を付ける。表示済みなら画面の最後の 1 文字も直す
+          const shown = textShown === textOut.length;
+          textOut = textOut.slice(0, -1) + merged;
+          if (shown && textEl.lastChild?.nodeType === Node.TEXT_NODE && textEl.lastChild.data) {
+            textEl.lastChild.data = textEl.lastChild.data.slice(0, -1) + merged;
+          } else if (shown) { textEl.textContent = textOut; textShown = textOut.length; }
+        } else textOut += ch;
         if (live) window.cwTester?.onChar(f.slice(2).join(' '));   // 送信文との照合へ
       }
       break;
@@ -1680,6 +1822,13 @@ function updateStat() {
 let textClearCol = -Infinity;
 //	デコード結果に出す文字列 (クリア以降に届いた分)。表示には差分だけを
 //	書き足すので、上へスクロールして読んでいる途中でも位置が動かない
+//	本体は濁点・半濁点を ゛゜ として文字のあとに別に返すので、表示では前の
+//	文字とまとめる (カ゛ → ガ)。まとめられないときは null
+function withMark(prev, ch) {
+  if (!prev || (ch !== '\u309B' && ch !== '\u309C')) return null;
+  const c = (prev + (ch === '\u309B' ? '\u3099' : '\u309A')).normalize('NFC');
+  return c.length === 1 ? c : null;
+}
 let textOut = '', textShown = 0;
 const TEXT_MAX = 50000;          // これを超えたら古い方を 10000 文字捨てる
 

@@ -196,6 +196,7 @@ button.tp { font-size: 15px; line-height: 1; min-width: 44px; }
       <label class="chk">WPM <input type="range" id="tWpm" min="8" max="45" value="20"><span id="tWpmV" class="metric">20</span></label>
       <label class="chk">トーン <input type="range" id="tHz" min="450" max="1050" step="10" value="600"><span id="tHzV" class="metric">600</span>Hz</label>
       <label class="chk">S/N <input type="range" id="tSnr" min="-15" max="40" value="15"><span id="tSnrV" class="metric">15</span>dB</label>
+      <label class="chk" title="ノイズの帯域。S/N はこの帯域内のノイズに対する比">帯域 <select id="tBw"><option value="6000">6kHz</option><option value="2500">2.5kHz</option><option value="600" selected>600Hz</option><option value="200">200Hz</option></select></label>
     </div>
     <div class="row">
       <input type="text" id="tText" value="ALICE WAS BEGINNING TO GET VERY TIRED OF SITTING BY HER SISTER ON THE BANK, AND OF HAVING NOTHING TO DO: ONCE OR TWICE SHE HAD PEEPED INTO THE BOOK" style="flex:1 1 300px;padding:0 8px;background:#0a121c;cursor:text">

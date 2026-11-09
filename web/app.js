@@ -561,6 +561,58 @@ const MORSE = {
 	')': '-.--.-', '"': '.-..-.', '@': '.--.-.', '+': '.-.-.', '!': '-.-.--',
 };
 
+//	和文 (カタカナ)。ひらがな・半角カナも受け付け、カタカナにそろえて送る。
+//	濁点・半濁点は文字のあとに ゛(・・) ゜(・・－－・) を続け、小さい文字は
+//	大きい文字で送る。カナが続く間の前にホレ、後にラタを入れる
+const WABUN = {
+	ア: '--.--', イ: '.-', ウ: '..-', エ: '-.---', オ: '.-...',
+	カ: '.-..', キ: '-.-..', ク: '...-', ケ: '-.--', コ: '----',
+	サ: '-.-.-', シ: '--.-.', ス: '---.-', セ: '.---.', ソ: '---.',
+	タ: '-.', チ: '..-.', ツ: '.--.', テ: '.-.--', ト: '..-..',
+	ナ: '.-.', ニ: '-.-.', ヌ: '....', ネ: '--.-', ノ: '..--',
+	ハ: '-...', ヒ: '--..-', フ: '--..', ヘ: '.', ホ: '-..',
+	マ: '-..-', ミ: '..-.-', ム: '-', メ: '-...-', モ: '-..-.',
+	ヤ: '.--', ユ: '-..--', ヨ: '--',
+	ラ: '...', リ: '--.', ル: '-.--.', レ: '---', ロ: '.-.-',
+	ワ: '-.-', ヰ: '.-..-', ヱ: '.--..', ヲ: '.---', ン: '.-.-.',
+	'゛': '..', '゜': '..--.', ー: '.--.-', '、': '.-.-.-', '。': '.-.-..', '」': '.-.-..',
+};
+//	実機がデコードして返す文字 (照合用)。ーは「-」、。と段落の」は「」」で返る
+const WABUN_OUT = { ー: '-', '。': '」' };
+const HORE = '-..---', RATA = '...-.';
+const SMALL_KANA = { ァ: 'ア', ィ: 'イ', ゥ: 'ウ', ェ: 'エ', ォ: 'オ', ッ: 'ツ', ャ: 'ヤ', ュ: 'ユ', ョ: 'ヨ', ヮ: 'ワ', ヵ: 'カ', ヶ: 'ケ' };
+
+//	送る符号の並び。{ idx: 元の文字の位置, code, ch: 実機が返すはずの文字 } と
+//	語の区切り { space: true }。送れない文字は飛ばす
+function cwTokens(text) {
+	const out = [];
+	[...text].forEach((raw, idx) => {
+		if (/\s/.test(raw)) { out.push({ space: true }); return; }
+		// 全角英数・半角カナを直し、ひらがなはカタカナに、濁点は分ける
+		let s = raw.normalize('NFKC').toUpperCase()
+			.replace(/[ぁ-ゖ]/g, (c) => String.fromCharCode(c.charCodeAt(0) + 0x60))
+			.normalize('NFD')
+			.replace(/゙/g, '゛').replace(/゚/g, '゜');
+		for (let c of s) {
+			c = SMALL_KANA[c] || c;
+			if (WABUN[c]) out.push({ idx, code: WABUN[c], ch: WABUN_OUT[c] || c, kana: true });
+			else if (MORSE[c]) out.push({ idx, code: MORSE[c], ch: c });
+		}
+	});
+	// カナが続く間 (空白をはさんでもよい) の前後にホレ・ラタ
+	const res = [];
+	let inKana = false, lastKana = -1;
+	for (const tk of out) {
+		if (tk.space) { res.push(tk); continue; }
+		if (tk.kana && !inKana) { res.push({ idx: tk.idx, code: HORE, ch: '「' }); inKana = true; }
+		if (!tk.kana && inKana) { res.splice(lastKana + 1, 0, { idx: res[lastKana].idx, code: RATA, ch: '」' }); inKana = false; }
+		res.push(tk);
+		if (tk.kana) lastKana = res.length - 1;
+	}
+	if (inKana) res.splice(lastKana + 1, 0, { idx: res[lastKana].idx, code: RATA, ch: '」' });
+	return res;
+}
+
 //	立ち上がり/立ち下がりを 5ms なまらせた、実機の受信音に近い CW を作る。
 //	作るのは 0〜1 のキーイング波形 (エンベロープ) だけで、トーンは掛けない。
 //	再生時に発振器の振幅をこの波形で変調する。トーンは発振器の周波数、
@@ -571,10 +623,8 @@ function synthCW(text, { wpm }) {
 	const unit = 1.2 / wpm;
 	const keys = [[false, 0.6]];
 	let first = true;
-	for (const raw of text.toUpperCase()) {
-		if (/\s/.test(raw)) { if (!first) keys.push([false, 7 * unit]); first = true; continue; }
-		const code = MORSE[raw];
-		if (!code) continue;
+	for (const { space, code } of cwTokens(text)) {
+		if (space) { if (!first) keys.push([false, 7 * unit]); first = true; continue; }
 		if (!first) keys.push([false, 3 * unit]);
 		first = false;
 		code.split('').forEach((e, i) => {
@@ -620,18 +670,71 @@ function testLevels() {
 	return { sig: a, noise: a * r };
 }
 
-//	ノイズは分散 1 のガウス雑音を 4 秒分作ってループで鳴らし続ける
-let noiseBuf = null;
-function getNoiseBuf() {
-	if (noiseBuf && noiseBuf.sampleRate === ctx.sampleRate) return noiseBuf;
-	const n = ctx.sampleRate * 4;
-	noiseBuf = ctx.createBuffer(1, n, ctx.sampleRate);
-	const d = noiseBuf.getChannelData(0);
-	for (let i = 0; i < n; i++) {
-		const u1 = Math.random() || 1e-9, u2 = Math.random();
-		d[i] = Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
+//	ノイズの帯域。S/N はこの帯域内の雑音の実効値に対する比になる。
+//	6kHz・2.5kHz は受信機の音声帯域 (50Hz〜6kHz / 300Hz〜2.8kHz)、
+//	600Hz・200Hz はトーンを中心にした幅 (トーンを変えると帯域も動く)
+const NOISE_BANDS = { 6000: [50, 6000], 2500: [300, 2800] };
+function noiseBand(bw, tone) {
+	if (NOISE_BANDS[bw]) return NOISE_BANDS[bw];
+	return [Math.max(20, tone - bw / 2), tone + bw / 2];
+}
+const noiseFollowsTone = (bw) => !NOISE_BANDS[bw];
+
+//	帯域を限ったガウス雑音 (実効値 1)。周波数領域で帯域内の成分だけに乱数を
+//	置いて逆 FFT するので、帯域の外は 0 になり、ループの継ぎ目もつながる
+const noiseCache = new Map();
+function bandNoiseBuf(bw, tone) {
+	const [lo, hi] = noiseBand(bw, tone);
+	const rate = ctx.sampleRate;
+	const key = `${rate}:${lo}:${hi}`;
+	let b = noiseCache.get(key);
+	if (b) return b;
+	const N = 1 << 18;                  // 48kHz で約 5.5 秒
+	const re = new Float64Array(N), im = new Float64Array(N);
+	const k0 = Math.max(1, Math.ceil(lo * N / rate));
+	const k1 = Math.min(N / 2 - 1, Math.floor(hi * N / rate));
+	for (let k = k0; k <= k1; k++) {
+		const g = Math.sqrt(-2 * Math.log(Math.random() || 1e-9)), p = 2 * Math.PI * Math.random();
+		re[k] = re[N - k] = g * Math.cos(p);
+		im[k] = g * Math.sin(p);
+		im[N - k] = -im[k];             // 共役対称にして実数の波形にする
 	}
-	return noiseBuf;
+	fftInPlace(re, im);
+	let ss = 0;
+	for (let i = 0; i < N; i++) ss += re[i] * re[i];
+	const s = 1 / Math.sqrt(ss / N);
+	b = ctx.createBuffer(1, N, rate);
+	const d = b.getChannelData(0);
+	for (let i = 0; i < N; i++) d[i] = re[i] * s;
+	if (noiseCache.size >= 8) noiseCache.clear();
+	noiseCache.set(key, b);
+	return b;
+}
+
+//	基数 2 の FFT (符号 + の向き。正規化しない)
+function fftInPlace(re, im) {
+	const n = re.length;
+	for (let i = 1, j = 0; i < n; i++) {
+		let bit = n >> 1;
+		for (; j & bit; bit >>= 1) j ^= bit;
+		j ^= bit;
+		if (i < j) {
+			let t = re[i]; re[i] = re[j]; re[j] = t;
+			t = im[i]; im[i] = im[j]; im[j] = t;
+		}
+	}
+	for (let len = 2; len <= n; len <<= 1) {
+		const h = len >> 1;
+		for (let k = 0; k < h; k++) {
+			const wr = Math.cos(Math.PI * k / h), wi = Math.sin(Math.PI * k / h);
+			for (let a = k; a < n; a += len) {
+				const b = a + h;
+				const tr = re[b] * wr - im[b] * wi, ti = re[b] * wi + im[b] * wr;
+				re[b] = re[a] - tr; im[b] = im[a] - ti;
+				re[a] += tr; im[a] += ti;
+			}
+		}
+	}
 }
 
 //	テスト信号の経路: 発振器 → keyGain → sigGain ┐
@@ -645,7 +748,7 @@ let testOsc = null, testKey = null, testRef = 20;    // testRef: 波形を作っ
 let testSigGain = null, testNoiseGain = null, testCount = 0;
 
 function testStatus() {
-	setState(`テスト信号: ${$('tWpm').value}WPM / ${$('tHz').value}Hz / S:N ${$('tSnr').value}dB` +
+	setState(`テスト信号: ${$('tWpm').value}WPM / ${$('tHz').value}Hz / S:N ${$('tSnr').value}dB (${$('tBw').selectedOptions[0].text})` +
 		(loopOn ? ` — LOOP ${testCount} 回目` : ''));
 }
 
@@ -688,7 +791,7 @@ async function testPlay() {
 	osc.frequency.value = +$('tHz').value;
 	osc.connect(testKey);
 	const nz = ctx.createBufferSource();
-	nz.buffer = getNoiseBuf();
+	nz.buffer = bandNoiseBuf(+$('tBw').value, +$('tHz').value);
 	nz.loop = true;
 	nz.connect(testNoiseGain);
 	attachSource(mix, $('testMonitor').checked, null, [nz, osc, testKey, testSigGain, testNoiseGain]);
@@ -715,6 +818,25 @@ function applyTestTone() {
 	if (!testOn || !testOsc) return;
 	testOsc.frequency.setTargetAtTime(+$('tHz').value, ctx.currentTime, 0.005);
 	testStatus();
+}
+
+//	送信中にノイズの帯域を変える (新しい雑音に差し替える)
+function testNoiseSwap() {
+	if (!testOn || !testNoise) return;
+	const s = ctx.createBufferSource();
+	s.buffer = bandNoiseBuf(+$('tBw').value, +$('tHz').value);
+	s.loop = true;
+	s.connect(testNoiseGain);
+	s.start();
+	try { testNoise.stop(); testNoise.disconnect(); } catch {}
+	srcExtra = srcExtra.map((x) => x === testNoise ? s : x);
+	testNoise = s;
+}
+let testNoiseTimer = 0;
+function testNoiseRetune() {    // トーンに追従する帯域は、トーンを動かし終えてから作り直す
+	if (!noiseFollowsTone(+$('tBw').value)) return;
+	clearTimeout(testNoiseTimer);
+	testNoiseTimer = setTimeout(testNoiseSwap, 200);
 }
 
 function applyTestSnr() {
@@ -1216,6 +1338,8 @@ for (const [r, v] of [['tWpm', 'tWpmV'], ['tHz', 'tHzV'], ['tSnr', 'tSnrV']]) {
 $('tSnr').addEventListener('input', applyTestSnr);
 $('tWpm').addEventListener('input', applyTestWpm);
 $('tHz').addEventListener('input', applyTestTone);
+$('tHz').addEventListener('input', testNoiseRetune);
+$('tBw').onchange = () => { testNoiseSwap(); if (testOn) testStatus(); };
 for (const b of document.querySelectorAll('input.loop')) b.onchange = () => setLoop(b.checked);
 $('testPlay').onclick = guard(testPlay);
 $('testStop').onclick = () => { drainDecoder(); stopSource(); setState('停止中'); };
