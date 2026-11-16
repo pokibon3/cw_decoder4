@@ -225,6 +225,17 @@ function resetData() {
   updateStat();
 }
 
+//	列番号は本体の起動からの通し番号なので、別の実機に繋ぎ変えたり本体が
+//	再起動したりすると巻き戻る。そのまま積むと表示の右端が前の実機の maxCol に
+//	残ってスコープが止まるため、オシロの列と文字を捨てて新しい流れとして始める
+//	(デコード結果も chars から作るので一緒に消える。保存用の生ログは残す)
+function restartScope() {
+  cols.clear(); chars.length = 0; elems.length = 0;
+  selA = selB = null; updateSelBar();
+  minCol = maxCol = null; viewEnd = null; lastView = null;
+  rawMax = 100; envMax = 500;
+}
+
 function trim() {
   if (cols.size <= MAX_COLS) return;
   const drop = cols.size - MAX_COLS;
@@ -246,6 +257,7 @@ function feedLine(line) {
       if (f.length < 7) return;
       const idx = +f[1];
       if (!Number.isFinite(idx)) return;
+      if (maxCol !== null && idx < maxCol) restartScope();
       cols.set(idx, { t: +f[2], mn: +f[3], mx: +f[4], env: +f[5], gate: +f[6],
                       side: f.length > 7 ? +f[7] : null, near: f.length > 8 ? +f[8] : null,
                       limit: f.length > 9 ? +f[9] : null, nf: f.length > 10 ? +f[10] : null,
