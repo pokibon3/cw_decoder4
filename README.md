@@ -64,6 +64,36 @@ CYD への電源 (5 V) もアナログボードから供給します。
 - 内部発熱が大きいため、9V/1AのACアダプタを推奨します
 - CYD の USB Micro-B 端子からも給電できます
 
+### 基板とケース
+
+アナログボードのガーバーデータとケースの 3D データを収録しています。部品表は [BOM.xlsx](docs/BOM.xlsx) を参照してください。
+
+**ガーバーデータ** ([gerber/](gerber/))
+
+| ファイル | 内容 |
+|---|---|
+| CWDV4_20261018_R1.zip | アナログボード Rev1 (2 層)。銅箔・レジスト・シルク (表裏)、外形、ドリル (PTH / NPTH) |
+
+**ケース** ([case/](case/)、STL 形式)
+
+| ファイル | 部品 |
+|---|---|
+| CW_Decoder4_CYD_Body.stl | 本体 |
+| CW_Decoder4_CYD_Btm.stl | 底板 |
+| CW_Decoder4_CYD_Cap.stl | キャップ |
+| CW_Decoder4_Btn.stl | ボタン |
+| CW_Decoder4_oldCYD_Bezel_White.stl | ベゼル (旧 CYD 用、ILI9341) |
+| CW_Decoder4_newCYD_Bezel_White.stl | ベゼル (新 CYD 用、ST7789) |
+
+ベゼルは CYD の液晶コントローラに合わせて、いずれか一方を使用します。
+
+組立てには、次のねじを使用します。
+
+| ねじ | 本数 | 用途 |
+|---|---|---|
+| M3 × 6 mm | 4 | 基板の取付け |
+| M3 × 8 mm | 8 | ケースの組立て |
+
 ## ビルド
 
 VS Code および PlatformIO でビルドします。PlatformIO 環境は液晶コントローラごとに異なります。
