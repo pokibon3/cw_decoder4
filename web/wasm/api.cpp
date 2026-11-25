@@ -318,6 +318,17 @@ WASM_EXPORT int cw_det(void)
 	return dsp_det_mode();
 }
 
+//	文字の出し方: 0=従来 (符号表) / 1=DL (ML、英文・和文)。実機の SETUP の「デコーダ」と同じ
+WASM_EXPORT void cw_set_engine(int e)
+{
+	decoder_set_engine((uint8_t)e);
+}
+
+WASM_EXPORT int cw_engine(void)
+{
+	return decoder_engine();
+}
+
 //	ALE のパラメータ。整数だけで渡せるよう mu は 1e-5 単位、比は 1/100 単位
 WASM_EXPORT void cw_set_ale(int taps, int delay, int mu_e5, int ron_x100, int roff_x100)
 {

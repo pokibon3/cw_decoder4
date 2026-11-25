@@ -220,6 +220,11 @@ button.tp { font-size: 15px; line-height: 1; min-width: 44px; }
     <label class="chk" title="帯域幅 = 700/Q。Q を上げすぎるとフィルタ自身が中心とサイドビンの落差を作り、デコーダの純音判定がノイズに対して誤動作する (Q=5 以上で偽符号が出始める)"> Q <input type="range" id="bpfQ" min="1" max="8" step="0.5" value="3" style="width:80px"><span id="bpfQV" class="metric">3.0</span></label>
     <label class="chk" title="ノイズ低減 (実機の SETUP の NR と同じ)。ON で適応型ラインエンハンサ (ALE) を使い、弱い信号の感度を上げつつノイズの偽文字を減らす">
       <input type="checkbox" id="nrOn" checked> NR</label>
+    <label class="chk" title="文字の出し方 (実機の SETUP の「デコーダ」と同じ)。標準 = 符号表、DL = 機械学習 (既定。英文・和文。手送りの癖や詰まった文字間に強い)">デコーダ
+      <select id="engSel">
+        <option value="0">標準</option>
+        <option value="1" selected>DL</option>
+      </select></label>
     <label class="chk">ch
       <select id="chSel" title="ステレオ入力のどの系統をデコードに使うか。片チャンネルだけ繋いでいるときは L か R を選ぶ">
         <option value="L">L</option>
@@ -285,7 +290,7 @@ button.tp { font-size: 15px; line-height: 1; min-width: 44px; }
 <div id="statusbar"><span id="state">停止中</span>
   <!-- バージョンはファームウェア (src/version.h の FW_VERSION) と揃える。
        上げるときは manual.html の先頭の表示も一緒に直す -->
-  <span class="ver">v4.0</span></div>
+  <span class="ver">v4.1</span></div>
 
 <script>
 // app.js を読み込む。localhost のときだけキャッシュを外す (開発用)。

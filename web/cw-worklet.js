@@ -57,6 +57,8 @@ class CWProcessor extends AudioWorkletProcessor {
 			this.core?.cw_cycle_tone();
 		} else if (msg.type === 'det') {
 			this.core?.cw_set_det(msg.mode);
+		} else if (msg.type === 'engine') {
+			this.core?.cw_set_engine?.(msg.mode);
 		} else if (msg.type === 'toggleMode') {
 			this.core?.cw_toggle_mode();
 		} else if (msg.type === 'reset') {

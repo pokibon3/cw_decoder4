@@ -26,7 +26,7 @@ failed to load`)。マイク入力も `file://` では許可を保持できま�
 
 ### 単一ファイル版
 
-`web/cw-decoder.html` (72KB) は app.js・ワークレット・wasm をすべて 1 枚に
+`web/cw-decoder.html` (約 180KB) は app.js・ワークレット・wasm をすべて 1 枚に
 埋め込んだものです。**これも `file://` では動きません** (上記のとおり) が、
 他のファイルを一切置かずに静的ホストへ 1 枚だけ置けば動くので、配布用に使えます。
 
@@ -416,7 +416,7 @@ sh web/build.sh
 
 Emscripten は使いません。中核コードは STL もヒープも使わず、必要な数学関数も
 `cosf` / `sinf` / `sqrtf` / `sqrt` の 4 つだけなので、clang の wasm32 ターゲットと
-`wasm-ld` によるフリースタンディングビルドで通ります (出力は約 13KB)。
+`wasm-ld` によるフリースタンディングビルドで通ります (出力は約 74KB。うち約 50KB は DL デコーダの重み)。
 
 ## 構成
 
@@ -436,6 +436,7 @@ web/
     shim/           Arduino.h / math.h / string.h のスタブ
   tools/
     selftest.mjs      合成 CW によるデコーダ回帰試験
+    ml/               DL デコーダの学習 (下記)
 ```
 
 ### テスト用の音声について
@@ -482,6 +483,22 @@ node web/tools/selftest.mjs
 ノイズの乱数は固定シードなので、同じコマンドは常に同じ結果になります
 (毎回違うノイズだと数%ぶれて、しきい値をいじった効果なのか運なのか
 区別がつきません)。別の系列で確かめたいときは `--seed <n>` を付けてください。
+
+## DL デコーダの学習
+
+画面の「デコーダ」で DL を選んだときに使うモデル (`src/mldec.cpp`、重みは `src/mlweights.h`) は、
+`web/tools/ml/` で作ります。学習には PyTorch が要ります。
+
+| ファイル | 内容 |
+|---|---|
+| `gen.mjs` | 合成 CW (速度・送信の癖・帯域ノイズ・局の交代・和文) を入力 BPF と `cwcore.wasm` に通し、マーク / スペースの長さの列と正解の文字列を書き出す |
+| `train.py` | GRU + CTC の学習と評価 |
+| `stream.py` | 逐次出力 (送信の最後の文字を待たずに出す方式) の確認 |
+| `export.py` | 学習済みモデル (`cwml.pt`) を `src/mlweights.h` に書き出す (8 ビット整数、行ごとの倍率付き) |
+| `mkbigram.mjs` | 区切り直し用の文字 2 連鎖のコスト表 `src/bigram.h` を作る |
+
+モデルを差し替えたら、`python export.py cwml.pt > ../../../src/mlweights.h` のあと
+`sh web/build.sh` と実機のビルドを行います。
 
 ## ライセンス
 

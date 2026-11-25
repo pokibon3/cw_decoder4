@@ -13,6 +13,7 @@
 #include "dsp.h"
 #include "scopelog.h"
 #include "bigram.h"
+#include "mldec.h"
 
 // トーン判定: 中心ビンがサイドレベルの何倍あれば正弦波とみなすか。
 #define TONE_SIDE_RATIO 3
@@ -353,8 +354,21 @@ static void unit_smooth_update(uint32_t dur)
 //==================================================================
 //	デコード結果の出力
 //==================================================================
+// 文字の出し方 (DEC_ENGINE_*)。DL 方式のときも従来のデコーダは動かし続け
+// (速度推定・ノイズブランカの深さ・窓の選択に使う)、文字だけ ML のものを出す
+static uint8_t dec_engine = DEC_ENGINE_RULE;
+// 切り替えの要求。SETUP (UI のタスク) から書き、DSP のタスクが次のブロックで
+// 反映する (ML の状態の初期化を処理中の DSP タスクと競合させないため)
+static volatile uint8_t dec_engine_req = DEC_ENGINE_RULE;
+static uint32_t ml_last_ms = 0;     // 直前にゲートが切り替わった時刻 (ML に渡す要素長用)
+
+// ML は和文 (ホレ〜ラタ) も学習しているので、DL 方式のときは英文・和文とも
+// ML の文字を出す
+static bool ml_active(void);
+
 static void emit(uint8_t ch)
 {
+	if (ml_active()) return;
 	if (emit_fn) emit_fn(ch);
 }
 
@@ -476,10 +490,16 @@ static uint8_t split_code(int16_t *res)
 	uint32_t q2 = gu + (span >> 1);
 	uint32_t q3 = gu + span - (span >> 2);
 	uint8_t lv[SPLIT_MAX];
+	uint8_t lv_max = 0;
 	for (int j = 1; j < len; j++) {
 		uint32_t g = code_gap[j];
 		lv[j] = (uint8_t)((g >= q3) ? 3 : (g >= q2) ? 2 : (g >= q1) ? 1 : 0);
+		if (lv[j] > lv_max) lv_max = lv[j];
 	}
+	// ホレは、文字間らしいスペース (境界寄りの半分) を含むときだけ割る。
+	// ホレ自体は 2 連鎖の表に無く最大のコストになるので、普通に送られた
+	// ホレまで D + O に割られて和文に入れなくなる
+	if (decode_us(code) == 5 && lv_max < 2) return 0;
 
 	// 直前に出した文字を言語コストの起点にする (語頭なら 0)
 	int8_t prev0 = 0;
@@ -646,11 +666,36 @@ void decoder_init(void)
 	starttimehigh = 0;
 	startttimelow = 0;
 	code_pre_gap = 0;
+	mldec_reset();
+	ml_last_ms = 0;
+}
+
+// ML の文字の出口
+static void ml_emit(uint8_t ch)
+{
+	if (!ml_active()) return;
+	if (emit_fn) emit_fn(ch);
 }
 
 void decoder_set_emit(void (*fn)(uint8_t ch))
 {
 	emit_fn = fn;
+	mldec_set_emit(ml_emit);
+}
+
+static bool ml_active(void)
+{
+	return dec_engine == DEC_ENGINE_ML;
+}
+
+void decoder_set_engine(uint8_t e)
+{
+	dec_engine_req = e;
+}
+
+uint8_t decoder_engine(void)
+{
+	return dec_engine_req;
 }
 
 void decoder_set_limit_floor(int32_t floor)
@@ -972,6 +1017,23 @@ static void key_step(void)
 				prev_short_mark_ms = 0;
 				short_mark_run = 0;
 			}
+		}
+	}
+
+	if (dec_engine != dec_engine_req) {
+		dec_engine = dec_engine_req;
+		mldec_reset();
+		ml_last_ms = dec_ms;
+	}
+	// DL 方式: ゲートの切り替わりごとに、終わった要素の長さを ML に渡す。
+	// 長さは切り替わり時刻の差そのもの (学習データと同じ。上の lowduration は
+	// 短すぎるマークでスペースを分断しないよう startttimelow を据え置くので違う)
+	if (dec_engine == DEC_ENGINE_ML) {
+		if (filteredstate != filteredstatebefore) {
+			mldec_element(filteredstate == KEY_LOW ? 1 : 0, dec_ms - ml_last_ms);
+			ml_last_ms = dec_ms;
+		} else if (filteredstate == KEY_LOW) {
+			mldec_silence(dec_ms - ml_last_ms);
 		}
 	}
 

@@ -191,6 +191,7 @@ async function ensureEngine() {
 		}, 10);
 	});
 	sendNr();
+	sendEngine();
 }
 
 //	NR (ノイズ低減) の ON/OFF。実機の SETUP の NR と同じく、ON は検出方式 E
@@ -198,6 +199,12 @@ async function ensureEngine() {
 //	画面からは選べない (方式の比較は web/tools/aletest.mjs で行う)
 function sendNr() {
 	node?.port.postMessage({ type: 'det', mode: $('nrOn').checked ? 4 : 0 });
+}
+
+//	デコーダ (文字の出し方)。実機の SETUP の「デコーダ」と同じく、0 = 標準 (符号表)、
+//	1 = DL (src/mldec.cpp の機械学習、英文・和文)
+function sendEngine() {
+	node?.port.postMessage({ type: 'engine', mode: +$('engSel').value });
 }
 
 function stopSource() {
@@ -784,17 +791,19 @@ async function testPlay() {
 	testNoiseGain.gain.value = lv.noise;
 	testSigGain.connect(mix);
 	testNoiseGain.connect(mix);
-	testKey = ctx.createGain();
-	testKey.gain.value = 0;
-	testKey.connect(testSigGain);
+	const key = ctx.createGain();
+	key.gain.value = 0;
+	key.connect(testSigGain);
 	const osc = ctx.createOscillator();
 	osc.frequency.value = +$('tHz').value;
-	osc.connect(testKey);
+	osc.connect(key);
 	const nz = ctx.createBufferSource();
 	nz.buffer = bandNoiseBuf(+$('tBw').value, +$('tHz').value);
 	nz.loop = true;
 	nz.connect(testNoiseGain);
-	attachSource(mix, $('testMonitor').checked, null, [nz, osc, testKey, testSigGain, testNoiseGain]);
+	// attachSource の中の stopSource が testKey などを null に戻すので、代入はその後で
+	attachSource(mix, $('testMonitor').checked, null, [nz, osc, key, testSigGain, testNoiseGain]);
+	testKey = key;
 	nz.start();
 	osc.start();
 	testOsc = osc;
@@ -1303,6 +1312,7 @@ $('micStart').onclick = guard(startMic);
 $('chSel').onchange = () => wireChain();
 $('bpfOn').onchange = () => wireChain();
 $('nrOn').onchange = sendNr;
+$('engSel').onchange = sendEngine;
 $('bpfCenter').onchange = () => updateBpf();
 $('bpfQ').oninput = () => { $('bpfQV').textContent = (+$('bpfQ').value).toFixed(1); updateBpf(); };
 $('micRescan').onclick = guard(async () => { await ensureEngine(); await listMics(); });

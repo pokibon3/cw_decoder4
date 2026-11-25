@@ -28,4 +28,9 @@ int32_t decoder_noise_floor(void); // ゲートOFF中のノイズ床推定 (診�
 // bit2=realstate。列単位のログでは再現できないブロック単位の実際の判定
 uint8_t decoder_gate_flags(void);
 uint8_t decoder_mode(void);       // MODE_US / MODE_JP
+// 文字の出し方: 従来のルール (符号表) か ML (DL 方式、英文・和文)
+#define DEC_ENGINE_RULE 0
+#define DEC_ENGINE_ML 1
+void decoder_set_engine(uint8_t e);
+uint8_t decoder_engine(void);
 void decoder_toggle_mode(void);

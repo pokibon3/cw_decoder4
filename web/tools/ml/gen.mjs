@@ -93,6 +93,68 @@ export const PROSIGN = {
 };
 const PROSIGN_OF = Object.fromEntries(Object.entries(PROSIGN).map(([k, [w]]) => [w, k]));
 export const expandProsign = (t) => t.replace(/[\x01-\x06]/g, (c) => PROSIGN[c][2]);
+
+//==================================================================
+//	和文 (CW Tester の WABUN と同じ符号)
+//==================================================================
+//	テキスト中は全角カナ (濁点・半濁点は ゛゜ に分けた形) と、ホレ = \x10、
+//	ラタ = \x11 で持つ。正解は実機のデコーダが出すのと同じ文字にそろえる:
+//	ホレ « (実機の 5 = 「)、ラタ » (6 = 」)、カナは半角カナ (JIS X 0201 の
+//	0xA6〜0xDF をそのまま U+FF66〜U+FF9F に)。ー は - 、、は ､、。は ｣
+export const WABUN = {
+	ア: '--.--', イ: '.-', ウ: '..-', エ: '-.---', オ: '.-...',
+	カ: '.-..', キ: '-.-..', ク: '...-', ケ: '-.--', コ: '----',
+	サ: '-.-.-', シ: '--.-.', ス: '---.-', セ: '.---.', ソ: '---.',
+	タ: '-.', チ: '..-.', ツ: '.--.', テ: '.-.--', ト: '..-..',
+	ナ: '.-.', ニ: '-.-.', ヌ: '....', ネ: '--.-', ノ: '..--',
+	ハ: '-...', ヒ: '--..-', フ: '--..', ヘ: '.', ホ: '-..',
+	マ: '-..-', ミ: '..-.-', ム: '-', メ: '-...-', モ: '-..-.',
+	ヤ: '.--', ユ: '-..--', ヨ: '--',
+	ラ: '...', リ: '--.', ル: '-.--.', レ: '---', ロ: '.-.-',
+	ワ: '-.-', ヲ: '.---', ン: '.-.-.',
+	'゛': '..', '゜': '..--.', ー: '.--.-', '、': '.-.-.-', '。': '.-.-..',
+	'\x10': '-..---', '\x11': '...-.',
+};
+const KANA = 'ヲ ア イ ウ エ オ ヤ ユ ヨ ツ ー ア イ ウ エ オ カ キ ク ケ コ サ シ ス セ ソ タ チ ツ テ ト ナ ニ ヌ ネ ノ ハ ヒ フ ヘ ホ マ ミ ム メ モ ヤ ユ ヨ ラ リ ル レ ロ ワ ン ゛ ゜';
+// 半角カナの並び (U+FF66 ｦ から)。全角カナ → 半角カナの対応に使う
+const HALF = {};
+KANA.split(' ').forEach((k, i) => { if (i === 0 || i >= 11) HALF[k] = String.fromCharCode(0xFF66 + i); });  // 1〜10 は小さいカナと ｰ
+Object.assign(HALF, { ー: '-', '、': '､', '。': '｣', '\x10': '«', '\x11': '»' });
+export const wabunTruth = (t) => t.replace(/[\x10\x11ア-ヲン゛゜ー、。]/g, (c) => HALF[c] || c);
+
+//	和文の語 (QSO でよく使うもの)。濁点・半濁点は分け、小さいカナは大きくして送る
+const WABUN_WORDS = ('コンニチハ コンバンハ オハヨウゴザイマス アリガトウ ゴザイマシタ ヨロシク オネガイシマス ' +
+	'ハジメマシテ マタ オアイシマショウ サヨウナラ ゴキゲンヨウ ナマエ ハ デス マス ワタシ コチラ ' +
+	'ソチラ シグナル リポート ガ ノ ヲ ニ デ ト モ ヘ カラ マデ ヨリ リグ アンテナ ダイポール ' +
+	'バーチカル ヤギ テンキ ハレ クモリ アメ ユキ カゼ サムイ アツイ キオン ド ワット ムセン ' +
+	'キョク ジムショ ジタク イドウ ヤマ ウミ カワ トウキョウ オオサカ ナゴヤ サッポロ フクオカ ' +
+	'センダイ ヒロシマ キョウト コウベ ヨコハマ ケン シ マチ ムラ キンジョ ゲンキ ゲンキデス ' +
+	'オツカレサマ ヨク キコエマス ヨワイ ツヨイ ノイズ ガ オオイ スコシ フェージング アリ ' +
+	'QSL カード オクリマス ビューロー ケイユ ジカン フン ビョウ キョウ アシタ キノウ ' +
+	'コンゴトモ ゴアイサツ マデ ゼロ イチ ニ サン ヨン ゴ ロク ナナ ハチ キュウ ジュウ ' +
+	'ソレデハ シツレイシマス オヤスミナサイ タノシイ ウレシイ ホンジツ ハジメテ ニカイメ').split(' ').filter((w) => !/[A-Z]/.test(w));
+const SMALL = { ァ: 'ア', ィ: 'イ', ゥ: 'ウ', ェ: 'エ', ォ: 'オ', ッ: 'ツ', ャ: 'ヤ', ュ: 'ユ', ョ: 'ヨ', ヮ: 'ワ' };
+//	全角カナを送れる形 (濁点を分け、小さいカナを大きく) にする
+const toWabun = (w) => [...w].map((c) => SMALL[c] || c).join('').normalize('NFD')
+	.replace(/\u3099/g, '゛').replace(/\u309A/g, '゜');
+const WABUN_CHARS = Object.keys(WABUN).filter((c) => !/[\x10\x11]/.test(c));
+
+//	和文の区間: ホレ + 語 (2〜8 個) + ラタ。2 割はランダムなカナ列を混ぜる
+function makeWabun() {
+	const n = 2 + Math.floor(rnd() * 7);
+	const ws = [];
+	for (let i = 0; i < n; i++) {
+		if (rnd() < 0.2) {
+			let w = '';
+			for (let j = 1 + Math.floor(rnd() * 5); j > 0; j--) w += pick(WABUN_CHARS);
+			ws.push(w);
+		} else {
+			ws.push(toWabun(pick(WABUN_WORDS)));
+		}
+	}
+	if (rnd() < 0.3) ws[ws.length - 1] += pick(['、', '。']);
+	return '\x10' + ws.join(' ') + '\x11';
+}
 const LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
 const DIGITS = '0123456789';
 
@@ -144,6 +206,12 @@ export function makeText() {
 	for (let p = 0; p < np && words.length > 1; p++) {
 		const k = 1 + Math.floor(rnd() * (words.length - 1));
 		if (words[k] !== '|' && words[k - 1] !== '|') words.splice(k, 0, '|');
+	}
+	// 和文の区間 (ホレ〜ラタ) を 25% の文に入れる。和文だけの文も混ぜる
+	if (rnd() < 0.25) {
+		const w = makeWabun();
+		if (rnd() < 0.3) return w;
+		words.splice(Math.floor(rnd() * (words.length + 1)), 0, w);
 	}
 	return words.join(' ');
 }
@@ -212,7 +280,7 @@ function keying(text, st0) {
 			continue;
 		}
 		if (ch === ' ') { keys.push([0, jit(st.wordGap * st.farns * unit), si]); first = true; continue; }
-		const code = MORSE[ch] || (PROSIGN[ch] && PROSIGN[ch][1]);
+		const code = MORSE[ch] || WABUN[ch] || (PROSIGN[ch] && PROSIGN[ch][1]);
 		if (!code) continue;
 		if (!first) keys.push([0, jit(st.charGap * st.farns * unit), si]);
 		first = false;
@@ -362,6 +430,8 @@ export async function createCore() {
 			e.cw_reset();
 			e.cw_set_tone(5);                   // AUTO
 			e.cw_set_det(4);                    // 実機既定 (NR ON = 方式 E)
+			// 文字の出し方 (0=従来, 1=DL)。CW_ENGINE=1 で DL 方式の出力を base に入れる
+			e.cw_set_engine?.(parseInt(process.env.CW_ENGINE || '0', 10));
 			const cap = e.cw_in_cap(), ptr = e.cw_in_ptr();
 			const stride = e.cw_elem_stride();
 			const trans = [];                   // [mark(切り替わり後の状態), t_ms]
@@ -408,7 +478,12 @@ export async function createCore() {
 		const n = st[4];
 		const raw = new Uint8Array(mem(), e.cw_chars_ptr(), n * 8);
 		let s = '';
-		for (let i = 0; i < n; i++) s += String.fromCharCode(raw[i * 8 + 4]);
+		for (let i = 0; i < n; i++) {
+			// 和文の文字は正解と同じ表記に: 5 (ホレ) → «、6 (ラタ) → »、
+			// 0xA1〜0xDF (半角カナ) → U+FF61〜
+			const b = raw[i * 8 + 4];
+			s += b === 5 ? '«' : b === 6 ? '»' : (b >= 0xA1 && b <= 0xDF) ? String.fromCharCode(b + 0xFEC0) : String.fromCharCode(b);
+		}
 		return s;
 	}
 }
@@ -455,8 +530,8 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
 			if (st.segs.length === 1) delete st.segs;
 			const r = core.run(synth(text, st));
 			// 合間で区切った各部分 (評価で「交代直後の先頭文字」を数えるため)
-			const parts = text.split('|').map((t) => expandProsign(t.trim()));
-			text = expandProsign(text.replace(/ ?\| ?/g, ' '));
+			const parts = text.split('|').map((t) => wabunTruth(expandProsign(t.trim())));
+			text = wabunTruth(expandProsign(text.replace(/ ?\| ?/g, ' ')));
 			process.stdout.write(JSON.stringify({ text, base: r.base, seq: r.seq, st, parts }) + '\n');
 		}
 	} else if (cmd === 'grid') {
@@ -475,7 +550,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
 								jitter: 0.05, drift: 0, snr: 20, bw: 600, tone: 700, amp: 0.3, qsb: null, qrn: 0,
 								grid: `${dash}|${charGap.toFixed(1)}|${wordGap}` };
 							const res = core.run(synth(text, st));
-							process.stdout.write(JSON.stringify({ text: expandProsign(text), base: res.base, seq: res.seq, st }) + '\n');
+							process.stdout.write(JSON.stringify({ text: wabunTruth(expandProsign(text)), base: res.base, seq: res.seq, st }) + '\n');
 						}
 	} else if (cmd === 'snr') {
 		// ノイズ耐性の評価: CW Tester の既定 (トーン 600Hz、ノイズ帯域 600Hz、
@@ -492,7 +567,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
 						jitter: 0.02, drift: 0, snr, bw, tone: 600, amp: 0.3, qsb: null, qrn: 0,
 						noBlip: true, snrpt: snr };
 					const res = core.run(synth(text, st));
-					process.stdout.write(JSON.stringify({ text: expandProsign(text), base: res.base, seq: res.seq, st }) + '\n');
+					process.stdout.write(JSON.stringify({ text: wabunTruth(expandProsign(text)), base: res.base, seq: res.seq, st }) + '\n');
 				}
 	} else if (cmd === 'audio') {
 		const truth = (a2 && a2 !== '-' && existsSync(a2)) ? readFileSync(a2, 'utf8').replace(/\s+/g, ' ').trim() : null;

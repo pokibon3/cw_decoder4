@@ -1,20 +1,21 @@
 //
 //	セットアップ画面
 //
-//	2列 x 5行のグリッド (9項目、左下は空き)。
+//	2列 x 5行のグリッド (10項目)。
 //
 //	┌ SETUP                                [戻る] ┐
 //	│ [ WiFi設定 ]         [ 時刻合わせ ]         │
 //	│ [ FW更新 ]           [ FW自動更新: ON ]     │
 //	│ [ NR(ALE): ON ]      [ ログ出力: ON ]       │
 //	│ [ タッチパネル調整 ] [ 初期化 ]             │
-//	│                      [ About ]              │
+//	│ [ デコーダ: DL ]     [ About ]              │
 //	└─────────────────────────────────────────────┘
 //
 //	時刻合わせ → timeset (夏時間の ON/OFF と NTP 同期もここ)
 //	FW更新 → ota (SoftAP+ブラウザで手動アップロード)
 //	タッチパネル調整 → touchcal / About → about_run
 //	NR → トーン検出方式の切替 (ON = ALE によるノイズ低減、dsp.h の DSP_DET_ALE_AMP)
+//	デコーダ → 文字の出し方の切替 (標準 = 符号表 / DL = 機械学習、mldec.cpp)
 //
 //	「自動更新」は起動時 (スプラッシュ表示中) に WiFi 経由で新しい
 //	ファームウェアを自動チェックするかどうかの ON/OFF (fwupdate.cpp)。
@@ -29,6 +30,7 @@
 #include "ota.h"
 #include "fwupdate.h"
 #include "dsp.h"
+#include "decoder.h"
 #include "version.h"
 #include "scopelog.h"
 #include "touchcal.h"
@@ -105,14 +107,34 @@ static void nr_set(bool on)
 	}
 }
 
+//==================================================================
+//	デコーダ (文字の出し方): 標準 = 符号表 / DL = 機械学習 (英文・和文)。
+//	既定は DL。設定は NVS に保存する
+//==================================================================
+#define NVS_KEY_ENGINE "eng"
+
+static void engine_set(uint8_t e)
+{
+	decoder_set_engine(e);
+	DspFlashGuard guard;
+	Preferences prefs;
+	if (prefs.begin(NVS_NS_DEC, false)) {
+		prefs.putUChar(NVS_KEY_ENGINE, e);
+		prefs.end();
+	}
+}
+
 void setup_nr_load(void)
 {
 	Preferences prefs;
 	if (prefs.begin(NVS_NS_DEC, false)) {
 		dsp_set_det_mode(prefs.getUChar(NVS_KEY_NR, 1) ? DSP_DET_ALE_AMP : DSP_DET_GOERTZEL);
+		decoder_set_engine(prefs.getUChar(NVS_KEY_ENGINE, DEC_ENGINE_ML) == DEC_ENGINE_RULE
+		                   ? DEC_ENGINE_RULE : DEC_ENGINE_ML);
 		prefs.end();
 	} else {
 		dsp_set_det_mode(DSP_DET_ALE_AMP);
+		decoder_set_engine(DEC_ENGINE_ML);
 	}
 }
 
@@ -208,7 +230,9 @@ static void draw_screen(void)
 	draw_button(BACK_X, BACK_Y, BACK_W, BACK_H, "戻る", C_BTN_BG, C_BTN_BD, C_BTN_TX,
 	            &fonts::lgfxJapanGothicP_16);
 
-	char scope[40], upd[40], nr[24];
+	char scope[40], upd[40], nr[24], eng[32];
+	bool ml = decoder_engine() == DEC_ENGINE_ML;
+	snprintf(eng, sizeof(eng), "デコーダ: %s", ml ? "DL" : "標準");
 	snprintf(scope, sizeof(scope), "ログ出力: %s", scopelog_enabled() ? "ON" : "OFF");
 	snprintf(upd, sizeof(upd), "FW自動更新: %s", fwupdate_check_enabled() ? "ON" : "OFF");
 	snprintf(nr, sizeof(nr), "NR(ALE): %s", nr_enabled() ? "ON" : "OFF");
@@ -221,7 +245,7 @@ static void draw_screen(void)
 		{ scope, scopelog_enabled() != 0 },
 		{ "タッチパネル調整", false },
 		{ "初期化", false },
-		{ NULL, false },
+		{ eng, ml },
 		{ "About", false },
 	};
 	for (int i = 0; i < ITEM_N; i++) {
@@ -319,10 +343,13 @@ void setup_run(LGFX *lcd_)
 				netsync_clear_wifi();
 			}
 			break;
+		case 8:                     // デコーダ 標準 / DL
+			engine_set(decoder_engine() == DEC_ENGINE_ML ? DEC_ENGINE_RULE : DEC_ENGINE_ML);
+			break;
 		case 9:
 			about_run();
 			break;
-		default:                    // 8 は空き
+		default:
 			continue;
 		}
 		draw_screen();

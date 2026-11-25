@@ -30,7 +30,7 @@ CFLAGS = $(COMMON)
 # ファームウェアのソース (NTP / 自動更新 / ADC は sim_main.cpp が代わりを持つ。
 # ota.cpp は WiFi などのスタブ (shim/) の上で画面だけ動く)
 FW_SRCS = main.cpp display.cpp setup.cpp clock.cpp timeset.cpp touchcal.cpp \
-	scopelog.cpp dsp.cpp decoder.cpp decode.cpp ota.cpp
+	scopelog.cpp dsp.cpp decoder.cpp decode.cpp mldec.cpp ota.cpp
 
 LGFX_SRCS = $(wildcard $(LGFX_SRC)/v1/*.cpp) $(wildcard $(LGFX_SRC)/v1/misc/*.cpp) \
 	$(LGFX_SRC)/v1/panel/Panel_Device.cpp $(LGFX_SRC)/v1/panel/Panel_FrameBufferBase.cpp \

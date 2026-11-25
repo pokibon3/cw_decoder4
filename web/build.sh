@@ -2,7 +2,7 @@
 #
 #	Web 版 CW Decoder の WASM ビルド
 #
-#	ファームウェアと同一の src/dsp.cpp / decoder.cpp / decode.cpp /
+#	ファームウェアと同一の src/dsp.cpp / decoder.cpp / decode.cpp / mldec.cpp /
 #	lib/float_fft をそのままコンパイルし、web/wasm/ の薄い層
 #	(Arduino スタブ + 最小 libc + JS 向け API) と一緒にリンクする。
 #	Emscripten は使わない: 中核は STL もヒープも使わないので、
@@ -34,7 +34,7 @@ CFLAGS="--target=wasm32 -Os -flto \
 	-I$ROOT/web/wasm/shim -I$ROOT/src -I$ROOT/lib/float_fft"
 
 # ファームウェアと共有する中核 + Web 側の薄い層
-SRCS="$ROOT/src/dsp.cpp $ROOT/src/decoder.cpp $ROOT/src/decode.cpp \
+SRCS="$ROOT/src/dsp.cpp $ROOT/src/decoder.cpp $ROOT/src/decode.cpp $ROOT/src/mldec.cpp \
 	$ROOT/lib/float_fft/float_fft.cpp \
 	$ROOT/web/wasm/api.cpp $ROOT/web/wasm/support.c"
 
@@ -51,7 +51,7 @@ EXPORTS="cw_init cw_push cw_run cw_poll cw_reset \
 	cw_scope_stride cw_spec_bins cw_sample_rate \
 	cw_elem_ptr cw_elem_stride cw_elem_count cw_elem_lost cw_elem_clear \
 	cw_set_tone cw_set_tone_hz cw_cycle_tone cw_toggle_mode \
-	cw_set_det cw_det cw_set_ale cw_ale_ratio_x1000"
+	cw_set_det cw_det cw_set_ale cw_ale_ratio_x1000 cw_set_engine cw_engine"
 
 EXPORT_FLAGS=""
 for e in $EXPORTS; do

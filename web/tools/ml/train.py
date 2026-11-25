@@ -12,8 +12,10 @@
 import argparse, json, math, random, sys, time
 import torch, torch.nn as nn
 
-# CW Tester が送れる全文字。= + ( は BT / AR / KN と同じ符号で、記号 1 つとして出す
-VOCAB = list("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789/?,. =:;-'()\"@+!")
+# CW Tester が送れる全文字 (和文を含む)。= + ( は BT / AR / KN と同じ符号で、記号 1 つとして出す
+VOCAB = list("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789/?,. =:;-'()\"@+!"
+             # 和文: « = ホレ (実機の 5)、» = ラタ (6)、半角カナ (実機の 0xA1〜0xDF)
+             "«»ｦｱｲｳｴｵｶｷｸｹｺｻｼｽｾｿﾀﾁﾂﾃﾄﾅﾆﾇﾈﾉﾊﾋﾌﾍﾎﾏﾐﾑﾒﾓﾔﾕﾖﾗﾘﾙﾚﾛﾜﾝﾞﾟ､｣")
 C2I = {c: i + 1 for i, c in enumerate(VOCAB)}      # 0 = CTC blank
 
 
