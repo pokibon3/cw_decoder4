@@ -12,6 +12,7 @@
 #include "decode.h"
 #include "dsp.h"
 #include "scopelog.h"
+#include "bigram.h"
 
 // トーン判定: 中心ビンがサイドレベルの何倍あれば正弦波とみなすか。
 #define TONE_SIDE_RATIO 3
@@ -113,6 +114,11 @@ static uint8_t nb_acc = 0;          // ノイズブランカの積分値 (0..nb_
 static uint8_t nb_hi_run = 0;       // realstate が HIGH の連続ブロック数
 
 static char code[20];
+// code[i] の直前の符号内スペース (ms)。i >= 1 だけ使う。文字間が詰まって
+// 1 つにつながった符号を区切り直すときに、どこが文字間だったかの手がかりにする
+static uint16_t code_gap[20];
+// つながった符号を区切り直す対象の最大要素数。これを超えたら確定する
+#define SPLIT_MAX 12
 static uint16_t stop_flag = KEY_LOW;
 static uint16_t wpm;
 static uint32_t last_mark_ms = 0;
@@ -378,6 +384,188 @@ static int decodeAscii(int16_t asciinumber)
 	return 0;
 }
 
+//==================================================================
+//	つながった符号の区切り直し
+//==================================================================
+// 文字間が符号内スペースとほとんど同じ長さで送られると、文字間の判定に
+// かからず 2〜3 文字が 1 つの符号につながる (手送りで文字間が 2 単位を
+// 切る送り手、続け打ちの UR など)。表に無い符号なら '*' になり、表に
+// ある符号なら別の 1 文字に化ける (E + T = A)。
+//
+// そこで表に無い符号 (と和文の開始) を確定するとき、符号内スペースの
+// それぞれを「区切る / 区切らない」の候補にして、次の 2 つの点の合計が
+// 最も小さい区切り方を選ぶ。
+//   タイミング: スペースが文字間の境界にどれだけ近いか (SPLIT_COST/KEEP_COST)
+//   言語     : 文字 2 連鎖のコスト (bigram.h、QSO 文と英文から作成)
+// タイミングに少しでも差があればタイミングで決まり、差が無ければ言語で
+// 決まる。区切れない場合や、和文の開始を区切らないのが最良の場合は従来
+// どおりの処理に任せる ('*' の出力や和文の切り替え)。
+//
+// スペースの長さは、符号内スペース推定 gu と文字間の境界 thr の間を 4 等分
+// した段階 (0: gu 寄り 〜 3: 境界寄り) にして表で引く。変数どうしの乗除算を
+// 使わないため (CH32V 版へ移植できるように)。
+// コストの単位は bigram.h と同じ 0.5 ビット。
+static const uint8_t SPLIT_COST[4] = {24, 12, 4, 0};   // そこで区切るコスト
+static const uint8_t KEEP_COST[4]  = { 0,  0, 4, 10};  // 区切らないコスト
+
+// 文字 1 つ (ASCII) を 2 連鎖表の添字にする。表に無い文字は -1
+static int8_t bigram_sym(uint8_t c)
+{
+	for (int8_t i = 1; i < BIGRAM_N; i++) {
+		if ((uint8_t)BIGRAM_SYM[i] == c) return i;
+	}
+	return -1;
+}
+
+// 符号表の値を出力される文字列にする (略符号は 2 文字)
+static const char *result_text(int16_t r, char *buf)
+{
+	switch (r) {
+	case 1: return "AR";
+	case 2: return "KN";
+	case 3: return "BT";
+	case 4: return "VA";
+	case 7: return "HH";
+	case 8: return "BK";
+	case 9: return "UR";
+	default:
+		buf[0] = (char)r; buf[1] = '\0';
+		return buf;
+	}
+}
+
+// prev の後に符号表の値 r を置いたときの言語コスト。*last に最後の文字の添字を返す
+static uint16_t piece_cost(int8_t prev, int16_t r, int8_t *last)
+{
+	char buf[2];
+	const char *t = result_text(r, buf);
+	uint16_t c = 0;
+	for (; *t; t++) {
+		int8_t j = bigram_sym((uint8_t)*t);
+		if (j < 0) {
+			c += BIGRAM_COST_MAX;
+			prev = 0;
+		} else {
+			c += BIGRAM_COST[prev][j];
+			prev = j;
+		}
+	}
+	*last = prev;
+	return c;
+}
+
+// 区切り直した結果を res[] に入れて文字数を返す。区切らないのが最良なら 0
+static uint8_t split_code(int16_t *res)
+{
+	int len = (int)strlen(code);
+	if (len < 2 || len > SPLIT_MAX || hightimesavg == 0) return 0;
+	// 表にある符号は割らない。割ってよいことにすると、数字 (2 連鎖のコストが
+	// 英字より高い) がスペースのばらつきで割られた (実録音で 6 → TH、0 → OM)。
+	// 和文の開始 (ホレ -..---) だけは、つながった英文が偶然これに当たって
+	// 和文へ切り替わる害が大きいので候補にする (長点比 4〜5 の送信で多発)
+	{
+		int16_t w = decode_us(code);
+		if (w != 0 && w != 5) return 0;
+	}
+
+	uint32_t unit = hightimesavg;
+	uint32_t gu = gap_unit(unit);
+	uint32_t thr = gap_char_threshold(unit);
+	uint32_t span = (thr > gu) ? (thr - gu) : 0;
+	uint32_t q1 = gu + (span >> 2);
+	uint32_t q2 = gu + (span >> 1);
+	uint32_t q3 = gu + span - (span >> 2);
+	uint8_t lv[SPLIT_MAX];
+	for (int j = 1; j < len; j++) {
+		uint32_t g = code_gap[j];
+		lv[j] = (uint8_t)((g >= q3) ? 3 : (g >= q2) ? 2 : (g >= q1) ? 1 : 0);
+	}
+
+	// 直前に出した文字を言語コストの起点にする (語頭なら 0)
+	int8_t prev0 = 0;
+	if (lastChar != 0 && lastChar != 32) {
+		char buf[2];
+		const char *t = result_text(lastChar, buf);
+		int8_t j = bigram_sym((uint8_t)t[strlen(t) - 1]);
+		prev0 = (j < 0) ? 0 : j;
+	}
+
+	// best[e][l]: 位置 e で終わり、最後の文字が l 要素の区切り方の最小コスト
+	const uint16_t INF = 0xFFFF;
+	uint16_t best[SPLIT_MAX + 1][9];
+	int8_t   lastsym[SPLIT_MAX + 1][9];
+	int16_t  piece[SPLIT_MAX + 1][9];
+	for (int e = 0; e <= len; e++)
+		for (int l = 0; l < 9; l++) best[e][l] = INF;
+
+	for (int i = 0; i < len; i++) {
+		for (int l = 1; l <= 8 && i + l <= len; l++) {
+			char buf[9];
+			memcpy(buf, code + i, (size_t)l);
+			buf[l] = '\0';
+			int16_t r = decode_us(buf);
+			// 区切った一部が和文の開始 (ホレ) や和文の記号に当たっても採らない
+			if (r == 5 || r == 6 || r >= 0x80) r = 0;
+			if (r == 0) continue;
+			uint16_t keep = 0;
+			for (int j = i + 1; j < i + l; j++) keep += KEEP_COST[lv[j]];
+			// 起点 (i までの最良) ごとに伸ばす
+			for (int lp = 0; lp < 9; lp++) {
+				uint16_t base;
+				int8_t pv;
+				if (i == 0) {
+					if (lp != 0) continue;
+					base = 0;
+					pv = prev0;
+				} else {
+					if (lp == 0 || best[i][lp] == INF) continue;
+					base = (uint16_t)(best[i][lp] + SPLIT_COST[lv[i]]);
+					pv = lastsym[i][lp];
+				}
+				int8_t ls;
+				uint16_t c = (uint16_t)(base + keep + piece_cost(pv, r, &ls));
+				if (c < best[i + l][l]) {
+					best[i + l][l] = c;
+					lastsym[i + l][l] = ls;
+					piece[i + l][l] = r;
+				}
+			}
+		}
+	}
+
+	int bl = 0;
+	for (int l = 1; l < 9; l++) {
+		if (best[len][l] != INF && (bl == 0 || best[len][l] < best[len][bl])) bl = l;
+	}
+	if (bl == 0 || bl == len) return 0;     // 区切れない / 区切らないのが最良
+
+	// 後ろからたどる。各位置で最良の起点を選び直す
+	int16_t rev[SPLIT_MAX];
+	uint8_t n = 0;
+	int e = len, l = bl;
+	while (e > 0) {
+		rev[n++] = piece[e][l];
+		int s = e - l;
+		if (s == 0) break;
+		// s で終わる区切り方のうち、ここへつながったときに最小になったものを探す
+		int pl = 0;
+		uint32_t pc = 0xFFFFFFFFu;
+		for (int k = 1; k < 9; k++) {
+			if (best[s][k] == INF) continue;
+			int8_t ls;
+			uint16_t keep = 0;
+			for (int j = s + 1; j < e; j++) keep += KEEP_COST[lv[j]];
+			uint32_t c = (uint32_t)best[s][k] + SPLIT_COST[lv[s]] + keep +
+			             piece_cost(lastsym[s][k], piece[e][l], &ls);
+			if (c < pc) { pc = c; pl = k; }
+		}
+		e = s;
+		l = pl;
+	}
+	for (uint8_t i = 0; i < n; i++) res[i] = rev[n - 1 - i];
+	return n;
+}
+
 static void decode_and_display(void)
 {
 	if (strlen(code) == 0) return;
@@ -400,6 +588,15 @@ static void decode_and_display(void)
 		for (uint32_t b = bits; b != 0; b >>= 1) ones += (int)(b & 1u);
 		if (isone && ones >= ONE_THR) {
 			code[0] = '\0';        // ノイズ主体の区間とみなして捨てる
+			return;
+		}
+	}
+	if (sw_mode == MODE_US) {
+		int16_t res[SPLIT_MAX];
+		uint8_t n = split_code(res);
+		if (n != 0) {
+			for (uint8_t i = 0; i < n; i++) decodeAscii(res[i]);
+			code[0] = '\0';
 			return;
 		}
 	}
@@ -783,13 +980,15 @@ static void key_step(void)
 		stop_flag = KEY_LOW;
 		if (filteredstate == KEY_LOW) {
 			if (highduration < (hightimesavg * 2) && ((uint32_t)highduration * 5U) > ((uint32_t)hightimesavg * 3U)) {
-				if (strlen(code) >= 8) { decode_and_display(); }
+				if (strlen(code) >= SPLIT_MAX) { decode_and_display(); }
 				if (code[0] == '\0') { code_pre_gap = lowduration; }
+				else { code_gap[strlen(code)] = (uint16_t)((lowduration > 65535) ? 65535 : lowduration); }
 				strcat(code, ".");
 			}
 			if (highduration > (hightimesavg * 2) && highduration < (hightimesavg * 6)) {
-				if (strlen(code) >= 8) { decode_and_display(); }
+				if (strlen(code) >= SPLIT_MAX) { decode_and_display(); }
 				if (code[0] == '\0') { code_pre_gap = lowduration; }
+				else { code_gap[strlen(code)] = (uint16_t)((lowduration > 65535) ? 65535 : lowduration); }
 				strcat(code, "-");
 			}
 		}

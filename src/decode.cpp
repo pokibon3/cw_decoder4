@@ -194,6 +194,13 @@ const char* encode_jp_char(uint8_t c)
     return encode_jp_data(c);
 }
 
+// 英文の符号表を引くだけ (和文への切り替えをしない)。区切り直しの候補を
+// 調べるときに、途中の部分符号がホレ等に当たってモードが変わらないように使う
+int16_t decode_us(const char *code)
+{
+    return lookup_code(code, us_code, (int)(sizeof(us_code) / sizeof(us_code[0])));
+}
+
 ////////////////////////////////
 // translate cw code to ascii //
 ////////////////////////////////

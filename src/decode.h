@@ -5,6 +5,7 @@
 #include <stdint.h>
 
 int16_t decode(char *code, char *mode);
+int16_t decode_us(const char *code);
 const char* encode_us_char(char c);
 const char* encode_jp_char(uint8_t c);
 const char* encode_us_data(uint8_t data);
