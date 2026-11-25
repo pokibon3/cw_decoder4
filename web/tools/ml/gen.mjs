@@ -22,7 +22,9 @@ import { dirname, join } from 'node:path';
 const HERE = dirname(fileURLToPath(import.meta.url));
 const FS = 8000;
 const HOP = 30;                         // DSP_HOP。1 ブロックずつ流して時刻を正確に取る
-const BPF_F0 = 760, BPF_Q = 2.2;
+// 実機の入力 BPF の再現値。R3 交換後 (2026-10-28〜) の実測推定 638Hz/Q3.0。
+// 交換前は 760/Q2.2 だった。CW_BPF="760,2.2" のように環境変数で差し替えられる
+const [BPF_F0, BPF_Q] = (process.env.CW_BPF || '638,3.0').split(',').map(Number);
 
 export const MORSE = {
 	A: '.-', B: '-...', C: '-.-.', D: '-..', E: '.', F: '..-.', G: '--.',
@@ -32,13 +34,17 @@ export const MORSE = {
 	0: '-----', 1: '.----', 2: '..---', 3: '...--', 4: '....-',
 	5: '.....', 6: '-....', 7: '--...', 8: '---..', 9: '----.',
 	'/': '-..-.', '?': '..--..', ',': '--..--', '.': '.-.-.-',
+	// CW Tester が送れる残りの記号 (web/tester/index.html の MORSE と同じ)。
+	// = + ( は BT / AR / KN と同じ符号なので、正解では 1 つの記号として扱う
+	'=': '-...-', ':': '---...', ';': '-.-.-.', '-': '-....-', "'": '.----.',
+	'(': '-.--.', ')': '-.--.-', '"': '.-..-.', '@': '.--.-.', '+': '.-.-.', '!': '-.-.--',
 };
 
 //==================================================================
 //	乱数 (mulberry32)
 //==================================================================
 let rs = 1;
-const seed = (s) => { rs = s >>> 0; };
+export const seed = (s) => { rs = s >>> 0; };
 function rnd() {
 	rs = (rs + 0x6D2B79F5) >>> 0;
 	let t = rs;
@@ -58,11 +64,11 @@ function gauss() {
 //==================================================================
 //	QSO の定型・コールサイン・英単語・ランダム文字列を混ぜる。モデルが
 //	語彙を丸暗記して未知のコールサインを読み違えないよう、ランダム列を多めに
-const QSO = ('CQ DE K BK TU 73 GM GA GE FB OM OP NAME QTH RST UR 5NN 599 579 559 ' +
+export const QSO = ('CQ DE K BK TU 73 GM GA GE FB OM OP NAME QTH RST UR 5NN 599 579 559 ' +
 	'R ES HR PSE AGN QRZ QSL TNX FER CALL WX RIG ANT PWR W DR SRI QRM QSB QRN ' +
 	'HW CPY CUL GL SK KN AR BT 73 TEST POTA SOTA JA JH JR 5W 100W DIPOLE YAGI ' +
 	'TKS INFO OK SOLID NR QRP QRO').split(' ');
-const WORDS = ('THE OF AND TO IN IS YOU THAT IT HE WAS FOR ON ARE AS WITH HIS THEY ' +
+export const WORDS = ('THE OF AND TO IN IS YOU THAT IT HE WAS FOR ON ARE AS WITH HIS THEY ' +
 	'AT BE THIS HAVE FROM OR ONE HAD BY WORD BUT NOT WHAT ALL WERE WE WHEN YOUR ' +
 	'CAN SAID THERE USE EACH WHICH SHE DO HOW THEIR IF WILL UP OTHER ABOUT OUT ' +
 	'MANY THEN THEM THESE SO SOME HER WOULD MAKE LIKE HIM INTO TIME HAS LOOK TWO ' +
@@ -77,10 +83,20 @@ const WORDS = ('THE OF AND TO IN IS YOU THAT IT HE WAS FOR ON ARE AS WITH HIS TH
 	'PAGE LETTER MOTHER ANSWER FOUND STUDY STILL LEARN SHOULD AMERICA WORLD RADIO ' +
 	'STATION SIGNAL ANTENNA WEATHER SUNNY CLOUDY RAIN COLD WARM').split(' ');
 const CHARS = Object.keys(MORSE);
+//	続けて打つ略符号 (文字間を空けずに 2 文字を 1 符号として送る)。
+//	POTA 録音の UR は ..-.-. と符号内の間隔だけで送られていた。テキスト中は
+//	制御文字 1 つで持ち、keying では連結符号、正解では 2 文字に戻す
+//	3 つ目は正解の表記。AR / BT / KN は + / = / ( と同じ符号なので記号 1 つにする
+export const PROSIGN = {
+	'\x01': ['UR', '..-.-.', 'UR'], '\x02': ['AR', '.-.-.', '+'], '\x03': ['BT', '-...-', '='],
+	'\x04': ['KN', '-.--.', '('], '\x05': ['SK', '...-.-', 'SK'], '\x06': ['BK', '-...-.-', 'BK'],
+};
+const PROSIGN_OF = Object.fromEntries(Object.entries(PROSIGN).map(([k, [w]]) => [w, k]));
+export const expandProsign = (t) => t.replace(/[\x01-\x06]/g, (c) => PROSIGN[c][2]);
 const LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
 const DIGITS = '0123456789';
 
-function callsign() {
+export function callsign() {
 	const pfx = pick(['JA', 'JH', 'JR', 'JE', 'JF', 'JG', 'JI', 'JJ', 'JK', 'JL', 'JM', 'JN',
 		'7K', '7L', '8J', 'W', 'K', 'N', 'AA', 'AI', 'KD', 'VE', 'DL', 'G', 'F', 'VK', 'ZL',
 		'BV', 'HL', 'UA', 'EA', 'I', 'PY', 'LU', 'KH6', 'VR2', 'BY']);
@@ -107,16 +123,27 @@ export function makeText() {
 		if (style < 0.35) {                     // QSO 風
 			words.push(r < 0.35 ? callsign() : r < 0.85 ? pick(QSO) : randomWord());
 		} else if (style < 0.6) {               // 英文
-			words.push(r < 0.9 ? pick(WORDS) : randomWord());
+			let w = r < 0.9 ? pick(WORDS) : randomWord();
+			// 英文の句読点 (Alice の "BANK," "DO:" のように語の後ろに付く)
+			if (rnd() < 0.1) w += pick([',', ',', '.', '.', ':', ';', '?', '!', "'", '"', ')']);
+			if (rnd() < 0.02) w = pick(['"', "'", '(']) + w;
+			words.push(w);
 		} else {                                // ランダム
 			words.push(r < 0.75 ? randomWord() : r < 0.9 ? callsign() : pick(QSO));
 		}
+		// 略符号の語 (UR/AR/BT/KN/SK/BK) は QSO 語彙に埋もれて出にくいので足す。
+		// その 6 割は文字間を空けない続け打ちにする (POTA の UR が ..-.-. だった)
+		if (rnd() < 0.06) words[words.length - 1] = pick(Object.keys(PROSIGN_OF));
+		const w = words[words.length - 1];
+		if (PROSIGN_OF[w] && rnd() < 0.6) words[words.length - 1] = PROSIGN_OF[w];
 	}
 	// 送信の合間 (局の切り替わり) を '|' で入れる。ここはノイズだけが続く
 	// 区間になり、正解は空白 1 つ。ノイズ区間で文字を出さないことを覚えさせる
-	if (rnd() < 0.3) {
+	// 合間は 4 割の文に 1〜2 か所。合間の後で局が替わることがある (synth の segs)
+	const np = rnd() < 0.4 ? (rnd() < 0.3 ? 2 : 1) : 0;
+	for (let p = 0; p < np && words.length > 1; p++) {
 		const k = 1 + Math.floor(rnd() * (words.length - 1));
-		words.splice(k, 0, '|');
+		if (words[k] !== '|' && words[k - 1] !== '|') words.splice(k, 0, '|');
 	}
 	return words.join(' ');
 }
@@ -124,7 +151,7 @@ export function makeText() {
 //==================================================================
 //	キーイング (送り手のばらつき)
 //==================================================================
-export function makeStyle() {
+export function makeStyle(profile = 'std') {
 	const s = {
 		wpm: U(10, 42),
 		dash: U(2.5, 3.8),              // 長点 / 短点
@@ -134,38 +161,117 @@ export function makeStyle() {
 		farns: rnd() < 0.2 ? U(1.2, 2.5) : 1.0,                // 文字間・語間だけ伸ばす
 		jitter: rnd() < 0.4 ? U(0, 0.03) : U(0.03, 0.18),     // 手送りの揺れ (σ, 単位長比)
 		drift: rnd() < 0.3 ? U(0.02, 0.12) : 0,              // 速度の揺れ
-		snr: rnd() < 0.15 ? U(15, 35) : U(-6, 15),
+		// ノイズは CW Tester と同じく帯域を限ったガウス雑音で、S/N はその帯域内の
+		// 雑音の標準偏差に対する信号振幅の比 (A/σ)。帯域はトーン中心 600Hz・
+		// 受信機の 2.5kHz (300〜2800Hz)・全帯域 (50Hz〜)
+		bw: rnd() < 0.6 ? 600 : rnd() < 0.6 ? 2500 : 6000,
+		snr: rnd() < 0.15 ? U(20, 35) : U(-4, 20),
 		tone: U(500, 950),
 		amp: Math.exp(U(Math.log(0.04), Math.log(0.9))),
 		qsb: rnd() < 0.2 ? { depth: U(3, 18), period: U(1.5, 8) } : null,
 		qrn: rnd() < 0.2 ? U(0.5, 6) : 0,                     // 毎秒のクラッシュ数
 	};
+	// 手送りプロファイル: 実運用では長点が短点の 5 倍近くまで伸び、文字間・
+	// 語間は標準 (3 / 7) より詰まっていることが多い。各間隔は 1 つ下の
+	// 間隔より必ず長くする (同じ長さだと人間でも区切れない)
+	if (profile === 'hand') {
+		s.dash = rnd() < 0.7 ? U(3.5, 5.5) : U(2.5, 3.5);
+		s.weight = U(0.6, 1.6);
+		s.charGap = U(Math.max(1.6, s.weight + 0.5), 3.5);
+		s.wordGap = U(Math.max(3.5, s.charGap + 1.0), 7.0);
+		s.farns = 1.0;
+		s.jitter = U(0.03, 0.15);
+	}
 	return s;
 }
 
 //	テキスト → [on, 秒] の列
-function keying(text, st) {
+//	音声の頭に足す雑音だけの区間 (秒)。実機は常時動いていて前段 (しきい値・
+//	トーン追従) が温まっているが、wasm は毎回冷えた状態から始まり、頭の 100ms
+//	ほどで短いマークを出し、最初の文字も崩す。この区間で温めてから、その間の
+//	ゲートの動きは捨てる (core.run が samples.warmMs を見る)
+const WARM_S = 3;
+
+//	st.segs があれば、合間 ('|') ごとに次の送り手 (局) のキーイングに替える。
+//	各キーには何番目の局かを 3 つ目に持たせる (synth がトーンと強さを替える)
+function keying(text, st0) {
+	const segs = st0.segs || [st0];
+	let si = 0, st = segs[0];
 	let unit = 1.2 / st.wpm;
-	const base = unit;
-	const keys = [[0, rnd() < 0.3 ? U(2, 10) : U(0.3, 1.2)]];
+	let base = unit;
+	const keys = [[0, WARM_S + (rnd() < 0.3 ? U(2, 10) : U(0.3, 1.2)), 0]];
 	let first = true;
 	const jit = (d) => Math.max(0.15 * base, d + st.jitter * base * gauss());
 	for (const ch of text) {
 		if (st.drift) unit = Math.min(base * 1.4, Math.max(base * 0.7,
 			unit + base * st.drift * 0.3 * gauss()));
-		if (ch === '|') { keys.push([0, U(2, 15)]); first = true; continue; }
-		if (ch === ' ') { keys.push([0, jit(st.wordGap * st.farns * unit)]); first = true; continue; }
-		const code = MORSE[ch];
+		if (ch === '|') {
+			keys.push([0, U(2, 15), si]);
+			if (si + 1 < segs.length) { st = segs[++si]; unit = base = 1.2 / st.wpm; }
+			first = true;
+			continue;
+		}
+		if (ch === ' ') { keys.push([0, jit(st.wordGap * st.farns * unit), si]); first = true; continue; }
+		const code = MORSE[ch] || (PROSIGN[ch] && PROSIGN[ch][1]);
 		if (!code) continue;
-		if (!first) keys.push([0, jit(st.charGap * st.farns * unit)]);
+		if (!first) keys.push([0, jit(st.charGap * st.farns * unit), si]);
 		first = false;
 		[...code].forEach((el, i) => {
-			if (i) keys.push([0, jit(st.weight * unit)]);
-			keys.push([1, jit(el === '.' ? unit : st.dash * unit)]);
+			if (i) keys.push([0, jit(st.weight * unit), si]);
+			keys.push([1, jit(el === '.' ? unit : st.dash * unit), si]);
 		});
 	}
-	keys.push([0, st.noiseOnly || 1.5]);
+	keys.push([0, st0.noiseOnly || 1.5, si]);
 	return keys;
+}
+
+//	帯域を限ったガウス雑音 (実効値 1)。CW Tester の bandNoiseBuf と同じく、
+//	周波数領域で帯域内の成分だけに乱数を置いて逆 FFT する
+function bandNoise(n, bw, tone) {
+	const [lo, hi] = bw >= 6000 ? [50, FS / 2] : bw === 2500 ? [300, 2800]
+		: [Math.max(20, tone - bw / 2), tone + bw / 2];
+	let N = 1;
+	while (N < n) N <<= 1;
+	const re = new Float64Array(N), im = new Float64Array(N);
+	const k0 = Math.max(1, Math.ceil(lo * N / FS)), k1 = Math.min(N / 2 - 1, Math.floor(hi * N / FS));
+	for (let k = k0; k <= k1; k++) {
+		const g = Math.sqrt(-2 * Math.log(rnd() || 1e-12)), p = 2 * Math.PI * rnd();
+		re[k] = re[N - k] = g * Math.cos(p);
+		im[k] = g * Math.sin(p);
+		im[N - k] = -im[k];
+	}
+	fft(re, im);
+	let ss = 0;
+	for (let i = 0; i < N; i++) ss += re[i] * re[i];
+	const sc = 1 / Math.sqrt(ss / N);
+	return Float64Array.from(re.subarray(0, n), (v) => v * sc);
+}
+
+function fft(re, im) {
+	const n = re.length;
+	for (let i = 1, j = 0; i < n; i++) {
+		let bit = n >> 1;
+		for (; j & bit; bit >>= 1) j ^= bit;
+		j ^= bit;
+		if (i < j) {
+			let t = re[i]; re[i] = re[j]; re[j] = t;
+			t = im[i]; im[i] = im[j]; im[j] = t;
+		}
+	}
+	for (let len = 2; len <= n; len <<= 1) {
+		const h = len >> 1;
+		const wr0 = Math.cos(Math.PI / h), wi0 = Math.sin(Math.PI / h);
+		for (let a0 = 0; a0 < n; a0 += len) {
+			let wr = 1, wi = 0;
+			for (let k = 0; k < h; k++) {
+				const a = a0 + k, b = a + h;
+				const tr = re[b] * wr - im[b] * wi, ti = re[b] * wi + im[b] * wr;
+				re[b] = re[a] - tr; im[b] = im[a] - ti;
+				re[a] += tr; im[a] += ti;
+				const t = wr * wr0 - wi * wi0; wi = wr * wi0 + wi * wr0; wr = t;
+			}
+		}
+	}
 }
 
 //	RBJ 定ピークゲイン BPF (ffmpeg の bandpass と同じ)
@@ -186,25 +292,32 @@ export function synth(text, st) {
 	const keys = keying(text, st);
 	const n = Math.round(keys.reduce((a, [, d]) => a + d, 0) * FS);
 	const env = new Float64Array(n);
+	const segOf = new Uint8Array(n);
+	const segs = st.segs || [st];
 	let pos = 0;
-	for (const [on, d] of keys) {
+	for (const [on, d, si] of keys) {
 		const len = Math.round(d * FS);
 		if (on) env.fill(1, pos, Math.min(n, pos + len));
+		if (si) segOf.fill(si, pos, Math.min(n, pos + len));
 		pos += len;
 	}
 	const rn = Math.round(U(0.002, 0.008) * FS);      // エッジのなまり 2〜8ms
 	const nr = st.noiseOnly ? Math.exp(U(Math.log(0.01), Math.log(0.5))) : st.amp / Math.pow(10, st.snr / 20);
+	const noise = bandNoise(n, st.bw || 600, st.tone);
 	const x = new Float64Array(n);
 	const ph = rnd() * 6.28;
 	const ref = st.noiseOnly ? nr * U(1, 5) : st.amp;   // クラッシュ・ブリップの基準振幅
 	// トーン状のブリップ (実際のバンドノイズでゲートが単発で開くもの)。
 	// 白色ノイズだけではゲートがほとんど開かず、ノイズ区間で文字を出さない
-	// ことを学べない (7MHz バンドノイズ 10 分では約 80 回開いていた)
-	const blipRate = st.noiseOnly ? (rnd() < 0.85 ? U(0.05, 1.5) : 0)
+	// ことを学べない (7MHz バンドノイズ 10 分では約 80 回開いていた)。
+	// 長さは 5〜40ms: ゲート長が 18〜45ms (中央 23ms) になり、実測の
+	// 18〜49ms (中央 19ms) に合う。以前の 8〜120ms は短点と重なり、
+	// 孤立した E を消すことを覚えさせていた (TEST が TST になる)
+	const blipRate = st.noBlip ? 0 : st.noiseOnly ? (rnd() < 0.85 ? U(0.05, 1.5) : 0)
 		: (rnd() < 0.4 ? U(0.02, 0.6) : 0);
 	const blips = [];
 	for (let t = 0; blipRate && (t += -Math.log(rnd() || 1e-9) / blipRate) < n / FS;) {
-		blips.push({ s: Math.round(t * FS), len: Math.round(U(0.008, 0.12) * FS),
+		blips.push({ s: Math.round(t * FS), len: Math.round(U(0.005, 0.04) * FS),
 			a: ref * U(0.3, 1.5), f: st.tone + U(-150, 150) });
 	}
 	for (const b of blips) {
@@ -216,25 +329,29 @@ export function synth(text, st) {
 	let acc = 0, crash = 0;
 	for (let i = 0; i < n; i++) {
 		acc += env[i] - (i >= rn ? env[i - rn] : 0);
-		let a = st.amp * (acc / rn);
+		const sg = segs[segOf[i]];
+		let a = sg.amp * (acc / rn);
 		if (st.qsb) a *= Math.pow(10, -st.qsb.depth / 20 * (0.5 + 0.5 * Math.sin(2 * Math.PI * i / FS / st.qsb.period + ph)));
 		if (st.qrn && rnd() < st.qrn / FS) crash = ref * U(1, 6);
 		crash *= 0.997;
-		x[i] += a * Math.sin(2 * Math.PI * st.tone * i / FS) + (nr + crash) * gauss();
+		x[i] += a * Math.sin(2 * Math.PI * sg.tone * i / FS) + nr * noise[i] + crash * gauss();
 	}
-	return toCounts(bandpass(x, BPF_F0, BPF_Q));
+	const out = toCounts(bandpass(x, BPF_F0, BPF_Q));
+	out.warmMs = WARM_S * 1000;
+	return out;
 }
 
 //==================================================================
 //	WASM 中核
 //==================================================================
 export async function createCore() {
-	const bytes = readFileSync(join(HERE, '..', '..', 'cwcore.wasm'));
+	const bytes = readFileSync(process.env.CW_WASM || join(HERE, '..', '..', 'cwcore.wasm'));
 	const { instance } = await WebAssembly.instantiate(bytes, { env: { cos: Math.cos, sin: Math.sin } });
 	const e = instance.exports;
 	e.__wasm_call_ctors?.();
 	e.cw_init();
 	const mem = () => e.memory.buffer;
+	let pushed = 0;                         // 流した通算サンプル数 (wasm の時刻は cw_reset で戻らない)
 	return {
 		e,
 		//	1 ブロックずつ流し、ゲートの切り替わり時刻 (ms) と文字を集める。
@@ -248,11 +365,13 @@ export async function createCore() {
 			const cap = e.cw_in_cap(), ptr = e.cw_in_ptr();
 			const stride = e.cw_elem_stride();
 			const trans = [];                   // [mark(切り替わり後の状態), t_ms]
+			const t0 = Math.floor(pushed * 1000 / FS);
 			let text = '';
 			for (let off = 0; off < samples.length; off += HOP) {
 				const n = Math.min(HOP, samples.length - off);
 				new Uint16Array(mem(), ptr, n).set(samples.subarray(off, off + n));
 				e.cw_push(n);
+				pushed += n;
 				e.cw_run();
 				const cnt = e.cw_elem_count();
 				if (cnt) {
@@ -261,16 +380,21 @@ export async function createCore() {
 						const mark = dv.getUint8(i * stride + 12);
 						const t = dv.getUint32(i * stride + 8, true);
 						// mark=1 のログはマーク終了 (→ OFF)、0 はスペース終了 (→ ON)
-						trans.push([mark ? 0 : 1, t]);
+						trans.push([mark ? 0 : 1, t - t0]);
 					}
 					e.cw_elem_clear();
 				}
 				if ((off / HOP) % 34 === 0) text += drain();
 			}
 			text += drain();
-			const end = Math.round(samples.length * 1000 / FS);
-			// 切り替わり時刻 → [mark, ms] の列 (先頭の無音は捨て、末尾は終端まで)
+			const end = Math.floor(pushed * 1000 / FS) - t0;
+			// 切り替わり時刻 → [mark, ms] の列。先頭の無音 (0 からの最初の ON まで) も
+			// 入れ、末尾は終端まで。以前は先頭の無音を捨てていたため、学習データの
+			// 列が必ずマークで始まり、録音の頭で前段が出す短いマークと区別できなかった
 			const seq = [];
+			const warm = samples.warmMs || 0;
+			while (trans.length && (trans[0][1] < warm || trans[0][0] !== 1)) trans.shift();
+			if (trans.length) seq.push([0, trans[0][1] - warm]);
 			for (let i = 1; i < trans.length; i++) {
 				seq.push([trans[i - 1][0], trans[i][1] - trans[i - 1][1]]);
 			}
@@ -305,16 +429,71 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
 	const core = await createCore();
 	if (cmd === 'synth') {
 		const count = parseInt(a1, 10), s0 = parseInt(a2, 10);
+		const profile = process.argv[5] || 'std';
 		for (let k = 0; k < count; k++) {
 			seed(s0 * 100003 + k);
 			// 8% はノイズだけ (信号なし、20〜60 秒)。正解は空
-			const st = makeStyle();
+			const st = makeStyle(profile);
 			let text = makeText();
 			if (rnd() < 0.08) { text = ''; st.amp = 0; st.noiseOnly = U(20, 60); }
+			// 局の交代: 合間の後は 6 割で別の送り手 (速度・癖・トーン・強さ) にする。
+			// 交代直後の最初の文字は速度の手がかりが無く、読み違えやすい (A→W)
+			const sender = (o) => ({ wpm: o.wpm, dash: o.dash, weight: o.weight, charGap: o.charGap,
+				wordGap: o.wordGap, farns: o.farns, jitter: o.jitter, drift: o.drift, tone: o.tone, amp: o.amp });
+			st.segs = [sender(st)];
+			for (let p = (text.match(/\|/g) || []).length; p > 0; p--) {
+				const prev = st.segs[st.segs.length - 1];
+				if (rnd() < 0.6) {
+					const o = makeStyle(rnd() < 0.5 ? profile : (profile === 'hand' ? 'std' : 'hand'));
+					o.tone = Math.max(450, Math.min(1000, st.tone + U(-150, 150)));
+					o.amp = st.amp * Math.pow(10, U(-10, 10) / 20);
+					st.segs.push(sender(o));
+				} else {
+					st.segs.push(prev);
+				}
+			}
+			if (st.segs.length === 1) delete st.segs;
 			const r = core.run(synth(text, st));
-			text = text.replace(/ ?\| ?/g, ' ');
-			process.stdout.write(JSON.stringify({ text, base: r.base, seq: r.seq, st }) + '\n');
+			// 合間で区切った各部分 (評価で「交代直後の先頭文字」を数えるため)
+			const parts = text.split('|').map((t) => expandProsign(t.trim()));
+			text = expandProsign(text.replace(/ ?\| ?/g, ' '));
+			process.stdout.write(JSON.stringify({ text, base: r.base, seq: r.seq, st, parts }) + '\n');
 		}
+	} else if (cmd === 'grid') {
+		// 評価用の格子: 長点比 x 文字間 x 語間 を固定値で振る。タイミング以外の
+		// 劣化要因 (QSB/QRN/速度の揺れ) は外し、SNR 15dB・ジッタ 0.05 で揃える
+		const per = parseInt(a1, 10), s0 = parseInt(a2, 10);
+		let k = 0;
+		for (const dash of [3, 4, 5])
+			for (const charGap of [3.0, 2.5, 2.0])
+				for (const wordGap of [7, 5, 4])
+					for (const wpm of [20, 30])
+						for (let r = 0; r < per; r++) {
+							seed(s0 * 100003 + k++);
+							const text = makeText().replace(/ ?\| ?/g, ' ');
+							const st = { wpm, dash, weight: 1.0, charGap, wordGap, farns: 1.0,
+								jitter: 0.05, drift: 0, snr: 20, bw: 600, tone: 700, amp: 0.3, qsb: null, qrn: 0,
+								grid: `${dash}|${charGap.toFixed(1)}|${wordGap}` };
+							const res = core.run(synth(text, st));
+							process.stdout.write(JSON.stringify({ text: expandProsign(text), base: res.base, seq: res.seq, st }) + '\n');
+						}
+	} else if (cmd === 'snr') {
+		// ノイズ耐性の評価: CW Tester の既定 (トーン 600Hz、ノイズ帯域 600Hz、
+		// 理想的なキーイング) で S/N だけを振る。文は全文字を含む makeText
+		const per = parseInt(a1, 10), s0 = parseInt(a2, 10);
+		const bw = parseInt(process.argv[5] || '600', 10);
+		let k = 0;
+		for (let snr = -6; snr <= 20; snr += 2)
+			for (const wpm of [20, 30])
+				for (let r = 0; r < per; r++) {
+					seed(s0 * 100003 + k++);
+					const text = makeText().replace(/ ?\| ?/g, ' ');
+					const st = { wpm, dash: 3, weight: 1.0, charGap: 3, wordGap: 7, farns: 1.0,
+						jitter: 0.02, drift: 0, snr, bw, tone: 600, amp: 0.3, qsb: null, qrn: 0,
+						noBlip: true, snrpt: snr };
+					const res = core.run(synth(text, st));
+					process.stdout.write(JSON.stringify({ text: expandProsign(text), base: res.base, seq: res.seq, st }) + '\n');
+				}
 	} else if (cmd === 'audio') {
 		const truth = (a2 && a2 !== '-' && existsSync(a2)) ? readFileSync(a2, 'utf8').replace(/\s+/g, ' ').trim() : null;
 		const r = core.run(ffmpegCounts(a1));

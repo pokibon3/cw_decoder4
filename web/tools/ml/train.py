@@ -12,7 +12,8 @@
 import argparse, json, math, random, sys, time
 import torch, torch.nn as nn
 
-VOCAB = list("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789/?,. ")
+# CW Tester が送れる全文字。= + ( は BT / AR / KN と同じ符号で、記号 1 つとして出す
+VOCAB = list("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789/?,. =:;-'()\"@+!")
 C2I = {c: i + 1 for i, c in enumerate(VOCAB)}      # 0 = CTC blank
 
 
@@ -24,6 +25,11 @@ def load(path, train=False):
 	out = []
 	for line in open(path):
 		d = json.loads(line)
+		# 先頭の無音 (最初のマークまで) は捨てる。残すと学習が始まらないことがある
+		# (CTC が全部空白を出す段階から抜けない)。頭の短いマーク (前段の立ち上がり)
+		# は gen.mjs の温め区間で出なくなったので、無音で区別する必要もない
+		while d['seq'] and d['seq'][0][0] == 0:
+			d['seq'] = d['seq'][1:]
 		if not d['seq']:
 			d['seq'] = [[0, 1000]]
 		tgt = [C2I[c] for c in d['text'] if c in C2I] if d.get('text') else []
@@ -41,8 +47,9 @@ class Net(nn.Module):
 		self.rnn = nn.GRU(2, hidden, layers, batch_first=True)
 		self.out = nn.Linear(hidden, len(VOCAB) + 1)
 
-	def forward(self, x):
-		h, _ = self.rnn(x)
+	def forward(self, x, h0=None):
+		h, hn = self.rnn(x, h0)
+		self.hn = hn
 		return self.out(h)
 
 
@@ -78,8 +85,13 @@ def edit(a, b):
 	return d[len(b)]
 
 
+# 現行デコーダは -...- を BT、.-.-. を AR、-.--. を KN と 2 文字で出すので、
+# 比べるときは正解・ML の記号をそちらにそろえる
+SAME_CODE = str.maketrans({'=': 'BT', '+': 'AR', '(': 'KN'})
+
+
 def norm(s):
-	return ' '.join(s.replace(':', '').split())
+	return ' '.join(s.translate(SAME_CODE).split())
 
 
 def decode_all(model, data):
@@ -91,6 +103,33 @@ def decode_all(model, data):
 			for k, i in enumerate(g):
 				res[i] = greedy(lo[k], len(data[i]['x']))
 	return res
+
+
+def decode_warm(model, seq, sil=1000, n=24):
+	"""長い無音 (sil ms 以上) の後は、送信の頭 n 要素を一度流して速度をつかませ、
+	無音 1.5 秒を挟んでから同じ頭を流し直す (局の交代で速度が変わると先頭の文字を
+	読み違えるため)。実機では頭の n 要素ぶん表示が遅れる。
+	挟む無音を 3 秒以上にすると、文字間の長い送り手で最初の文字間を語間と読む
+	(POTA の AI5DD が A I5DD)。1〜1.5 秒なら直り、局の交代の合成データでも差は無い"""
+	model.eval()
+	ids, h = [], None
+	cuts = [0] + [i + 1 for i, (k, ms) in enumerate(seq) if k == 0 and ms >= sil] + [len(seq)]
+	with torch.no_grad():
+		for a, b in zip(cuts, cuts[1:]):
+			seg = seq[a:b]
+			if not seg:
+				continue
+			warm = seg[:n] + [[0, 1500]]
+			model(torch.tensor([feats(warm)]), h)
+			lo = model(torch.tensor([feats(seg)]), model.hn)
+			h = model.hn
+			ids += lo[0].argmax(-1).tolist()
+	s, prev = [], 0
+	for i in ids:
+		if i != prev and i != 0:
+			s.append(VOCAB[i - 1])
+		prev = i
+	return ' '.join(''.join(s).split())
 
 
 def train(a):
@@ -168,13 +207,52 @@ def evaluate(a):
 			t = norm(d['text'])
 			if name == 'original.mp3':
 				t = 'ALICE WAS BEGINNING TO GET VERY TIRED OF SITTING BY HER SISTER'
-			eb, em = edit(t, norm(d['base'])), edit(t, h)
-			print(f'  {name}: 正解率 {100*(1-eb/len(t)):.1f}% → {100*(1-em/len(t)):.1f}%')
+			hw = decode_warm(model, d['seq'])
+			eb, em, ew = edit(t, norm(d['base'])), edit(t, h), edit(t, hw)
+			print(f'  {name}: 正解率 {100*(1-eb/len(t)):.1f}% → {100*(1-em/len(t)):.1f}%  (頭の読み直しあり {100*(1-ew/len(t)):.1f}%)')
 		else:
 			mins = sum(ms for _, ms in d['seq']) / 60000
 			print(f'  {name}: 文字数 {len(d["base"].replace(" ", ""))} → {len(h.replace(" ", ""))}  ({mins:.1f} 分)')
 		print(f'     現行: {norm(d["base"])[:160]}')
 		print(f'     ML  : {h[:160]}')
+		if d['text']:
+			print(f'     ML読直: {hw[:160]}')
+
+
+def load_model(path):
+	ck = torch.load(path)
+	m = Net(ck['hidden'], ck['layers']); m.load_state_dict(ck['state'])
+	return m
+
+
+def grid(a):
+	"""格子 (長点比 x 文字間 x 語間) と手送り検証セットで、現行と複数モデルの CER を並べる"""
+	models = [(p.split('/')[-1], load_model(p)) for p in a.out.split(',')]
+	head = '現行'.rjust(8) + ''.join(n[:10].rjust(12) for n, _ in models)
+
+	def cer(rows, hyps):
+		n = sum(len(norm(d['text'])) for d in rows)
+		return 100 * sum(edit(norm(d['text']), h) for d, h in zip(rows, hyps)) / max(1, n)
+
+	for name in ('val_hand.jsonl', 'val.jsonl'):
+		rows = load(f'{a.data}/{name}')
+		hy = [decode_all(m, rows) for _, m in models]
+		print(f'== {name} ({len(rows)} 件) CER: 現行 {cer(rows, [d["base"] for d in rows]):.2f}%  ' +
+		      '  '.join(f'{n} {cer(rows, h):.2f}%' for (n, _), h in zip(models, hy)))
+	rows = load(f'{a.data}/grid.jsonl')
+	hy = [decode_all(m, rows) for _, m in models]
+	print('\n== 格子 (SNR 15dB, ジッタ 0.05, 重み 1.0, 20/30WPM)  CER %')
+	print('長点比 文字間 語間 |' + head)
+	keys = []
+	for d in rows:
+		if d['st']['grid'] not in keys: keys.append(d['st']['grid'])
+	for k in keys:
+		idx = [i for i, d in enumerate(rows) if d['st']['grid'] == k]
+		r = [rows[i] for i in idx]
+		dash, cg, wg = k.split('|')
+		line = f'{dash:>5} {cg:>6} {wg:>4} |' + f'{cer(r, [d["base"] for d in r]):8.1f}'
+		line += ''.join(f'{cer(r, [h[i] for i in idx]):12.1f}' for h in hy)
+		print(line)
 
 
 if __name__ == '__main__':
@@ -185,4 +263,4 @@ if __name__ == '__main__':
 	p.add_argument('--epochs', type=int, default=20)
 	p.add_argument('--bs', type=int, default=64)
 	a = p.parse_args()
-	train(a) if a.cmd == 'train' else evaluate(a)
+	{'train': train, 'eval': evaluate, 'grid': grid}[a.cmd](a)
