@@ -363,7 +363,9 @@ static volatile uint8_t dec_engine_req = DEC_ENGINE_RULE;
 static uint32_t ml_last_ms = 0;     // 直前にゲートが切り替わった時刻 (ML に渡す要素長用)
 
 // ML は和文 (ホレ〜ラタ) も学習しているので、DL 方式のときは英文・和文とも
-// ML の文字を出す
+// ML の文字を出す。英文・和文のモード (sw_mode) は DL 方式では ML のホレ /
+// ラタ (ml_emit) と、他方のモードの文字が続いたとき (ml_mode) に切り替え、
+// ML はそのモードで使える文字だけを出す
 static bool ml_active(void);
 
 static void emit(uint8_t ch)
@@ -620,7 +622,9 @@ static void decode_and_display(void)
 			return;
 		}
 	}
-	int16_t result = decode(code, &sw_mode);
+	// DL 方式ではモードを ML のホレ / ラタで切り替えるので、従来の判定では変えない
+	char rule_mode = sw_mode;
+	int16_t result = decode(code, ml_active() ? &rule_mode : &sw_mode);
 #if DEC_DIAG
 	Serial.printf("[dec] code=%-8s -> %d '%c'\n", code, result,
 	              (result >= 0x20 && result < 0x7F) ? (char)result : '?');
@@ -674,13 +678,23 @@ void decoder_init(void)
 static void ml_emit(uint8_t ch)
 {
 	if (!ml_active()) return;
+	if (ch == 5) sw_mode = MODE_JP;         // ホレ
+	else if (ch == 6) sw_mode = MODE_US;    // ラタ
 	if (emit_fn) emit_fn(ch);
+}
+
+// ML がモードを切り替えたとき (他方のモードの文字が続いた)
+static void ml_mode(uint8_t jp)
+{
+	if (!ml_active()) return;
+	sw_mode = jp ? MODE_JP : MODE_US;
 }
 
 void decoder_set_emit(void (*fn)(uint8_t ch))
 {
 	emit_fn = fn;
 	mldec_set_emit(ml_emit);
+	mldec_set_mode_cb(ml_mode);
 }
 
 static bool ml_active(void)
@@ -1030,10 +1044,11 @@ static void key_step(void)
 	// 短すぎるマークでスペースを分断しないよう startttimelow を据え置くので違う)
 	if (dec_engine == DEC_ENGINE_ML) {
 		if (filteredstate != filteredstatebefore) {
-			mldec_element(filteredstate == KEY_LOW ? 1 : 0, dec_ms - ml_last_ms);
+			mldec_element(filteredstate == KEY_LOW ? 1 : 0, dec_ms - ml_last_ms,
+			              sw_mode == MODE_JP);
 			ml_last_ms = dec_ms;
 		} else if (filteredstate == KEY_LOW) {
-			mldec_silence(dec_ms - ml_last_ms);
+			mldec_silence(dec_ms - ml_last_ms, sw_mode == MODE_JP);
 		}
 	}
 

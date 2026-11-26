@@ -207,7 +207,7 @@ footer {
 
 <table>
   <tr><th>操作</th><th>動作</th></tr>
-  <tr><td><strong>US</strong> / <strong>JP</strong></td><td>欧文 / 和文モードの切り替え</td></tr>
+  <tr><td><strong>US</strong> / <strong>JP</strong></td><td>欧文 / 和文モードの切り替え。ホレ / ラタを受信したときは自動で切り替わります</td></tr>
   <tr><td><strong>AUTO</strong> (TONE ボタン)</td>
       <td>押すたびに AUTO → 600 → 700 → 800 → 900 → 1000Hz と送り。
           AUTO は受信中の最も強い信号へ自動同調します。信号が無い間は 600Hz で待機し、
@@ -235,8 +235,8 @@ footer {
   <tr><td><strong>デコーダ</strong></td>
       <td>文字を求める方法 (既定 DL)。実機の SETUP の「デコーダ」と同じです。
           <strong>DL</strong> (Deep Learning、深層学習) は学習済みのニューラルネットワークで文字を求め、手送りの癖が強い送信や文字間が詰まった送信、
-          ノイズの多い信号でも誤りが少なくなります。和文はホレからラタまでを読み取ります (US / JP の設定には関係しません)。
-          <strong>標準</strong> は符号表で文字を求めます。ホレで始まらない和文を受信するときは、標準にして JP を選択してください</td></tr>
+          ノイズの多い信号でも誤りが少なくなります。欧文 / 和文 (US / JP) は、ホレ / ラタのほか、和文 (欧文) の文字が 3 文字続いたときにも自動で切り替わります。
+          <strong>標準</strong> は符号表で文字を求めます</td></tr>
   <tr><td><strong>ch</strong></td>
       <td>ステレオ入力のどの系統を使うか。<strong>片チャンネルだけに無線機を繋いでいるときは
           L か R を選んでください</strong>。L+R にすると空いている側のノイズが混ざります</td></tr>

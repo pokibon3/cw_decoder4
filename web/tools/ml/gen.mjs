@@ -432,6 +432,10 @@ export async function createCore() {
 			e.cw_set_det(4);                    // 実機既定 (NR ON = 方式 E)
 			// 文字の出し方 (0=従来, 1=DL)。CW_ENGINE=1 で DL 方式の出力を base に入れる
 			e.cw_set_engine?.(parseInt(process.env.CW_ENGINE || '0', 10));
+			// 英文・和文のモードは cw_reset で戻らないので、前の文が和文の途中で
+			// 終わっていたら US に戻す (cw_status_t の mode は 16 番目の uint32)
+			e.cw_poll(0, 0);
+			if (new Uint32Array(mem(), e.cw_status_ptr(), 16)[15] === 1) e.cw_toggle_mode();
 			const cap = e.cw_in_cap(), ptr = e.cw_in_ptr();
 			const stride = e.cw_elem_stride();
 			const trans = [];                   // [mark(切り替わり後の状態), t_ms]
