@@ -115,6 +115,7 @@ static portMUX_TYPE dsp_mux = portMUX_INITIALIZER_UNLOCKED;
 static volatile uint8_t dsp_paused = 0;
 static volatile uint8_t dsp_idle = 0;       // 1=一時停止中でタスクが audio_read を呼んでいない
 static volatile uint8_t dsp_alive = 0;
+static void audio_retry(void);
 
 static void gate_update_coeff(void);
 
@@ -841,8 +842,22 @@ void dsp_step(void)
 			continue;
 		}
 		dsp_idle = 0;
+		// idle を書いてから要求をもう一度見る。一時停止側は「要求を書く →
+		// idle を読む」の順なので、行き違っても必ずどちらかが相手に気付く
+		// (ADC を解放している最中に audio_read を呼ばない)
+		if (dsp_paused) continue;
+		if (!audio_running()) {
+			audio_retry();
+			vTaskDelay(pdMS_TO_TICKS(10));
+			continue;
+		}
 		size_t got = audio_read(raw, DSP_HOP);
-		if (got == 0) continue;
+		if (got == 0) {
+			// 読めないときは CPU を譲る。空回りすると CPU0 のアイドルタスクが
+			// 動けず、タスクウォッチドッグ (5 秒) で再起動になる
+			vTaskDelay(1);
+			continue;
+		}
 		samples_total += got;
 
 		// ALE の配列が無いとき (ale_alloc() 失敗) は ALE を使う方式へ切り替えない
@@ -1052,6 +1067,27 @@ void dsp_step(void)
 	} while (0);
 }
 
+//	ADC の初期化に失敗して止まっているとき、1 秒ごとにやり直す。
+//	10 秒続けて失敗したら再起動する (以前の abort と同じく、再起動で戻す)
+static void audio_retry(void)
+{
+	static uint32_t fail_since = 0, last_try = 0;
+	uint32_t now = millis();
+	if (fail_since == 0) fail_since = now | 1;
+	if (now - last_try < 1000) return;
+	last_try = now;
+	if (audio_init()) {
+		Serial.println("[dsp] audio restarted");
+		fail_since = 0;
+		return;
+	}
+	if (now - fail_since >= 10000) {
+		Serial.println("[dsp] audio_init keeps failing, restarting");
+		delay(100);
+		esp_restart();
+	}
+}
+
 static void dsp_task(void *arg)
 {
 	dsp_alive = 1;
@@ -1072,13 +1108,23 @@ void dsp_set_paused(uint8_t paused)
 		for (int i = 0; i < 50 && dsp_alive && !dsp_idle; i++) {
 			delay(10);                  // 進行中の audio_read (最大7.4ms) を待つ
 		}
+		if (dsp_alive && !dsp_idle) {
+			// 通常は 1 ブロック (3.75ms) で止まる。止まらなくてもフラッシュ操作の
+			// 間 DMA を動かしておくわけにはいかないので、ADC は止める
+			Serial.println("[dsp] pause: task did not stop in 500ms");
+		}
 		audio_stop();
 		Serial.printf("[dsp] paused (idle=%d) heap=%u\n", (int)dsp_idle,
 		              (unsigned)ESP.getFreeHeap());
 	} else {
 		if (!dsp_paused) return;
-		audio_init();
+		if (!audio_init()) {
+			Serial.println("[dsp] audio_init failed, retrying");   // DSP タスクがやり直す
+		}
 		dsp_paused = 0;
+		// 前回の一時停止で 1 になったままの idle を戻す。戻さないと、DSP タスクが
+		// まだ寝ている間 (最長 10ms) に次の一時停止が来たとき、停止を待たずに進む
+		dsp_idle = 0;
 		Serial.printf("[dsp] resumed heap=%u\n", (unsigned)ESP.getFreeHeap());
 	}
 }

@@ -32,6 +32,8 @@ typedef int portMUX_TYPE;
 //	AudioWorklet が dsp_step() を直接駆動するので生成しない
 #define pdMS_TO_TICKS(ms) (ms)
 #define vTaskDelay(ticks) ((void)(ticks))
+//	ADC の初期化失敗からの再起動 (Web では ADC が無いので呼ばれない)
+static inline void esp_restart(void) { }
 static inline void xTaskCreatePinnedToCore(void (*fn)(void *), const char *name,
                                            unsigned stack, void *arg,
                                            unsigned prio, void *handle, int core)

@@ -24,14 +24,21 @@ static adc_continuous_handle_t adc_handle = nullptr;
 static uint32_t audio_req_rate = AUDIO_ADC_RATE_REQ;      // 診断掃引で差し替える
 static volatile uint32_t audio_clips = 0;   // ADC レール到達 (0 / 4095 付近) の変換数
 
-void audio_init(void)
+// 失敗しても止めずに false を返す (呼び出し側がやり直す)。以前は
+// ESP_ERROR_CHECK で abort していたが、audio_init() は一時停止から戻る
+// たびに呼ばれ、WiFi の後などでメモリが取れないと再起動になっていた
+bool audio_init(void)
 {
+	if (adc_handle) return true;
 	// DSP_HOP*4 conversions at 32kHz = one DSP hop (30 samples = 3.75ms).
 	// conv_frame_size must be a multiple of SOC_ADC_DIGI_DATA_BYTES_PER_CONV (4).
 	adc_continuous_handle_cfg_t handle_cfg = {};
 	handle_cfg.max_store_buf_size = AUDIO_POOL_BYTES;
 	handle_cfg.conv_frame_size = AUDIO_FRAME_BYTES;
-	ESP_ERROR_CHECK(adc_continuous_new_handle(&handle_cfg, &adc_handle));
+	if (adc_continuous_new_handle(&handle_cfg, &adc_handle) != ESP_OK) {
+		adc_handle = nullptr;
+		return false;
+	}
 
 	adc_digi_pattern_config_t pattern = {};
 	pattern.atten = ADC_ATTEN_DB_12;
@@ -45,8 +52,18 @@ void audio_init(void)
 	cfg.sample_freq_hz = audio_req_rate;
 	cfg.conv_mode = ADC_CONV_SINGLE_UNIT_1;
 	cfg.format = ADC_DIGI_OUTPUT_FORMAT_TYPE1;
-	ESP_ERROR_CHECK(adc_continuous_config(adc_handle, &cfg));
-	ESP_ERROR_CHECK(adc_continuous_start(adc_handle));
+	if (adc_continuous_config(adc_handle, &cfg) != ESP_OK ||
+	    adc_continuous_start(adc_handle) != ESP_OK) {
+		adc_continuous_deinit(adc_handle);
+		adc_handle = nullptr;
+		return false;
+	}
+	return true;
+}
+
+bool audio_running(void)
+{
+	return adc_handle != nullptr;
 }
 
 uint32_t audio_clip_total(void)
@@ -69,6 +86,7 @@ size_t audio_read(uint16_t *dst, size_t n)
 	uint32_t sum = 0;
 	uint8_t sum_count = 0;
 
+	if (!adc_handle) return 0;          // 初期化に失敗して止まっている
 	while (produced < n) {
 		uint32_t bytes_read = 0;
 		esp_err_t err = adc_continuous_read(adc_handle, frame, sizeof(frame),

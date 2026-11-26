@@ -83,7 +83,8 @@ static uint32_t in_w = 0;               // 書き込み位置 (通し番号)
 static uint32_t in_r = 0;               // 読み出し位置 (通し番号)
 static uint32_t clip_count = 0;
 
-void audio_init(void) { }
+bool audio_init(void) { return true; }
+bool audio_running(void) { return true; }
 void audio_stop(void) { }
 
 uint32_t audio_clip_total(void)

@@ -334,8 +334,10 @@ void setup()
 	decoder_init();
 	decoder_set_emit(display_enqueue);
 
-	audio_init();
-	setup_nr_load();                // NR の設定。DSP の最初のブロックから反映される
+	// NR とデコーダの設定 (NVS)。ADC の DMA を始める前に読む: DMA を動かしたまま
+	// フラッシュを読み書きすると落ちることがある (dsp.h の DspFlashGuard 参照)
+	setup_nr_load();
+	audio_init();                   // 失敗しても DSP タスクがやり直す
 	dsp_start();
 
 	// スコープログは既定で ON (SETUP で切れる)。送出は表示ループからの

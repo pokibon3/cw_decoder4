@@ -23,6 +23,7 @@ static uint32_t t_start = 0;
 void rawcap_store(uint16_t v)
 {
 	uint32_t n = count;
+	if (n >= cap_n) { rawcap_state = 2; return; }   // 取り込み開始と行き違ったとき
 	buf[n++] = v;
 	count = n;
 	if (n >= cap_n) rawcap_state = 2;

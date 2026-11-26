@@ -5,7 +5,10 @@
 #include <stdint.h>
 #include <stddef.h>
 
-void audio_init(void);
+// Starts the ADC DMA. Returns false (without aborting) if the driver could
+// not be set up, e.g. out of DMA-capable memory; the caller retries.
+bool audio_init(void);
+bool audio_running(void);
 // Reads n 8kHz samples (blocking). Each is the average of four 12bit
 // conversions acquired at 32kHz (the driver's sample_freq_hz is scaled by
 // 11/9 to get a true 32kHz on ESP32; see AUDIO_ADC_RATE_REQ).
